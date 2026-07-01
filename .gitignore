@@ -1,0 +1,54 @@
+# === Build output ===
+target/
+build/
+out/
+*.class
+*.jar
+*.war
+
+# === IDE ===
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.settings/
+.project
+.classpath
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Environment & Secrets ===
+.env
+.env.*
+*.key
+*.pem
+*.p12
+application-dev.yml
+application-prod.yml
+
+# === Logs ===
+*.log
+logs/
+
+# === Uploads ===
+data/uploads/
+uploads/
+
+# === Node (前端) ===
+node_modules/
+dist/
+.hbuilderx/
+
+# === Docker volumes ===
+mysql-data/
+
+# === Maven ===
+.mvn/wrapper/maven-wrapper.jar
+
+# === Test output ===
+surefire-reports/

@@ -1,0 +1,77 @@
+server:
+  port: 8888
+  servlet:
+    context-path: /api/v1
+
+spring:
+  profiles:
+    active: dev
+  datasource:
+    url: jdbc:mysql://${DB_HOST:8.147.60.8}:${DB_PORT:3306}/${DB_NAME:wuye_points}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        default_batch_fetch_size: 100
+        jdbc:
+          time_zone: Asia/Shanghai
+  sql:
+    init:
+      mode: never
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 100MB
+  jackson:
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    default-property-inclusion: non_null
+
+jwt:
+  secret: ${JWT_SECRET:wuye-points-secret-key-2026-must-be-at-least-256-bits-long}
+  access-token-expiration: 3600000
+  refresh-token-expiration: 604800000
+
+wechat:
+  mp:
+    app-id: ${WECHAT_MP_APP_ID:wxf7230afd38275659}
+    app-secret: ${WECHAT_MP_APP_SECRET:929b71c51808a9cd830bd270e1f01539}
+  pay:
+    enabled: ${WECHAT_PAY_ENABLED:true}
+    mch-id: ${WECHAT_PAY_MCH_ID:1665249236}
+    api-v3-key: ${WECHAT_PAY_API_V3_KEY:panjinhuadiwangluokeji91211103MA0XR88D3F}
+    private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:/opt/wuye-points/cert/apiclient_key.pem}
+    merchant-serial-number: ${WECHAT_PAY_MERCHANT_SERIAL_NUMBER:7824E2C7DE9B1BD8070146F2EFA1432A3DBA4070}
+    app-id: ${WECHAT_PAY_APP_ID:wxf7230afd38275659}
+    notify-url: ${WECHAT_PAY_NOTIFY_URL:https://zlysapi.51jijiehao.com/api/v1/payment/wechat/notify}
+
+app:
+  payment:
+    skip-sdk: ${APP_PAYMENT_SKIP_SDK:false}
+  wechat:
+    skip-api: ${APP_WECHAT_SKIP_API:false}
+  upload:
+    path: ${UPLOAD_PATH:/data/uploads}
+    base-url: ${UPLOAD_BASE_URL:http://localhost:8888/api/v1/static}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:*}
+  machine-id: ${MACHINE_ID:1}
+
+logging:
+  level:
+    com.wuye.points: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql.BasicBinder: WARN

@@ -1,0 +1,58 @@
+package com.wuye.points.repository.spec;
+
+import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.Product;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Subquery;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.util.StringUtils;
+
+public final class ProductSpecifications {
+
+    private ProductSpecifications() {
+    }
+
+    public static Specification<Product> withFilters(
+            String propertyCompanyId,
+            String merchantId,
+            String keyword,
+            String category,
+            String status,
+            boolean publicOnly) {
+        return (root, query, cb) -> {
+            var predicates = new java.util.ArrayList<Predicate>();
+
+            if (StringUtils.hasText(propertyCompanyId)) {
+                Subquery<String> merchantSub = query.subquery(String.class);
+                var merchantRoot = merchantSub.from(Merchant.class);
+                merchantSub.select(merchantRoot.get("id"));
+                var merchantPredicates = new java.util.ArrayList<Predicate>();
+                merchantPredicates.add(cb.equal(merchantRoot.get("propertyCompanyId"), propertyCompanyId));
+                if (publicOnly) {
+                    merchantPredicates.add(cb.equal(merchantRoot.get("auditStatus"), "approved"));
+                    merchantPredicates.add(cb.equal(merchantRoot.get("status"), "active"));
+                }
+                merchantSub.where(cb.and(merchantPredicates.toArray(new Predicate[0])));
+                predicates.add(root.get("merchantId").in(merchantSub));
+            }
+
+            if (StringUtils.hasText(merchantId)) {
+                predicates.add(cb.equal(root.get("merchantId"), merchantId));
+            }
+            if (StringUtils.hasText(category)) {
+                predicates.add(cb.equal(root.get("category"), category));
+            }
+            if (StringUtils.hasText(status)) {
+                predicates.add(cb.equal(root.get("status"), status));
+            } else if (publicOnly) {
+                predicates.add(cb.equal(root.get("status"), "active"));
+            }
+            if (StringUtils.hasText(keyword)) {
+                String like = "%" + keyword.trim() + "%";
+                predicates.add(cb.like(root.get("name"), like));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+}
