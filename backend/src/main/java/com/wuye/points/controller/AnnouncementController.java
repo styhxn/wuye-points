@@ -11,6 +11,9 @@ import com.wuye.points.dto.announcement.UpdateAnnouncementRequest;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.service.AnnouncementService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 公告模块
  */
+@Tag(name = "公告模块", description = "公告创建、列表、详情、更新、删除、信息收集")
 @RestController
 @RequestMapping("/announcements")
 @RequiredArgsConstructor
@@ -33,45 +37,53 @@ public class AnnouncementController {
 
     private final AnnouncementService announcementService;
 
+    @Operation(summary = "创建公告", description = "创建公告")
     @PostMapping
     public ApiResponse<AnnouncementDetailResponse> createAnnouncement(
             @Valid @RequestBody CreateAnnouncementRequest request) {
         return ApiResponse.success(announcementService.createAnnouncement(request));
     }
 
+    @Operation(summary = "公告列表", description = "分页查询公告列表")
     @GetMapping
     public ApiResponse<PageResponse<AnnouncementListItemResponse>> listAnnouncements(
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize,
-            @RequestParam(required = false) String announcementType,
-            @RequestParam(required = false) String communityId,
-            @RequestParam(required = false) String merchantId,
-            @RequestParam(required = false) String readStatus,
-            @RequestParam(defaultValue = "-publishedAt") String sort) {
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "公告类型") @RequestParam(required = false) String announcementType,
+            @Parameter(description = "小区ID") @RequestParam(required = false) String communityId,
+            @Parameter(description = "商家ID") @RequestParam(required = false) String merchantId,
+            @Parameter(description = "已读状态") @RequestParam(required = false) String readStatus,
+            @Parameter(description = "排序字段", example = "-publishedAt") @RequestParam(defaultValue = "-publishedAt") String sort) {
         return ApiResponse.success(announcementService.listAnnouncements(
                 page, pageSize, announcementType, communityId, merchantId, readStatus, sort));
     }
 
+    @Operation(summary = "公告详情", description = "获取公告详情")
     @GetMapping("/{id}")
-    public ApiResponse<AnnouncementDetailResponse> getAnnouncement(@PathVariable String id) {
+    public ApiResponse<AnnouncementDetailResponse> getAnnouncement(
+            @Parameter(description = "公告ID", example = "1") @PathVariable String id) {
         return ApiResponse.success(announcementService.getAnnouncement(id));
     }
 
+    @Operation(summary = "更新公告", description = "更新公告")
     @PutMapping("/{id}")
     public ApiResponse<AnnouncementDetailResponse> updateAnnouncement(
-            @PathVariable String id,
+            @Parameter(description = "公告ID", example = "1") @PathVariable String id,
             @Valid @RequestBody UpdateAnnouncementRequest request) {
         return ApiResponse.success(announcementService.updateAnnouncement(id, request));
     }
 
+    @Operation(summary = "删除公告", description = "删除公告")
     @DeleteMapping("/{id}")
-    public ApiResponse<DeleteAnnouncementResponse> deleteAnnouncement(@PathVariable String id) {
+    public ApiResponse<DeleteAnnouncementResponse> deleteAnnouncement(
+            @Parameter(description = "公告ID", example = "1") @PathVariable String id) {
         return ApiResponse.success(announcementService.deleteAnnouncement(id));
     }
 
+    @Operation(summary = "提交信息收集", description = "提交信息收集")
     @PostMapping("/{id}/collect")
     public ApiResponse<SubmitCollectResponse> submitCollect(
-            @PathVariable String id,
+            @Parameter(description = "公告ID", example = "1") @PathVariable String id,
             @Valid @RequestBody SubmitCollectRequest request) {
         return ApiResponse.success(announcementService.submitCollect(id, request));
     }

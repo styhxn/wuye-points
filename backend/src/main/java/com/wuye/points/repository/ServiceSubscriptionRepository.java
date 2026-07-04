@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * 服务订阅 Repository
@@ -21,4 +22,6 @@ public interface ServiceSubscriptionRepository extends JpaRepository<ServiceSubs
 
     boolean existsByServiceIdAndResidentIdAndStatusAndEndDateGreaterThanEqual(
             String serviceId, String residentId, String status, LocalDate date);
+
+    List<ServiceSubscription> findByEndDateBetweenAndStatus(LocalDate start, LocalDate end, String status);
 }

@@ -2,11 +2,13 @@ package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.resident.DeleteAccountResponse;
 import com.wuye.points.dto.resident.MyCoinsResponse;
 import com.wuye.points.dto.resident.MyPointsResponse;
 import com.wuye.points.dto.resident.ResidentDetailResponse;
 import com.wuye.points.dto.resident.ResidentListItemResponse;
 import com.wuye.points.dto.resident.ResidentStatusResponse;
+import com.wuye.points.dto.resident.CreateResidentRequest;
 import com.wuye.points.dto.resident.UpdateResidentRequest;
 import com.wuye.points.dto.resident.UpdateResidentStatusRequest;
 import com.wuye.points.entity.Family;
@@ -24,6 +26,7 @@ import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.ResidentSpecifications;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
+import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -54,6 +57,8 @@ public class ResidentService {
     private final PropertyCoinRecordRepository propertyCoinRecordRepository;
     private final ResidentConverter residentConverter;
     private final RoleGuard roleGuard;
+    private final WebSocketService webSocketService;
+    private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
     public PageResponse<ResidentListItemResponse> listResidents(
@@ -79,9 +84,6 @@ public class ResidentService {
         if (StringUtils.hasText(propertyCompanyId) && !propertyCompanyId.startsWith("pc_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "propertyCompanyId格式不正确");
         }
-        if (roleGuard.isPropertyAdmin() && StringUtils.hasText(propertyCompanyId)) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED);
-        }
 
         String scopedPropertyCompanyId = roleGuard.resolveListPropertyCompanyId(propertyCompanyId);
         Pageable pageable = buildPageable(page, pageSize, sort);
@@ -96,6 +98,47 @@ public class ResidentService {
                 .toList();
 
         return PageResponse.of(list, page, pageSize, residentPage.getTotalElements());
+    }
+
+    @Transactional
+    public ResidentDetailResponse createResident(CreateResidentRequest request) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+
+        if (!request.getRole().equals("resident")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "管理员创建住户角色只能是resident");
+        }
+
+        String propertyCompanyId = roleGuard.resolveListPropertyCompanyId(request.getPropertyCompanyId());
+
+        if (residentRepository.existsByPhoneAndPropertyCompanyId(request.getPhone(), propertyCompanyId)) {
+            throw new BizException(ErrorCode.RESIDENT_DUPLICATE_PHONE);
+        }
+
+        Resident resident = new Resident();
+        resident.setId(idGenerator.generateId("res"));
+        resident.setPhone(request.getPhone());
+        resident.setName(request.getName());
+        resident.setAvatarUrl(request.getAvatarUrl());
+        resident.setGender(request.getGender());
+        resident.setAge(request.getAge());
+        resident.setMaritalStatus(request.getMaritalStatus());
+        resident.setHasChildren(request.getHasChildren());
+        resident.setUserType(request.getUserType());
+        resident.setRole(request.getRole());
+        resident.setPropertyCompanyId(propertyCompanyId);
+        resident.setCommunityId(request.getCommunityId());
+        resident.setBuilding(request.getBuilding());
+        resident.setUnit(request.getUnit());
+        resident.setRoom(request.getRoom());
+        resident.setPointBalance(0);
+        resident.setCoinBalance(BigDecimal.ZERO);
+        resident.setCoinFrozen(false);
+        resident.setCoinHidden(false);
+        resident.setWechatBound(false);
+        resident.setStatus(ResidentStatus.active.name());
+
+        residentRepository.save(resident);
+        return buildDetail(resident);
     }
 
     @Transactional(readOnly = true)
@@ -234,8 +277,12 @@ public class ResidentService {
     }
 
     private Resident getResidentOrThrow(String id) {
-        return residentRepository.findById(id)
+        Resident resident = residentRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (resident.getDeletedAt() != null) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND);
+        }
+        return resident;
     }
 
     private Resident getActiveResident(String userId) {
@@ -265,6 +312,9 @@ public class ResidentService {
     private void assertCanUpdate(Resident resident) {
         String currentUserId = UserContext.currentUserId();
         if (currentUserId != null && currentUserId.equals(resident.getId())) {
+            return;
+        }
+        if (roleGuard.isPlatformAdmin()) {
             return;
         }
         if (roleGuard.isPropertyAdmin()) {
@@ -311,6 +361,12 @@ public class ResidentService {
                 resident.setRoom(request.getRoom());
             }
         }
+        if (allowAddressUpdate && StringUtils.hasText(request.getRole())) {
+            if (!RoleGuard.VALID_ROLES.contains(request.getRole())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "role值无效");
+            }
+            resident.setRole(request.getRole());
+        }
     }
 
     private ResidentDetailResponse buildDetail(Resident resident) {
@@ -348,5 +404,39 @@ public class ResidentService {
     private boolean isReasonRequired(String status) {
         return ResidentStatus.frozen.name().equals(status)
                 || ResidentStatus.disabled.name().equals(status);
+    }
+
+    @Transactional
+    public DeleteAccountResponse requestAccountDeletion() {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+
+        resident.setStatus("disabled");
+        resident.setDeletedAt(LocalDateTime.now());
+        residentRepository.save(resident);
+
+        webSocketService.broadcast("account_deletion_request", Map.of(
+                "residentId", resident.getId(),
+                "residentName", resident.getName() != null ? resident.getName() : "",
+                "propertyCompanyId", resident.getPropertyCompanyId() != null ? resident.getPropertyCompanyId() : ""
+        ));
+
+        return DeleteAccountResponse.builder()
+                .residentId(resident.getId())
+                .status("disabled")
+                .message("账号注销申请已提交，管理员将尽快处理")
+                .build();
+    }
+
+    @Transactional
+    public void deleteResident(String id) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+
+        Resident resident = getResidentOrThrow(id);
+        roleGuard.assertSamePropertyOrPlatform(resident.getPropertyCompanyId());
+
+        resident.setStatus(ResidentStatus.deleted.name());
+        resident.setDeletedAt(LocalDateTime.now());
+        residentRepository.save(resident);
     }
 }

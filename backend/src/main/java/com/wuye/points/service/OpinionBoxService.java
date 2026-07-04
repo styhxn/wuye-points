@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.opinion.CreateOpinionBoxRequest;
+import com.wuye.points.dto.opinion.MyVoteListItemResponse;
 import com.wuye.points.dto.opinion.OpinionBoxDetailResponse;
 import com.wuye.points.dto.opinion.OpinionBoxListItemResponse;
 import com.wuye.points.dto.opinion.OpinionBoxResultResponse;
@@ -85,6 +86,48 @@ public class OpinionBoxService {
 
         Page<OpinionBox> boxPage = opinionBoxRepository.findAll(spec, pageable);
         return buildListPage(boxPage, page, pageSize, resident);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MyVoteListItemResponse> listMyVotes(int page, int pageSize) {
+        roleGuard.requireAnyRole("resident");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        Pageable pageable = buildPageable(page, pageSize, "-createdAt");
+
+        Page<VoteRecord> votePage = voteRecordRepository.findByResidentId(resident.getId(), pageable);
+        List<VoteRecord> votes = votePage.getContent();
+
+        if (votes.isEmpty()) {
+            return PageResponse.of(List.of(), page, pageSize, votePage.getTotalElements());
+        }
+
+        List<String> boxIds = votes.stream()
+                .map(VoteRecord::getOpinionBoxId)
+                .distinct()
+                .toList();
+
+        Map<String, OpinionBox> boxMap = opinionBoxRepository.findAllById(boxIds).stream()
+                .collect(Collectors.toMap(OpinionBox::getId, b -> b));
+
+        List<MyVoteListItemResponse> list = votes.stream()
+                .map(vote -> {
+                    OpinionBox box = boxMap.get(vote.getOpinionBoxId());
+                    return MyVoteListItemResponse.builder()
+                            .opinionBoxId(vote.getOpinionBoxId())
+                            .title(box != null ? box.getTitle() : null)
+                            .voteOption(vote.getVoteOption())
+                            .votedAt(DateTimeUtil.toIsoUtc(vote.getCreatedAt()))
+                            .opinionBoxStatus(box != null ? box.getStatus() : null)
+                            .resultPublished(box != null ? box.getResultPublished() : null)
+                            .build();
+                })
+                .toList();
+
+        return PageResponse.of(list, page, pageSize, votePage.getTotalElements());
     }
 
     @Transactional(readOnly = true)

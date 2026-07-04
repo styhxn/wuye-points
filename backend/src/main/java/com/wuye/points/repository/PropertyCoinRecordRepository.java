@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 物业币记录 Repository
@@ -42,4 +43,25 @@ public interface PropertyCoinRecordRepository extends JpaRepository<PropertyCoin
     BigDecimal sumSpentBetween(@Param("residentId") String residentId,
                                @Param("start") LocalDateTime start,
                                @Param("end") LocalDateTime end);
+
+    @Query("""
+            SELECT COALESCE(SUM(r.amount), 0) FROM PropertyCoinRecord r
+            WHERE r.propertyCompanyId = :propertyCompanyId
+            AND r.coinType IN ('earn', 'recharge')
+            """)
+    BigDecimal sumIssuedByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
+    List<PropertyCoinRecord> findByResidentIdAndCoinTypeAndCreatedAtBefore(
+            String residentId, String coinType, LocalDateTime createdAt);
+
+    @Query("""
+            SELECT COALESCE(SUM(r.amount), 0) FROM PropertyCoinRecord r
+            WHERE r.residentId = :residentId
+            AND r.coinType IN ('earn', 'recharge')
+            AND r.createdAt > :startWindow
+            AND r.createdAt <= :endWindow
+            """)
+    BigDecimal sumCoinsExpiringBetween(@Param("residentId") String residentId,
+                                       @Param("startWindow") LocalDateTime startWindow,
+                                       @Param("endWindow") LocalDateTime endWindow);
 }

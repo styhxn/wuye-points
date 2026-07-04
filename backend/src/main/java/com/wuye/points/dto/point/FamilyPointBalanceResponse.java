@@ -1,14 +1,41 @@
 package com.wuye.points.dto.point;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
+import java.util.List;
 
 @Data
 @Builder
+@Schema(description = "家庭积分余额响应")
 public class FamilyPointBalanceResponse {
 
+    @Schema(description = "家庭ID", example = "fam_abc123")
     private String familyId;
+
+    @Schema(description = "家庭名称", example = "张三家庭")
     private String familyName;
-    private Integer pointBalance;
-    private Integer memberCount;
+
+    @Schema(description = "家庭积分余额", example = "1200")
+    private Integer totalPointBalance;
+
+    @Schema(description = "家庭成员列表")
+    private List<Member> members;
+
+    @Data
+    @Builder
+    @Schema(description = "家庭成员积分信息")
+    public static class Member {
+        @Schema(description = "成员ID", example = "res_xxx")
+        private String id;
+
+        @Schema(description = "成员姓名", example = "张三")
+        private String name;
+
+        @Schema(description = "积分余额", example = "500")
+        private Integer pointBalance;
+
+        @Schema(description = "家庭关系", example = "户主")
+        private String relation;
+    }
 }

@@ -6,7 +6,8 @@ package com.wuye.points.enums;
 public enum ResidentStatus {
     active("正常"),
     frozen("冻结"),
-    disabled("禁用");
+    disabled("禁用"),
+    deleted("已删除");
 
     private final String description;
 

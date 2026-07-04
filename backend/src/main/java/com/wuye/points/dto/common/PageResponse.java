@@ -1,13 +1,18 @@
 package com.wuye.points.dto.common;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import org.springframework.data.domain.Page;
 
 import java.util.List;
 
 @Data
+@Schema(description = "分页响应")
 public class PageResponse<T> {
+    @Schema(description = "数据列表")
     private List<T> list;
+
+    @Schema(description = "分页信息")
     private Pagination pagination;
 
     public PageResponse() {}
@@ -34,10 +39,18 @@ public class PageResponse<T> {
     }
 
     @Data
+    @Schema(description = "分页信息")
     public static class Pagination {
+        @Schema(description = "当前页码", example = "1")
         private int page;
+
+        @Schema(description = "每页条数", example = "20")
         private int pageSize;
+
+        @Schema(description = "总记录数", example = "100")
         private long total;
+
+        @Schema(description = "总页数", example = "5")
         private int totalPages;
     }
 }

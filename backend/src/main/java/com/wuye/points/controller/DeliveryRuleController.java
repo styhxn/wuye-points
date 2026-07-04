@@ -6,6 +6,8 @@ import com.wuye.points.dto.delivery.CreateDeliveryRuleRequest;
 import com.wuye.points.dto.delivery.DeliveryRuleResponse;
 import com.wuye.points.dto.delivery.UpdateDeliveryRuleRequest;
 import com.wuye.points.service.DeliveryRuleService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,11 +17,13 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 配送规则管理
  */
+@Tag(name = "配送规则模块", description = "配送规则列表、详情、创建、更新")
 @RestController
 @RequestMapping("/delivery-rules")
 @RequiredArgsConstructor
@@ -27,28 +31,33 @@ public class DeliveryRuleController {
 
     private final DeliveryRuleService deliveryRuleService;
 
+    @Operation(summary = "配送规则列表", description = "获取配送规则列表（分页/筛选）")
     @GetMapping
     public ApiResponse<PageResponse<DeliveryRuleResponse>> listRules(
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize,
-            @RequestParam(required = false) String propertyCompanyId) {
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId) {
         return ApiResponse.success(deliveryRuleService.listRules(page, pageSize, propertyCompanyId));
     }
 
+    @Operation(summary = "配送规则详情", description = "获取配送规则详细信息")
     @GetMapping("/{id}")
-    public ApiResponse<DeliveryRuleResponse> getRule(@PathVariable String id) {
+    public ApiResponse<DeliveryRuleResponse> getRule(
+            @Parameter(description = "配送规则ID") @PathVariable String id) {
         return ApiResponse.success(deliveryRuleService.getRule(id));
     }
 
+    @Operation(summary = "创建配送规则", description = "创建新的配送规则")
     @PostMapping
     public ApiResponse<DeliveryRuleResponse> createRule(
             @Valid @RequestBody CreateDeliveryRuleRequest request) {
         return ApiResponse.success(deliveryRuleService.createRule(request));
     }
 
+    @Operation(summary = "更新配送规则", description = "更新指定配送规则的信息")
     @PutMapping("/{id}")
     public ApiResponse<DeliveryRuleResponse> updateRule(
-            @PathVariable String id,
+            @Parameter(description = "配送规则ID") @PathVariable String id,
             @Valid @RequestBody UpdateDeliveryRuleRequest request) {
         return ApiResponse.success(deliveryRuleService.updateRule(id, request));
     }

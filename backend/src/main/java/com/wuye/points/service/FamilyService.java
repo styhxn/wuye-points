@@ -5,6 +5,7 @@ import com.wuye.points.dto.family.AddFamilyMemberRequest;
 import com.wuye.points.dto.family.AddFamilyMemberResponse;
 import com.wuye.points.dto.family.CreateFamilyRequest;
 import com.wuye.points.dto.family.FamilyDetailResponse;
+import com.wuye.points.dto.family.FamilyMemberContributionResponse;
 import com.wuye.points.dto.family.FamilyMemberListResponse;
 import com.wuye.points.dto.family.FamilyResponse;
 import com.wuye.points.dto.family.RemoveFamilyMemberResponse;
@@ -244,6 +245,41 @@ public class FamilyService {
                         .map(member -> familyConverter.toMemberItem(member, family.getOwnerId()))
                         .toList())
                 .build();
+    }
+
+    @Transactional(readOnly = true)
+    public List<FamilyMemberContributionResponse> getMemberContributions() {
+        roleGuard.requireAnyRole("resident");
+        Resident current = getActiveResident(UserContext.currentUserId());
+        if (!StringUtils.hasText(current.getFamilyId())) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在");
+        }
+
+        Family family = getFamilyOrThrow(current.getFamilyId());
+        List<Resident> members = residentRepository.findByFamilyId(family.getId());
+
+        int totalPoints = members.stream()
+                .mapToInt(m -> m.getPointBalance() != null ? m.getPointBalance() : 0)
+                .sum();
+
+        return members.stream()
+                .map(member -> {
+                    int memberPoints = member.getPointBalance() != null ? member.getPointBalance() : 0;
+                    BigDecimal percent = totalPoints > 0
+                            ? BigDecimal.valueOf(memberPoints)
+                                    .divide(BigDecimal.valueOf(totalPoints), 4, RoundingMode.HALF_UP)
+                                    .multiply(BigDecimal.valueOf(100))
+                                    .setScale(2, RoundingMode.HALF_UP)
+                            : BigDecimal.ZERO;
+                    return FamilyMemberContributionResponse.builder()
+                            .residentId(member.getId())
+                            .name(member.getName())
+                            .familyRelation(member.getFamilyRelation())
+                            .pointBalance(memberPoints)
+                            .contributionPercent(percent)
+                            .build();
+                })
+                .toList();
     }
 
     private FamilyDetailResponse buildDetail(Family family) {

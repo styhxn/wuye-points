@@ -1,6 +1,7 @@
 package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.dto.admin.coinfreeze.CoinFreezeRecordItemResponse;
 import com.wuye.points.dto.coin.CoinBalanceResponse;
 import com.wuye.points.dto.coin.CoinRecordItemResponse;
 import com.wuye.points.dto.coin.EarnCoinRequest;
@@ -118,11 +119,22 @@ public class PropertyCoinService {
         Family family = familyRepository.findById(resident.getFamilyId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
 
+        List<Resident> members = residentRepository.findByFamilyId(family.getId());
+        List<FamilyCoinBalanceResponse.Member> memberItems = members.stream()
+                .filter(m -> ResidentStatus.active.name().equalsIgnoreCase(m.getStatus()))
+                .map(m -> FamilyCoinBalanceResponse.Member.builder()
+                        .id(m.getId())
+                        .name(m.getName())
+                        .coinBalance(m.getCoinBalance() != null ? m.getCoinBalance() : BigDecimal.ZERO)
+                        .relation(m.getFamilyRelation())
+                        .build())
+                .toList();
+
         return FamilyCoinBalanceResponse.builder()
                 .familyId(family.getId())
                 .familyName(family.getName())
-                .coinBalance(defaultFamilyCoinBalance(family))
-                .memberCount(family.getMemberCount() != null ? family.getMemberCount() : 0)
+                .totalCoinBalance(defaultFamilyCoinBalance(family))
+                .members(memberItems)
                 .build();
     }
 
@@ -170,9 +182,44 @@ public class PropertyCoinService {
     @Transactional(readOnly = true)
     public ExpiringCoinResponse getExpiringCoins() {
         roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+
+        int coinExpiryDays = 365;
+        if (StringUtils.hasText(resident.getPropertyCompanyId())) {
+            PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
+                    .orElse(null);
+            if (company != null && company.getCoinExpiryDays() != null && company.getCoinExpiryDays() > 0) {
+                coinExpiryDays = company.getCoinExpiryDays();
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime startWindow = now.minusDays(coinExpiryDays);
+        LocalDateTime endWindow = now.plusDays(30).minusDays(coinExpiryDays);
+
+        BigDecimal expiringSoon = coinRecordRepository.sumCoinsExpiringBetween(
+                resident.getId(), startWindow, endWindow);
+
+        if (expiringSoon == null) {
+            expiringSoon = BigDecimal.ZERO;
+        }
+
+        BigDecimal balance = defaultCoinBalance(resident);
+        if (expiringSoon.compareTo(balance) > 0) {
+            expiringSoon = balance;
+        }
+
+        if (expiringSoon.compareTo(BigDecimal.ZERO) <= 0) {
+            return ExpiringCoinResponse.builder()
+                    .expiringSoon(BigDecimal.ZERO)
+                    .expiryDate(null)
+                    .build();
+        }
+
+        LocalDateTime expiryDate = endWindow.plusDays(coinExpiryDays);
         return ExpiringCoinResponse.builder()
-                .expiringSoon(BigDecimal.ZERO)
-                .expiryDate(null)
+                .expiringSoon(expiringSoon)
+                .expiryDate(DateTimeUtil.toIsoUtc(expiryDate))
                 .build();
     }
 
@@ -380,6 +427,57 @@ public class PropertyCoinService {
                 .unfrozenAt(DateTimeUtil.toIsoUtc(unfreezeRecord.getCreatedAt()))
                 .operatorId(operatorId)
                 .build();
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<CoinFreezeRecordItemResponse> listFreezeRecords(
+            int page, int pageSize, String residentId, String action,
+            String propertyCompanyId, String sort) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        if (StringUtils.hasText(residentId) && !residentId.startsWith("res_")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "residentId格式不正确");
+        }
+
+        String scopedPropertyCompanyId = roleGuard.resolveListPropertyCompanyId(propertyCompanyId);
+        String queryAction = StringUtils.hasText(action) ? action : "freeze";
+
+        int safePage = Math.max(page, 1);
+        int safePageSize = Math.min(Math.max(pageSize, 1), 100);
+        Sort sortObj = Sort.by(Sort.Direction.DESC, "createdAt");
+        Pageable pageable = PageRequest.of(safePage - 1, safePageSize, sortObj);
+
+        Page<CoinFreezeRecord> recordPage;
+        if (StringUtils.hasText(scopedPropertyCompanyId)) {
+            recordPage = coinFreezeRecordRepository.findByPropertyCompanyIdAndAction(
+                    scopedPropertyCompanyId, queryAction, pageable);
+        } else {
+            recordPage = coinFreezeRecordRepository.findByAction(queryAction, pageable);
+        }
+
+        List<CoinFreezeRecordItemResponse> list = recordPage.getContent().stream()
+                .map(record -> {
+                    Resident resident = residentRepository.findById(record.getResidentId()).orElse(null);
+                    return CoinFreezeRecordItemResponse.builder()
+                            .id(record.getId())
+                            .residentId(record.getResidentId())
+                            .residentName(resident != null ? resident.getName() : null)
+                            .residentPhone(resident != null ? resident.getPhone() : null)
+                            .residentBuilding(resident != null ? resident.getBuilding() : null)
+                            .residentRoom(resident != null ? resident.getRoom() : null)
+                            .action(record.getAction())
+                            .amount(record.getAmount() != null ? record.getAmount().toPlainString() : null)
+                            .reason(record.getReason())
+                            .operatorId(record.getOperatorId())
+                            .createdAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                            .build();
+                })
+                .toList();
+
+        return PageResponse.of(list, page, pageSize, recordPage.getTotalElements());
     }
 
     @Transactional

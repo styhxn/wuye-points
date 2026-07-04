@@ -19,6 +19,8 @@ public final class ResidentSpecifications {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
+            predicates.add(cb.isNull(root.get("deletedAt")));
+
             if (StringUtils.hasText(propertyCompanyId)) {
                 predicates.add(cb.equal(root.get("propertyCompanyId"), propertyCompanyId));
             }

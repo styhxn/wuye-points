@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 业主/住户表
@@ -33,6 +34,10 @@ public class Resident extends BaseEntity {
 
     @Column(name = "phone", length = 20)
     private String phone;
+
+    /** 密码（BCrypt加密，管理端登录用） */
+    @Column(name = "password", length = 200)
+    private String password;
 
     @Column(name = "name", length = 50)
     private String name;
@@ -104,4 +109,8 @@ public class Resident extends BaseEntity {
     /** active/frozen/disabled */
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 软删除时间 */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 }

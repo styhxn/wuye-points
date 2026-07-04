@@ -28,6 +28,8 @@ public interface MerchantRepository extends JpaRepository<Merchant, String>, Jpa
 
     long countByPropertyCompanyId(String propertyCompanyId);
 
+    long countByPropertyCompanyIdAndAuditStatus(String propertyCompanyId, String auditStatus);
+
     long countByPlatformMerchantId(String platformMerchantId);
 
     Optional<Merchant> findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(

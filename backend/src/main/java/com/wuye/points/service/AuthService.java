@@ -1,6 +1,7 @@
 package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.dto.auth.AdminLoginRequest;
 import com.wuye.points.dto.auth.AuthLoginResponse;
 import com.wuye.points.dto.auth.BindPhoneRequest;
 import com.wuye.points.dto.auth.BindPhoneResponse;
@@ -22,6 +23,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.JwtUtil;
 import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import cn.hutool.crypto.digest.BCrypt;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -68,6 +70,27 @@ public class AuthService {
                 .expiresIn(tokens.getExpiresIn())
                 .tokenType(tokens.getTokenType())
                 .resident(toAuthSummary(resident, newUser))
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public AuthLoginResponse adminLogin(AdminLoginRequest request) {
+        Resident resident = residentRepository.findByPhone(request.getPhone())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "手机号或密码错误"));
+
+        if (resident.getPassword() == null || !BCrypt.checkpw(request.getPassword(), resident.getPassword())) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "手机号或密码错误");
+        }
+
+        assertAccountActive(resident);
+
+        TokenResponse tokens = buildTokenResponse(resident);
+        return AuthLoginResponse.builder()
+                .accessToken(tokens.getAccessToken())
+                .refreshToken(tokens.getRefreshToken())
+                .expiresIn(tokens.getExpiresIn())
+                .tokenType(tokens.getTokenType())
+                .resident(toAuthSummary(resident, false))
                 .build();
     }
 

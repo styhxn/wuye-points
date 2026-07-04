@@ -13,6 +13,7 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
@@ -44,6 +45,7 @@ public class ProductService {
 
     private final ProductRepository productRepository;
     private final MerchantRepository merchantRepository;
+    private final OrderRepository orderRepository;
     private final ResidentRepository residentRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ProductConverter productConverter;
@@ -59,6 +61,7 @@ public class ProductService {
             String category,
             String status,
             String propertyCompanyId,
+            String productType,
             String sort) {
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
@@ -73,11 +76,15 @@ public class ProductService {
             throw new BizException(ErrorCode.PERMISSION_DENIED);
         }
 
+        List<String> consumedMerchantIds = resolveConsumedMerchantIds(productType);
+        String merchantCategoryFilter = resolveMerchantCategoryFilter(productType);
+
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<Product> productPage = productRepository.findAll(
                 ProductSpecifications.withFilters(
                         scopedPropertyCompanyId, merchantId, keyword, category,
-                        publicOnly ? null : status, publicOnly),
+                        publicOnly ? null : status, publicOnly,
+                        merchantCategoryFilter, consumedMerchantIds),
                 pageable);
 
         Map<String, Merchant> merchantMap = loadMerchantMap(productPage.getContent());
@@ -409,5 +416,23 @@ public class ProductService {
             orders[i] = desc ? Sort.Order.desc(field) : Sort.Order.asc(field);
         }
         return Sort.by(orders);
+    }
+
+    private List<String> resolveConsumedMerchantIds(String productType) {
+        if (!"consumed".equals(productType)) {
+            return null;
+        }
+        String userId = UserContext.currentUserId();
+        if (userId == null) {
+            return List.of();
+        }
+        return orderRepository.findDistinctMerchantIdsByResidentId(userId);
+    }
+
+    private String resolveMerchantCategoryFilter(String productType) {
+        if (!StringUtils.hasText(productType) || "consumed".equals(productType)) {
+            return null;
+        }
+        return productType;
     }
 }

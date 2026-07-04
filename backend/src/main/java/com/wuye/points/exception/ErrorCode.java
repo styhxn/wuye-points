@@ -21,6 +21,7 @@ public enum ErrorCode {
     FAMILY_MEMBER_LIMIT(30002, "家庭人数超限"),
     WECHAT_AUTH_FAILED(30003, "微信授权失败"),
     MERCHANT_DUPLICATE_BINDING(30004, "该商家已在当前物业下挂接"),
+    RESIDENT_DUPLICATE_PHONE(30005, "该手机号在当前物业公司下已存在"),
 
     // 积分 40xxx
     POINT_INSUFFICIENT(40001, "积分余额不足"),
@@ -35,6 +36,7 @@ public enum ErrorCode {
     MERCHANT_AUDITING(60002, "商家入驻审核中"),
     AUDIT_ALREADY_PROCESSED(60003, "审核已处理"),
     PRODUCT_NOT_FOUND(60004, "商品不存在"),
+    MERCHANT_ALREADY_KICKED(60005, "商家已被踢出"),
 
     // 订单 70xxx
     ORDER_NOT_FOUND(70001, "订单不存在"),

@@ -69,7 +69,9 @@ public class PermissionInterceptor implements HandlerInterceptor {
             Map.entry("POST:/admin/residents", "coin:freeze"),
             Map.entry("POST:/admin/coin-expiry", "coin:expiry_run"),
             // 2年清零
-            Map.entry("POST:/admin/point-clear", "point:clear_run")
+            Map.entry("POST:/admin/point-clear", "point:clear_run"),
+            // 商家踢出
+            Map.entry("POST:/admin/merchants/*/kick", "merchant:kick")
     );
 
     private static final Set<String> PLATFORM_ONLY_PATHS = Set.of(

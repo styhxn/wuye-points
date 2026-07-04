@@ -107,7 +107,7 @@ public class MerchantWithdrawalService {
                 .feeRate(withdrawal.getFeeRate())
                 .feeAmount(withdrawal.getFeeAmount())
                 .actualAmount(withdrawal.getActualAmount())
-                .auditStatus(withdrawal.getAuditStatus())
+                .status(withdrawal.getAuditStatus())
                 .auditedAt(DateTimeUtil.toIsoUtc(withdrawal.getAuditedAt()))
                 .completedAt(DateTimeUtil.toIsoUtc(withdrawal.getCompletedAt()))
                 .createdAt(DateTimeUtil.toIsoUtc(withdrawal.getCreatedAt()))

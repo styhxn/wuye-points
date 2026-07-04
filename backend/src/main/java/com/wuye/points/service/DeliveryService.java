@@ -75,12 +75,24 @@ public class DeliveryService {
         delivery.setOrderId(order.getId());
         delivery.setPropertyCompanyId(order.getPropertyCompanyId());
         delivery.setStatus("pending");
-        delivery.setFee(defaultDecimal(order.getDeliveryFee()));
+        delivery.setFee(resolveDeliveryFee(order, merchant, rule));
         delivery.setCourierEarning(courierEarning);
         delivery.setPickupAddress(merchant != null ? merchant.getAddress() : null);
         delivery.setDeliveryAddress(order.getAddress());
         delivery.setContactPhone(order.getContactPhone());
         deliveryRepository.save(delivery);
+    }
+
+    private BigDecimal resolveDeliveryFee(Order order, Merchant merchant, DeliveryRule rule) {
+        if (merchant != null && merchant.getFreeDeliveryThreshold() != null
+                && order.getTotalAmount() != null
+                && order.getTotalAmount().compareTo(merchant.getFreeDeliveryThreshold()) >= 0) {
+            return BigDecimal.ZERO;
+        }
+        if (merchant != null && merchant.getDeliveryFee() != null) {
+            return merchant.getDeliveryFee();
+        }
+        return defaultDecimal(order.getDeliveryFee());
     }
 
     @Transactional

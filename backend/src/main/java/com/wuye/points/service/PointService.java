@@ -115,11 +115,22 @@ public class PointService {
         Family family = familyRepository.findById(resident.getFamilyId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
 
+        List<Resident> members = residentRepository.findByFamilyId(family.getId());
+        List<FamilyPointBalanceResponse.Member> memberItems = members.stream()
+                .filter(m -> ResidentStatus.active.name().equalsIgnoreCase(m.getStatus()))
+                .map(m -> FamilyPointBalanceResponse.Member.builder()
+                        .id(m.getId())
+                        .name(m.getName())
+                        .pointBalance(m.getPointBalance() != null ? m.getPointBalance() : 0)
+                        .relation(m.getFamilyRelation())
+                        .build())
+                .toList();
+
         return FamilyPointBalanceResponse.builder()
                 .familyId(family.getId())
                 .familyName(family.getName())
-                .pointBalance(defaultFamilyPointBalance(family))
-                .memberCount(family.getMemberCount() != null ? family.getMemberCount() : 0)
+                .totalPointBalance(defaultFamilyPointBalance(family))
+                .members(memberItems)
                 .build();
     }
 
@@ -448,6 +459,52 @@ public class PointService {
     @Transactional(readOnly = true)
     public ExpiringPointsResponse getExpiringPoints() {
         roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+
+        if (!StringUtils.hasText(resident.getPropertyCompanyId())) {
+            return ExpiringPointsResponse.builder()
+                    .expiringPoints(0)
+                    .expiringDate(null)
+                    .build();
+        }
+
+        PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
+                .orElse(null);
+        if (company == null || !Boolean.TRUE.equals(company.getTwoYearClearEnabled())) {
+            return ExpiringPointsResponse.builder()
+                    .expiringPoints(0)
+                    .expiringDate(null)
+                    .build();
+        }
+
+        Page<PropertyFee> unpaidPage = propertyFeeRepository.findOldestUnpaidFees(
+                resident.getId(), PageRequest.of(0, 1));
+        if (unpaidPage.isEmpty()) {
+            return ExpiringPointsResponse.builder()
+                    .expiringPoints(0)
+                    .expiringDate(null)
+                    .build();
+        }
+
+        PropertyFee oldestUnpaid = unpaidPage.getContent().get(0);
+        if (oldestUnpaid.getDueDate() == null) {
+            return ExpiringPointsResponse.builder()
+                    .expiringPoints(0)
+                    .expiringDate(null)
+                    .build();
+        }
+
+        LocalDate expiryDate = oldestUnpaid.getDueDate().plusYears(2);
+        LocalDate now = LocalDate.now();
+        LocalDate in30Days = now.plusDays(30);
+
+        if (expiryDate.isAfter(now) && !expiryDate.isAfter(in30Days)) {
+            return ExpiringPointsResponse.builder()
+                    .expiringPoints(defaultPointBalance(resident))
+                    .expiringDate(DateTimeUtil.toIsoUtc(expiryDate.atStartOfDay()))
+                    .build();
+        }
+
         return ExpiringPointsResponse.builder()
                 .expiringPoints(0)
                 .expiringDate(null)

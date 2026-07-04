@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -25,4 +26,6 @@ public interface ActivityGroupSubscriptionRepository extends JpaRepository<Activ
 
     Optional<ActivityGroupSubscription> findFirstByGroupIdAndResidentIdAndStatusAndEndDateGreaterThanEqualOrderByEndDateDesc(
             String groupId, String residentId, String status, LocalDate date);
+
+    List<ActivityGroupSubscription> findByEndDateBetweenAndStatus(LocalDate start, LocalDate end, String status);
 }

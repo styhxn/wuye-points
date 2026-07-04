@@ -5,7 +5,10 @@ import com.wuye.points.entity.Product;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
+
+import java.util.List;
 
 public final class ProductSpecifications {
 
@@ -18,7 +21,9 @@ public final class ProductSpecifications {
             String keyword,
             String category,
             String status,
-            boolean publicOnly) {
+            boolean publicOnly,
+            String merchantCategory,
+            List<String> consumedMerchantIds) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<Predicate>();
 
@@ -31,6 +36,9 @@ public final class ProductSpecifications {
                 if (publicOnly) {
                     merchantPredicates.add(cb.equal(merchantRoot.get("auditStatus"), "approved"));
                     merchantPredicates.add(cb.equal(merchantRoot.get("status"), "active"));
+                }
+                if (StringUtils.hasText(merchantCategory)) {
+                    merchantPredicates.add(cb.equal(merchantRoot.get("category"), merchantCategory));
                 }
                 merchantSub.where(cb.and(merchantPredicates.toArray(new Predicate[0])));
                 predicates.add(root.get("merchantId").in(merchantSub));
@@ -50,6 +58,9 @@ public final class ProductSpecifications {
             if (StringUtils.hasText(keyword)) {
                 String like = "%" + keyword.trim() + "%";
                 predicates.add(cb.like(root.get("name"), like));
+            }
+            if (!CollectionUtils.isEmpty(consumedMerchantIds)) {
+                predicates.add(root.get("merchantId").in(consumedMerchantIds));
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

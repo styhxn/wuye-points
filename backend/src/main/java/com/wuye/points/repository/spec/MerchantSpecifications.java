@@ -14,6 +14,7 @@ public final class MerchantSpecifications {
             String keyword,
             String category,
             String merchantLevel,
+            String auditStatus,
             boolean publicOnly) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
@@ -27,7 +28,9 @@ public final class MerchantSpecifications {
             if (StringUtils.hasText(merchantLevel)) {
                 predicates.add(cb.equal(root.get("merchantLevel"), merchantLevel));
             }
-            if (publicOnly) {
+            if (StringUtils.hasText(auditStatus)) {
+                predicates.add(cb.equal(root.get("auditStatus"), auditStatus));
+            } else if (publicOnly) {
                 predicates.add(cb.equal(root.get("auditStatus"), "approved"));
                 predicates.add(cb.equal(root.get("status"), "active"));
             }

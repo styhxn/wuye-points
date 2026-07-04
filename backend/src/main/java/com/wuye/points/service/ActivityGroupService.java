@@ -11,6 +11,7 @@ import com.wuye.points.dto.activity.LeaveActivityGroupResponse;
 import com.wuye.points.dto.activity.RemoveActivityGroupMemberResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupRequest;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
+import com.wuye.points.dto.activity.SubscriptionStatusResponse;
 import com.wuye.points.dto.activity.UpdateActivityGroupRequest;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.ActivityGroup;
@@ -49,6 +50,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -174,6 +176,36 @@ public class ActivityGroupService {
                 .toList();
 
         return PageResponse.of(list, page, pageSize, subscriptionPage.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public SubscriptionStatusResponse getSubscriptionStatus(String id) {
+        roleGuard.requireAnyRole("resident");
+        validateActivityGroupId(id);
+
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        LocalDate today = LocalDate.now();
+
+        Optional<ActivityGroupSubscription> subscriptionOpt = activityGroupSubscriptionRepository
+                .findFirstByGroupIdAndResidentIdAndStatusAndEndDateGreaterThanEqualOrderByEndDateDesc(
+                        id, resident.getId(), "active", today);
+
+        if (subscriptionOpt.isEmpty()) {
+            return SubscriptionStatusResponse.builder()
+                    .subscribed(false)
+                    .build();
+        }
+
+        ActivityGroupSubscription subscription = subscriptionOpt.get();
+        refreshSubscriptionStatus(subscription);
+
+        return SubscriptionStatusResponse.builder()
+                .subscribed("active".equals(subscription.getStatus()))
+                .subscriptionType(subscription.getSubType())
+                .startDate(subscription.getStartDate() != null ? subscription.getStartDate().toString() : null)
+                .endDate(subscription.getEndDate() != null ? subscription.getEndDate().toString() : null)
+                .status(subscription.getStatus())
+                .build();
     }
 
     @Transactional

@@ -10,6 +10,7 @@ import com.wuye.points.dto.message.MessageListItemResponse;
 import com.wuye.points.dto.message.NeighborChatRequest;
 import com.wuye.points.dto.message.NeighborChatResponse;
 import com.wuye.points.dto.message.NeighborLimitResponse;
+import com.wuye.points.dto.message.NeighborSearchResponse;
 import com.wuye.points.entity.Message;
 import com.wuye.points.entity.NeighborContactLimit;
 import com.wuye.points.entity.PropertyCompany;
@@ -67,7 +68,7 @@ public class MessageService {
             String readStatus,
             String fromId,
             String sort) {
-        roleGuard.requireAnyRole("resident", "property_admin");
+        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -81,7 +82,9 @@ public class MessageService {
         String currentRole = UserContext.currentRole();
         boolean propertyAdminView = roleGuard.isPropertyAdmin();
 
-        if (roleGuard.isResident()) {
+        if (roleGuard.isPlatformAdmin()) {
+            propertyCompanyId = null;
+        } else if (roleGuard.isResident()) {
             Resident resident = getActiveResident(currentUserId);
             propertyCompanyId = resident.getPropertyCompanyId();
             currentRole = resident.getRole();
@@ -107,7 +110,7 @@ public class MessageService {
 
     @Transactional(readOnly = true)
     public MessageDetailResponse getMessage(String id) {
-        roleGuard.requireAnyRole("resident", "property_admin", "technician", "courier", "merchant");
+        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin", "technician", "courier", "merchant");
         validateMessageId(id);
 
         Message message = getReadableMessage(id);
@@ -145,7 +148,9 @@ public class MessageService {
         Resident receiver = null;
         if (StringUtils.hasText(request.getToId())) {
             receiver = getActiveResident(request.getToId());
-            assertSameProperty(propertyCompanyId, receiver.getPropertyCompanyId());
+            if (!roleGuard.isPlatformAdmin()) {
+                assertSameProperty(propertyCompanyId, receiver.getPropertyCompanyId());
+            }
         }
 
         Message message = buildMessage(
@@ -170,6 +175,14 @@ public class MessageService {
         String toRole = StringUtils.hasText(request.getToRole()) ? request.getToRole() : "technician";
         if (!RoleGuard.BROADCAST_TARGET_ROLES.contains(toRole)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "toRole值无效");
+        }
+
+        if ("technician".equals(toRole)) {
+            List<Resident> technicians = residentRepository
+                    .findByPropertyCompanyIdAndRole(sender.getPropertyCompanyId(), "technician");
+            if (technicians.isEmpty()) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "当前物业下没有技术员，无法广播");
+            }
         }
 
         Message message = buildMessage(
@@ -275,6 +288,34 @@ public class MessageService {
                 .build();
     }
 
+    @Transactional(readOnly = true)
+    public List<NeighborSearchResponse> searchNeighbors(String building, String unit) {
+        roleGuard.requireAnyRole("resident");
+
+        Resident currentResident = getActiveResident(UserContext.currentUserId());
+        String propertyCompanyId = currentResident.getPropertyCompanyId();
+
+        if (!StringUtils.hasText(building) || !StringUtils.hasText(unit)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "楼栋和单元不能为空");
+        }
+
+        List<Resident> neighbors = residentRepository
+                .findByPropertyCompanyIdAndBuildingAndUnitAndStatus(
+                        propertyCompanyId, building, unit, "active");
+
+        return neighbors.stream()
+                .filter(r -> !r.getId().equals(currentResident.getId()))
+                .map(r -> NeighborSearchResponse.builder()
+                        .residentId(r.getId())
+                        .name(r.getName())
+                        .avatarUrl(r.getAvatarUrl())
+                        .building(r.getBuilding())
+                        .unit(r.getUnit())
+                        .room(r.getRoom())
+                        .build())
+                .toList();
+    }
+
     private PageResponse<MessageListItemResponse> buildListPage(Page<Message> messagePage, int page, int pageSize) {
         List<String> senderIds = messagePage.getContent().stream()
                 .map(Message::getFromId)
@@ -332,6 +373,9 @@ public class MessageService {
 
     private void assertCanMarkRead(Message message) {
         String currentUserId = UserContext.currentUserId();
+        if (roleGuard.isPlatformAdmin()) {
+            return;
+        }
         if (roleGuard.isPropertyAdmin()) {
             return;
         }

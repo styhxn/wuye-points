@@ -28,4 +28,9 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
     List<Resident> findByPropertyCompanyIdAndRole(String propertyCompanyId, String role);
 
     Optional<Resident> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
+
+    boolean existsByPhoneAndPropertyCompanyId(String phone, String propertyCompanyId);
+
+    List<Resident> findByPropertyCompanyIdAndBuildingAndUnitAndStatus(
+            String propertyCompanyId, String building, String unit, String status);
 }

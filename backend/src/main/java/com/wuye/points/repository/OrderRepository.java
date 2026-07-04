@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -37,4 +38,11 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
             WHERE o.residentId = :residentId AND o.orderStatus = 'completed'
             """)
     long countCompletedOrders(@Param("residentId") String residentId);
+
+    @Query("""
+            SELECT DISTINCT o.merchantId FROM Order o
+            WHERE o.residentId = :residentId AND o.orderStatus = 'completed'
+            AND o.merchantId IS NOT NULL
+            """)
+    List<String> findDistinctMerchantIdsByResidentId(@Param("residentId") String residentId);
 }

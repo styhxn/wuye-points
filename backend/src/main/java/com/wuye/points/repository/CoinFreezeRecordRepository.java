@@ -1,6 +1,8 @@
 package com.wuye.points.repository;
 
 import com.wuye.points.entity.CoinFreezeRecord;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -20,4 +22,10 @@ public interface CoinFreezeRecordRepository extends JpaRepository<CoinFreezeReco
     List<CoinFreezeRecord> findByPropertyCompanyId(String propertyCompanyId);
 
     Optional<CoinFreezeRecord> findByIdAndResidentId(String id, String residentId);
+
+    long countByPropertyCompanyIdAndAction(String propertyCompanyId, String action);
+
+    Page<CoinFreezeRecord> findByPropertyCompanyIdAndAction(String propertyCompanyId, String action, Pageable pageable);
+
+    Page<CoinFreezeRecord> findByAction(String action, Pageable pageable);
 }

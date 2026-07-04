@@ -150,4 +150,18 @@ public class RoleGuard {
             "pending", "confirmed", "in_progress", "completed", "cancelled");
     public static final Set<String> PROPERTY_COMPANY_STATUS = Set.of("active", "inactive");
     public static final Set<String> COIN_ISSUE_MODES = Set.of("auto", "manual_approval");
+
+    public static final Set<String> VALID_ROLES = Set.of(
+            "platform_admin", "property_admin", "community_admin",
+            "resident", "merchant", "courier", "technician",
+            "coordinator", "sector_leader", "individual_leader",
+            "activity_leader");
+
+    public static final Set<String> VALID_COMMUNITY_SERVICE_CATEGORIES = Set.of(
+            "cleaning_repair", "canteen", "tutoring", "elderly_care", "medical",
+            "pet_medical", "life_service", "dating");
+
+    public boolean isCommunityAdmin() {
+        return "community_admin".equals(UserContext.currentRole());
+    }
 }

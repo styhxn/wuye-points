@@ -25,11 +25,15 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .addPathPatterns("/**")
                 .excludePathPatterns(
                         "/auth/wechat-login",
+                        "/auth/admin-login",
                         "/auth/refresh-token",
                         "/auth/bind-phone",
                         "/error",
                         "/actuator/**",
-                        "/static/**"
+                        "/static/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html",
+                        "/v3/api-docs/**"
                 )
                 .order(1);
 

@@ -73,7 +73,7 @@ public class MerchantPointService {
                 .merchantId(purchase.getMerchantId())
                 .pointAmount(purchase.getPointAmount())
                 .payAmount(purchase.getPayAmount())
-                .auditStatus(purchase.getAuditStatus())
+                .status(purchase.getAuditStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(purchase.getCreatedAt()))
                 .build();
     }
@@ -185,7 +185,7 @@ public class MerchantPointService {
                 .id(purchase.getId())
                 .pointAmount(purchase.getPointAmount())
                 .payAmount(purchase.getPayAmount())
-                .auditStatus(purchase.getAuditStatus())
+                .status(purchase.getAuditStatus())
                 .remainingPoints(purchase.getRemainingPoints())
                 .auditedAt(DateTimeUtil.toIsoUtc(purchase.getAuditedAt()))
                 .auditorId(purchase.getAuditorId())

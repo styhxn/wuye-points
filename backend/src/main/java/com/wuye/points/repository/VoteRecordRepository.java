@@ -4,6 +4,9 @@ import com.wuye.points.entity.VoteRecord;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -25,4 +28,6 @@ public interface VoteRecordRepository extends JpaRepository<VoteRecord, String> 
     List<VoteRecord> findByOpinionBoxIdInAndFamilyId(Collection<String> opinionBoxIds, String familyId);
 
     boolean existsByOpinionBoxIdAndFamilyId(String opinionBoxId, String familyId);
+
+    Page<VoteRecord> findByResidentId(String residentId, Pageable pageable);
 }

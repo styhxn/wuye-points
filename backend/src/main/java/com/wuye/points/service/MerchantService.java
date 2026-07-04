@@ -63,6 +63,7 @@ public class MerchantService {
             String keyword,
             String category,
             String merchantLevel,
+            String auditStatus,
             String propertyCompanyId,
             String sort) {
         if (pageSize > 100) {
@@ -70,14 +71,23 @@ public class MerchantService {
         }
         validateListFilters(category, merchantLevel);
 
+        if (StringUtils.hasText(auditStatus)) {
+            if (UserContext.currentUserId() == null) {
+                throw new BizException(ErrorCode.TOKEN_MISSING);
+            }
+            if (!isAdminUser()) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+        }
+
         String scopedPropertyCompanyId = resolveBrowsePropertyCompanyId(propertyCompanyId);
         boolean includeMemberInfo = UserContext.currentUserId() != null;
-        boolean publicOnly = !isAdminUser();
+        boolean publicOnly = !isAdminUser() && !StringUtils.hasText(auditStatus);
 
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<Merchant> merchantPage = merchantRepository.findAll(
                 MerchantSpecifications.withFilters(
-                        scopedPropertyCompanyId, keyword, category, merchantLevel, publicOnly),
+                        scopedPropertyCompanyId, keyword, category, merchantLevel, auditStatus, publicOnly),
                 pageable);
 
         Map<String, MerchantPropertyConfig> configMap = loadConfigMap(

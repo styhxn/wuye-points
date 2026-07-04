@@ -8,6 +8,8 @@ import com.wuye.points.dto.propertyfee.PayPropertyFeeResponse;
 import com.wuye.points.dto.propertyfee.PropertyFeeDetailResponse;
 import com.wuye.points.dto.propertyfee.PropertyFeeListItemResponse;
 import com.wuye.points.entity.Community;
+import com.wuye.points.entity.Family;
+import com.wuye.points.entity.PointRecord;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.PropertyFee;
 import com.wuye.points.entity.PropertyFeeRule;
@@ -16,6 +18,8 @@ import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.CommunityRepository;
+import com.wuye.points.repository.FamilyRepository;
+import com.wuye.points.repository.PointRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.PropertyFeeRepository;
 import com.wuye.points.repository.PropertyFeeRuleRepository;
@@ -61,6 +65,8 @@ public class PropertyFeeService {
     private final PropertyFeeConverter propertyFeeConverter;
     private final PointService pointService;
     private final PropertyCoinService propertyCoinService;
+    private final PointRecordRepository pointRecordRepository;
+    private final FamilyRepository familyRepository;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -191,6 +197,7 @@ public class PropertyFeeService {
         fee.setPointDeducted(0);
         fee.setCoinDeducted(BigDecimal.ZERO);
         fee.setPaymentStatus("unpaid");
+        fee.setLateFee(BigDecimal.ZERO);
         fee.setDueDate(parseDate(request.getDueDate()));
         fee.setAutoDeduct(Boolean.TRUE.equals(request.getAutoDeduct()));
         propertyFeeRepository.save(fee);
@@ -251,6 +258,31 @@ public class PropertyFeeService {
         fee.setPaymentStatus(propertyFeeConverter.resolvePaymentStatus(fee));
         if ("paid".equals(fee.getPaymentStatus())) {
             fee.setPaidAt(LocalDateTime.now());
+
+            if (fee.getDueDate() != null && LocalDate.now().isBefore(fee.getDueDate())) {
+                PointRecord rewardRecord = new PointRecord();
+                rewardRecord.setId(idGenerator.generateId("pt"));
+                rewardRecord.setResidentId(fee.getResidentId());
+                rewardRecord.setFamilyId(fee.getFamilyId());
+                rewardRecord.setPropertyCompanyId(fee.getPropertyCompanyId());
+                rewardRecord.setPointType("earn");
+                rewardRecord.setAmount(100);
+                rewardRecord.setBalance(resident.getPointBalance() + 100);
+                rewardRecord.setSource("on_time_payment_reward");
+                rewardRecord.setSourceId(fee.getId());
+                rewardRecord.setDescription("准时缴费奖励");
+                pointRecordRepository.save(rewardRecord);
+
+                resident.setPointBalance(resident.getPointBalance() + 100);
+                residentRepository.save(resident);
+
+                if (fee.getFamilyId() != null) {
+                    familyRepository.findById(fee.getFamilyId()).ifPresent(family -> {
+                        family.setPointBalance(family.getPointBalance() + 100);
+                        familyRepository.save(family);
+                    });
+                }
+            }
         }
         propertyFeeRepository.save(fee);
 
@@ -279,6 +311,12 @@ public class PropertyFeeService {
         Map<String, Community> communityMap = loadCommunities(fees);
         Map<String, PropertyFeeRule> ruleCache = loadRules(fees);
 
+        for (PropertyFee fee : fees) {
+            PropertyFeeRule rule = propertyFeeConverter.pickRule(
+                    ruleCache, fee.getPropertyCompanyId(), fee.getFeeType());
+            fee.setLateFee(calculateLateFee(fee, rule));
+        }
+
         List<PropertyFeeListItemResponse> list = fees.stream()
                 .map(fee -> propertyFeeConverter.toListItem(
                         fee,
@@ -300,6 +338,7 @@ public class PropertyFeeService {
                 .findFirstByPropertyCompanyIdAndFeeTypeAndStatus(
                         fee.getPropertyCompanyId(), fee.getFeeType(), "active")
                 .orElse(null);
+        fee.setLateFee(calculateLateFee(fee, rule));
         return propertyFeeConverter.toDetail(fee, resident, community, rule);
     }
 
@@ -532,6 +571,33 @@ public class PropertyFeeService {
             direction = Sort.Direction.DESC;
         }
         return Sort.by(direction, field);
+    }
+
+    private BigDecimal calculateLateFee(PropertyFee fee, PropertyFeeRule rule) {
+        String status = propertyFeeConverter.resolvePaymentStatus(fee);
+        if (!"overdue".equals(status)) {
+            return BigDecimal.ZERO;
+        }
+        if (fee.getDueDate() == null || rule == null || rule.getOverdueRate() == null
+                || rule.getOverdueRate().compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal paidAmount = propertyFeeConverter.defaultPaidAmount(fee);
+        BigDecimal remainingAmount = fee.getAmount().subtract(paidAmount).max(BigDecimal.ZERO);
+        if (remainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        long overdueDays = java.time.temporal.ChronoUnit.DAYS.between(fee.getDueDate(), LocalDate.now());
+        if (overdueDays <= 0) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal lateFee = remainingAmount
+                .multiply(rule.getOverdueRate())
+                .multiply(BigDecimal.valueOf(overdueDays))
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal cap = fee.getAmount().multiply(new BigDecimal("0.50"))
+                .setScale(2, RoundingMode.HALF_UP);
+        return lateFee.min(cap);
     }
 
     private record FeePaymentBreakdown(int pointUsed, BigDecimal coinUsed, BigDecimal cashAmount) {

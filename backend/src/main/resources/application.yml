@@ -56,18 +56,18 @@ wechat:
     private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:/opt/wuye-points/cert/apiclient_key.pem}
     merchant-serial-number: ${WECHAT_PAY_MERCHANT_SERIAL_NUMBER:7824E2C7DE9B1BD8070146F2EFA1432A3DBA4070}
     app-id: ${WECHAT_PAY_APP_ID:wxf7230afd38275659}
-    notify-url: ${WECHAT_PAY_NOTIFY_URL:https://zlysapi.51jijiehao.com/api/v1/payment/wechat/notify}
+    notify-url: ${WECHAT_PAY_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/wechat/notify}
 
 app:
   payment:
     skip-sdk: ${APP_PAYMENT_SKIP_SDK:false}
   wechat:
-    skip-api: ${APP_WECHAT_SKIP_API:false}
+    skip-api: ${APP_WECHAT_SKIP_API:true}
   upload:
     path: ${UPLOAD_PATH:/data/uploads}
-    base-url: ${UPLOAD_BASE_URL:http://localhost:8888/api/v1/static}
+    base-url: ${UPLOAD_BASE_URL:https://test.yuanxusoftware.top/api/v1/static}
   cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:*}
+    allowed-origins: ${CORS_ORIGINS:http://localhost:*,http://test.yuanxusoftware.top:*}
   machine-id: ${MACHINE_ID:1}
 
 logging:
@@ -75,3 +75,12 @@ logging:
     com.wuye.points: INFO
     org.hibernate.SQL: WARN
     org.hibernate.type.descriptor.sql.BasicBinder: WARN
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  packages-to-scan: com.wuye.points.controller

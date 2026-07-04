@@ -1,6 +1,8 @@
 package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.dto.admin.permission.AccountListItemResponse;
+import com.wuye.points.dto.admin.permission.AccountListResponse;
 import com.wuye.points.dto.admin.permission.AppliedPresetResponse;
 import com.wuye.points.dto.admin.permission.CreateRolePresetRequest;
 import com.wuye.points.dto.admin.permission.GrantPermissionsRequest;
@@ -68,6 +70,52 @@ public class AdminPermissionService {
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
+
+    @Transactional(readOnly = true)
+    public AccountListResponse listAccounts(String keyword) {
+        permissionGuard.requirePermissionOrAdmin("permission.read");
+
+        String propertyCompanyId = roleGuard.isPlatformAdmin()
+                ? null
+                : UserContext.currentPropertyCompanyId();
+
+        List<Resident> residents;
+        if (propertyCompanyId != null) {
+            residents = residentRepository.findByPropertyCompanyId(propertyCompanyId);
+        } else {
+            residents = residentRepository.findAll();
+        }
+
+        if (StringUtils.hasText(keyword)) {
+            String lowerKeyword = keyword.toLowerCase();
+            residents = residents.stream()
+                    .filter(r -> (r.getName() != null && r.getName().toLowerCase().contains(lowerKeyword))
+                            || (r.getPhone() != null && r.getPhone().contains(keyword)))
+                    .toList();
+        }
+
+        List<AccountListItemResponse> accounts = residents.stream()
+                .filter(r -> r.getRole() != null)
+                .map(r -> {
+                    int permCount = permissionGuard.listEffectivePermissionCodes(
+                            r.getId(), r.getPropertyCompanyId()).size();
+                    return AccountListItemResponse.builder()
+                            .id(r.getId())
+                            .name(r.getName())
+                            .phone(maskPhone(r.getPhone()))
+                            .role(r.getRole())
+                            .propertyCompanyId(r.getPropertyCompanyId())
+                            .status(r.getStatus())
+                            .effectivePermissionCount(permCount)
+                            .build();
+                })
+                .toList();
+
+        return AccountListResponse.builder()
+                .accounts(accounts)
+                .total(accounts.size())
+                .build();
+    }
 
     @Transactional(readOnly = true)
     public PermissionListResponse listPermissions() {
@@ -551,5 +599,12 @@ public class AdminPermissionService {
             return code;
         }
         return code.replace('.', ':');
+    }
+
+    private String maskPhone(String phone) {
+        if (!StringUtils.hasText(phone) || phone.length() < 7) {
+            return phone;
+        }
+        return phone.substring(0, 3) + "****" + phone.substring(phone.length() - 4);
     }
 }

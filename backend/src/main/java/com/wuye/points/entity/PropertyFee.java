@@ -61,6 +61,9 @@ public class PropertyFee extends BaseEntity {
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
 
+    @Column(name = "late_fee", precision = 10, scale = 2)
+    private BigDecimal lateFee;
+
     @Column(name = "auto_deduct")
     private Boolean autoDeduct;
 }
