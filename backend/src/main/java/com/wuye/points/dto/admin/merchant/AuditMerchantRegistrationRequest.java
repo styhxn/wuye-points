@@ -2,6 +2,7 @@ package com.wuye.points.dto.admin.merchant;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 @Schema(description = "审核商家入驻申请请求")
@@ -10,6 +11,7 @@ public class AuditMerchantRegistrationRequest {
 
     @Schema(description = "审核结果", example = "approved", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "审核结果不能为空")
+    @Pattern(regexp = "approved|rejected", message = "审核结果值无效")
     private String auditResult;
 
     @Schema(description = "拒绝原因", example = "资料不完整")

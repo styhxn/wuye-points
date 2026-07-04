@@ -27,7 +27,6 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/auth/wechat-login",
                         "/auth/admin-login",
                         "/auth/refresh-token",
-                        "/auth/bind-phone",
                         "/error",
                         "/actuator/**",
                         "/static/**",

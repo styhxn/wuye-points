@@ -1,6 +1,7 @@
 package com.wuye.points.dto.order;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -19,7 +20,7 @@ public class PayOrderRequest {
     @Schema(description = "使用积分", example = "50")
     private Integer pointUsed;
 
-    @Min(value = 0, message = "使用物业币不能为负数")
+    @DecimalMin(value = "0", message = "使用物业币不能为负数")
     @Schema(description = "使用物业币", example = "10.00")
     private BigDecimal coinUsed;
 

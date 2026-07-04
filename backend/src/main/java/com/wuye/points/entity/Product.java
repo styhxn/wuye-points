@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 商品表
@@ -55,4 +56,8 @@ public class Product extends BaseEntity {
     /** active/inactive/sold_out */
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 软删除时间戳 */
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 }

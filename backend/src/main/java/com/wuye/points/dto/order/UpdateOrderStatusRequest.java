@@ -2,6 +2,7 @@ package com.wuye.points.dto.order;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
 
 @Data
@@ -9,6 +10,7 @@ import lombok.Data;
 public class UpdateOrderStatusRequest {
 
     @NotBlank(message = "订单状态不能为空")
+    @Pattern(regexp = "pending|paid|delivering|completed|cancelled|refunding|refunded", message = "订单状态值无效")
     @Schema(description = "订单状态", required = true, example = "pending", allowableValues = {"pending", "paid", "delivering", "completed", "cancelled", "refunding", "refunded"})
     private String orderStatus;
 

@@ -3,6 +3,8 @@ package com.wuye.points.repository;
 import com.wuye.points.entity.Product;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -14,7 +16,9 @@ import java.util.List;
 @Repository
 public interface ProductRepository extends JpaRepository<Product, String>, JpaSpecificationExecutor<Product> {
 
-    List<Product> findByMerchantId(String merchantId);
+    @Query("SELECT p FROM Product p WHERE p.merchantId = :merchantId AND p.deletedAt IS NULL")
+    List<Product> findByMerchantId(@Param("merchantId") String merchantId);
 
-    List<Product> findTop20ByMerchantIdAndStatusOrderByCreatedAtDesc(String merchantId, String status);
+    @Query("SELECT p FROM Product p WHERE p.merchantId = :merchantId AND p.status = :status AND p.deletedAt IS NULL ORDER BY p.createdAt DESC")
+    List<Product> findTop20ByMerchantIdAndStatusOrderByCreatedAtDesc(@Param("merchantId") String merchantId, @Param("status") String status);
 }

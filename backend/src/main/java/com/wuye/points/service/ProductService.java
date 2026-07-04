@@ -104,6 +104,12 @@ public class ProductService {
 
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        // 过滤已软删除的商品
+        if (product.getDeletedAt() != null) {
+            throw new BizException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
+
         Merchant merchant = merchantRepository.findById(product.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
 
@@ -147,6 +153,12 @@ public class ProductService {
 
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        // 过滤已软删除的商品
+        if (product.getDeletedAt() != null) {
+            throw new BizException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
+
         Merchant merchant = merchantRepository.findById(product.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
 
@@ -196,6 +208,12 @@ public class ProductService {
 
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        // 过滤已软删除的商品
+        if (product.getDeletedAt() != null) {
+            throw new BizException(ErrorCode.PRODUCT_NOT_FOUND);
+        }
+
         Merchant merchant = merchantRepository.findById(product.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
 
@@ -203,6 +221,7 @@ public class ProductService {
         assertProductOwnedByMerchant(product, merchant);
 
         product.setStatus("inactive");
+        product.setDeletedAt(java.time.LocalDateTime.now(java.time.ZoneOffset.UTC));
         productRepository.save(product);
 
         return DeleteProductResponse.builder()

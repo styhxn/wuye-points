@@ -27,6 +27,9 @@ public final class ProductSpecifications {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<Predicate>();
 
+            // 过滤已软删除的商品
+            predicates.add(cb.isNull(root.get("deletedAt")));
+
             if (StringUtils.hasText(propertyCompanyId)) {
                 Subquery<String> merchantSub = query.subquery(String.class);
                 var merchantRoot = merchantSub.from(Merchant.class);

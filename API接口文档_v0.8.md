@@ -1,6 +1,6 @@
 # 物业积分服务系统 — API 接口文档
 
-> **版本**：v1.2  
+> **版本**：v0.8  
 > **Base URL**：`https://test.yuanxusoftware.top/api/v1`  
 > **最后更新**：2026-07-04
 > **维护方**：连云港元序软件有限公司
@@ -398,7 +398,7 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/auth/profile \
 **请求示例**：
 
 ```bash
-curl -X GET "https://test.yuanxusoftware.top/api/v1/reports/overview?propertyCompanyId=pc_demo001&startDate=2026-06-01&endDate=2026-06-30" \
+curl -X GET "https://test.yuanxusoftware.top/api/v1/residents?page=1&pageSize=20&keyword=张&status=active" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
 ```
 
@@ -406,9 +406,15 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/reports/overview?propertyCom
 
 | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
+| `page` | `int` | ❌ | `1` | 页码 |
+| `pageSize` | `int` | ❌ | `20` | 每页条数 |
+| `keyword` | `String` | ❌ | | 搜索关键词（姓名/手机号） |
+| `communityId` | `String` | ❌ | | 小区ID筛选 |
+| `building` | `String` | ❌ | | 楼栋筛选 |
+| `status` | `String` | ❌ | | 状态筛选：`active`/`frozen`/`disabled` |
+| `role` | `String` | ❌ | | 角色筛选 |
 | `propertyCompanyId` | `String` | ❌ | | 物业公司ID（超管筛选） |
-| `startDate` | `String` | ❌ | | 开始日期 `yyyy-MM-dd` |
-| `endDate` | `String` | ❌ | | 结束日期 `yyyy-MM-dd` |
+| `sort` | `String` | ❌ | `-createdAt` | 排序字段 |
 
 **成功响应**：
 
@@ -466,7 +472,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/reports/overview?propertyCom
 | `list[].age` | `Integer` | 年龄 |
 | `list[].maritalStatus` | `String` | 婚姻状态：single/married/divorced/widowed |
 | `list[].hasChildren` | `Boolean` | 是否有子女 |
-| `list[].role` | `String` | 角色：`resident`/`property_admin`/`platform_admin`/`merchant`/`courier`/`coordinator`/`sector_leader`/`individual_leader`/`technician` |
+| `list[].role` | `String` | 角色：`resident`/`property_admin`/`platform_admin`/`merchant`/`courier`/`coordinator`/`sector_leader`/`individual_leader`/`activity_leader`/`technician` |
 | `list[].userType` | `String` | 用户类型：`owner`（业主）/`tenant`（租户） |
 | `list[].propertyCompanyId` | `String` | 物业公司ID |
 | `list[].communityId` | `String` | 小区ID |
@@ -1138,6 +1144,34 @@ curl -X DELETE "https://test.yuanxusoftware.top/api/v1/families/fam_demo001/memb
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
 ```
 
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `reason` | `String` | ❌ | 移除原因 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "familyId": "fam_demo001",
+    "memberId": "res_xxxxxx",
+    "removedAt": "2026-07-01 15:23:33"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `30001` | 404 | 家庭或成员不存在 |
+| `40003` | 403 | 非户主无权操作 |
+
 ---
 
 ## 4. 积分模块 (Points)
@@ -1693,6 +1727,27 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/property-coins/hide \
   }'
 ```
 
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `hidden` | `Boolean` | ✅ | `@NotNull` | 是否隐藏：`true`隐藏，`false`显示 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "residentId": "res_b7m9x1",
+    "coinHidden": true,
+    "updatedAt": "2026-07-01 15:23:33"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
 ---
 
 ### 5.7 POST `/property-coins/earn` — 获取物业币（管理员）
@@ -2050,6 +2105,8 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/products/prd_demo001 \
 **Auth**: Required  
 **Roles**: `merchant`（仅自己的商家）
 
+**说明**：执行软删除，设置 `status` 为 `inactive` 并记录 `deletedAt` 时间戳。已删除的商品不会在列表查询中返回。
+
 **成功响应**：
 
 ```json
@@ -2064,6 +2121,13 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/products/prd_demo001 \
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `30001` | 404 | 商品不存在 |
+| `40003` | 403 | 无权操作该商品 |
 
 ---
 
@@ -3389,6 +3453,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/announcements/ann_demo001/co
 
 ### 12.2 POST `/messages/neighbor-chat` — 邻里聊天
 
+**Auth**: Required  
+**Roles**: `resident`
+
 **请求示例**：
 
 ```bash
@@ -3755,6 +3822,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/files/upload-batch \
 ## 14. 物业公司模块 (Property Companies)
 
 ### 14.1 GET `/property-companies/current` — 获取当前配置
+
+**Auth**: Required  
+**Roles**: `resident`, `merchant`, `courier`, `activity_leader`, `technician`
 
 **成功响应**：
 
@@ -4276,11 +4346,55 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/property-fees \
   }'
 ```
 
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `residentId` | `String` | ✅ | `@NotBlank` | 住户ID |
+| `feeType` | `String` | ✅ | `@NotBlank` | 费用类型：`property`/`parking`/`water`/`electricity` |
+| `period` | `String` | ✅ | `@NotBlank` | 账期（如 `2026-Q3`、`2026-07`） |
+| `amount` | `BigDecimal` | ✅ | `@NotNull @DecimalMin("0.01")` | 应缴金额 |
+| `communityId` | `String` | ❌ | | 小区ID |
+| `dueDate` | `String` | ❌ | | 截止日期 `yyyy-MM-dd` |
+| `autoDeduct` | `Boolean` | ❌ | | 是否自动抵扣积分/物业币 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "pf_demo002",
+    "residentId": "res_b7m9x1",
+    "residentName": "张先生",
+    "feeType": "property",
+    "period": "2026-Q3",
+    "amount": 100.00,
+    "paidAmount": 0,
+    "paymentStatus": "unpaid",
+    "dueDate": "2026-07-31",
+    "createdAt": "2026-07-01 15:23:33"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `30001` | 404 | 住户不存在 |
+| `71002` | 409 | 该账期已存在物业费账单 |
+
 ---
 
 ## 16. 服务订单模块 (Service Orders)
 
 ### 16.1 GET `/service-orders` — 服务订单列表
+
+**Auth**: Required  
+**Roles**: `resident`（本人）, `property_admin`, `platform_admin`
 
 **Query 参数**：`page`, `pageSize`, `orderStatus`, `asProvider`, `sort`
 
@@ -4460,7 +4574,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/services/my-subscriptions?pa
 ### 17.3 POST `/services` — 创建服务
 
 **Auth**: Required  
-**Roles**: `property_admin`, `platform_admin`
+**Roles**: `merchant`, `individual_leader`, `resident`
 
 **请求示例**：
 
@@ -4475,6 +4589,39 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services \
     "memberPrice": 40.00,
     "priceUnit": "次"
   }'
+```
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `name` | `String` | ✅ | `@NotBlank` | 服务名称 |
+| `category` | `String` | ✅ | `@NotBlank` | 服务分类：`cleaning_repair`/`canteen`/`tutoring`/`elderly_care`/`medical`/`pet_medical`/`life_service`/`dating` |
+| `description` | `String` | ❌ | | 服务描述 |
+| `coverUrls` | `List<String>` | ❌ | | 封面图URL列表 |
+| `price` | `BigDecimal` | ❌ | `@DecimalMin("0.00")` | 价格 |
+| `memberPrice` | `BigDecimal` | ❌ | `@DecimalMin("0.00")` | 会员价 |
+| `priceUnit` | `String` | ❌ | | 价格单位（如 `次`、`月`、`年`） |
+| `isSubscription` | `Boolean` | ❌ | | 是否为订阅制服务 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "svc_demo002",
+    "name": "家电维修",
+    "category": "cleaning_repair",
+    "price": 50.00,
+    "memberPrice": 40.00,
+    "priceUnit": "次",
+    "status": "active",
+    "createdAt": "2026-07-01 15:23:33"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
 ```
 
 ---
@@ -4523,6 +4670,45 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services/svc_demo001/book \
     "paymentMethod": "wechat"
   }'
 ```
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `address` | `String` | ✅ | `@NotBlank` | 服务地址 |
+| `contactPhone` | `String` | ✅ | `@NotBlank` | 联系电话 |
+| `paymentMethod` | `String` | ✅ | `@NotBlank` | 支付方式：`wechat`/`point`/`property_coin`/`mixed` |
+| `serviceTime` | `String` | ❌ | | 期望服务时间 `yyyy-MM-dd HH:mm:ss` |
+| `remark` | `String` | ❌ | | 备注 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "so_demo001",
+    "serviceId": "svc_demo001",
+    "serviceName": "家电维修",
+    "orderStatus": "pending",
+    "amount": 50.00,
+    "paymentMethod": "wechat",
+    "serviceTime": "2026-07-05 10:00:00",
+    "address": "3栋5单元502",
+    "contactPhone": "13812345678",
+    "createdAt": "2026-07-01 15:23:33"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `30001` | 404 | 服务不存在 |
+| `17001` | 400 | 服务已下架 |
 
 ---
 
@@ -6568,6 +6754,9 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/coin-withdrawals?page=
 ---
 
 ### 33.2 POST `/admin/coin-withdrawals/{id}/audit` — 审核物业币提现
+
+**Auth**: Required  
+**Roles**: `property_admin`, `platform_admin`
 
 **请求示例**：
 
@@ -8762,6 +8951,9 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/users/res_admin01/perm
 
 ### 48.7 POST `/admin/users/{id}/permissions/grant` — 授予权限
 
+**Auth**: Required  
+**Roles**: `platform_admin`
+
 **请求示例**：
 
 ```bash
@@ -8783,6 +8975,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/users/res_b7m9x1/permi
 ---
 
 ### 48.8 POST `/admin/users/{id}/permissions/revoke` — 撤销权限
+
+**Auth**: Required  
+**Roles**: `platform_admin`
 
 **请求示例**：
 

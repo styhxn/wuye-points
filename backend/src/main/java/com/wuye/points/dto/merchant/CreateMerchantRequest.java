@@ -1,6 +1,7 @@
 package com.wuye.points.dto.merchant;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -45,14 +46,18 @@ public class CreateMerchantRequest {
     private String businessHours;
 
     @Schema(description = "配送费", example = "5.00")
+    @DecimalMin(value = "0", message = "配送费不能为负数")
     private BigDecimal deliveryFee;
 
     @Schema(description = "免配送费门槛", example = "50.00")
+    @DecimalMin(value = "0", message = "免配送费门槛不能为负数")
     private BigDecimal freeDeliveryThreshold;
 
     @Schema(description = "抽佣比例", example = "0.10")
+    @DecimalMin(value = "0", message = "抽佣比例不能为负数")
     private BigDecimal commissionRate;
 
     @Schema(description = "积分兑换比", example = "1.00")
+    @DecimalMin(value = "0", message = "积分兑换比不能为负数")
     private BigDecimal pointExchangeRate;
 }

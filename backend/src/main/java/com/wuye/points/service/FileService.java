@@ -61,6 +61,7 @@ public class FileService {
     @Transactional
     public UploadFileResponse upload(MultipartFile file, String category) {
         requireAuthenticated();
+        requireUploadRole();
         validateCategory(category);
         validateMultipartFile(file);
 
@@ -74,6 +75,7 @@ public class FileService {
     @Transactional
     public List<BatchUploadFileItemResponse> uploadBatch(List<MultipartFile> files, String category) {
         requireAuthenticated();
+        requireUploadRole();
         validateCategory(category);
         if (files == null || files.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_MISSING, "files不能为空");
@@ -392,6 +394,10 @@ public class FileService {
         if (UserContext.currentUserId() == null) {
             throw new BizException(ErrorCode.TOKEN_MISSING);
         }
+    }
+
+    private void requireUploadRole() {
+        roleGuard.requireAnyRole("platform_admin", "property_admin", "merchant", "resident", "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician");
     }
 
     private record CategoryRule(long maxSize, Set<String> extensions, Integer maxTotalCount, boolean generateThumb) {

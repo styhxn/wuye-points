@@ -30,8 +30,13 @@ public class PermissionInterceptor implements HandlerInterceptor {
             Map.entry("GET:/admin/platform-merchants", "merchant:read"),
             Map.entry("POST:/admin/platform-merchants", "merchant:create"),
             Map.entry("PUT:/admin/platform-merchants", "merchant:update"),
+            Map.entry("POST:/admin/platform-merchants/batch-config", "merchant:update"),
             // 商家挂接审核
             Map.entry("POST:/admin/merchant-audit", "merchant:audit"),
+            Map.entry("GET:/admin/merchant-point-purchases", "merchant:audit"),
+            Map.entry("POST:/admin/merchant-point-purchases", "merchant:audit"),
+            Map.entry("GET:/admin/merchant-withdrawals", "merchant:audit"),
+            Map.entry("POST:/admin/merchant-withdrawals", "merchant:audit"),
             // 物业公司管理
             Map.entry("GET:/admin/property-companies", "property_company:read"),
             Map.entry("POST:/admin/property-companies", "property_company:create"),
@@ -41,8 +46,10 @@ public class PermissionInterceptor implements HandlerInterceptor {
             Map.entry("GET:/admin/permissions", "permission:read"),
             Map.entry("POST:/admin/role-presets", "permission:manage"),
             Map.entry("PUT:/admin/role-presets", "permission:manage"),
+            Map.entry("GET:/admin/role-presets", "permission:read"),
             Map.entry("GET:/admin/users", "permission:read"),
             Map.entry("POST:/admin/users", "permission:manage"),
+            Map.entry("GET:/admin/permission-change-logs", "permission:read"),
             // 统筹管理
             Map.entry("GET:/admin/coordinators", "coordinator:read"),
             Map.entry("POST:/admin/coordinators", "coordinator:manage"),
@@ -59,19 +66,28 @@ public class PermissionInterceptor implements HandlerInterceptor {
             // 积分池
             Map.entry("GET:/admin/point-pools", "pool:read"),
             Map.entry("POST:/admin/point-pools", "pool:adjust"),
+            Map.entry("GET:/admin/point-pools/records", "pool:read"),
             // 线下积分
             Map.entry("POST:/admin/offline-points", "points:input"),
+            Map.entry("GET:/admin/offline-points/records", "points:input"),
             // 报表
             Map.entry("GET:/admin/reports", "report:view"),
             // 操作日志
             Map.entry("GET:/admin/operation-logs", "log:read"),
             // 物业币管控
             Map.entry("POST:/admin/residents", "coin:freeze"),
+            Map.entry("GET:/admin/coin-freeze-records", "coin:freeze"),
+            Map.entry("POST:/admin/coin-withdrawals", "coin:freeze"),
+            Map.entry("GET:/admin/coin-withdrawals", "coin:freeze"),
             Map.entry("POST:/admin/coin-expiry", "coin:expiry_run"),
+            Map.entry("GET:/admin/coin-expiry/records", "coin:expiry_run"),
             // 2年清零
             Map.entry("POST:/admin/point-clear", "point:clear_run"),
+            Map.entry("GET:/admin/point-clear/records", "point:clear_run"),
             // 商家踢出
-            Map.entry("POST:/admin/merchants/*/kick", "merchant:kick")
+            Map.entry("POST:/admin/merchants/*/kick", "merchant:kick"),
+            // 公告管理
+            Map.entry("GET:/admin/announcements", "announcement:read")
     );
 
     private static final Set<String> PLATFORM_ONLY_PATHS = Set.of(
