@@ -8,11 +8,11 @@ import lombok.Data;
 @Data
 public class SubscribeActivityGroupRequest {
 
-    @Schema(description = "订阅类型", example = "MONTHLY", allowableValues = {"MONTHLY", "YEARLY"}, required = true)
+    @Schema(description = "订阅类型", example = "monthly", allowableValues = {"monthly", "yearly"}, requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "subType不能为空")
     private String subType;
 
-    @Schema(description = "支付方式", example = "wechat", allowableValues = {"point", "property_coin", "wechat", "mixed"}, required = true)
+    @Schema(description = "支付方式", example = "property_coin", allowableValues = {"point", "property_coin", "wechat"}, requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "支付方式不能为空")
     private String paymentMethod;
 

@@ -1,6 +1,10 @@
 package com.wuye.points.repository.spec;
 
 import com.wuye.points.entity.Order;
+import com.wuye.points.entity.OrderItem;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.util.StringUtils;
 
@@ -17,9 +21,10 @@ public final class OrderSpecifications {
             String merchantId,
             String orderStatus,
             LocalDateTime startDate,
-            LocalDateTime endDate) {
+            LocalDateTime endDate,
+            String keyword) {
         return (root, query, cb) -> {
-            var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+            var predicates = new java.util.ArrayList<Predicate>();
 
             if (StringUtils.hasText(propertyCompanyId)) {
                 predicates.add(cb.equal(root.get("propertyCompanyId"), propertyCompanyId));
@@ -39,8 +44,30 @@ public final class OrderSpecifications {
             if (endDate != null) {
                 predicates.add(cb.lessThan(root.get("createdAt"), endDate));
             }
+            if (StringUtils.hasText(keyword)) {
+                String pattern = "%" + escapeLike(keyword.trim()) + "%";
 
-            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
+                Predicate orderNoMatch = cb.like(root.get("orderNo"), pattern, '\\');
+
+                // 商品名搜索：orders 与 order_items 无 JPA 关联映射，使用关联子查询
+                Subquery<String> itemSubquery = query.subquery(String.class);
+                Root<OrderItem> itemRoot = itemSubquery.from(OrderItem.class);
+                itemSubquery.select(itemRoot.get("orderId"))
+                        .where(
+                                cb.equal(itemRoot.get("orderId"), root.get("id")),
+                                cb.like(itemRoot.get("productName"), pattern, '\\'));
+                Predicate productNameMatch = cb.exists(itemSubquery);
+
+                predicates.add(cb.or(orderNoMatch, productNameMatch));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
         };
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 }

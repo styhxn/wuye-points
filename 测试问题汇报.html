@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>7.6测试问题排查汇报</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #333; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; }
+.header { text-align: center; padding: 30px 0; }
+.header h1 { font-size: 24px; color: #1a1a1a; margin-bottom: 8px; }
+.header .meta { color: #666; font-size: 14px; }
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.card-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+.badge-fix { background: #dcfce7; color: #166534; }
+.badge-fe { background: #e0e7ff; color: #3730a3; }
+.issue { padding: 14px 0; border-bottom: 1px solid #f0f0f0; }
+.issue:last-child { border-bottom: none; }
+.issue-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.issue-num { background: #f0f0f0; color: #666; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+.issue-num.bug { background: #fee2e2; color: #dc2626; }
+.issue-title { font-weight: 500; font-size: 15px; }
+.issue-desc { color: #666; font-size: 13px; line-height: 1.6; margin-left: 38px; }
+.issue-desc code { background: #f3f4f6; padding: 1px 6px; border-radius: 4px; font-size: 12px; color: #e11d48; }
+.api { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-top: 6px; margin-left: 38px; font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; line-height: 1.7; color: #334155; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>7.6 测试问题排查汇报</h1>
+    <div class="meta">后端接口排查 | 2026-07-06</div>
+  </div>
+
+  <!-- 后端已修复 -->
+  <div class="card">
+    <div class="card-title">✅ 后端已修复</div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num bug">8</div>
+        <div class="issue-title">支付方式示例值错误 <span class="badge badge-fix">已修复</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现传 <code>"微信支付"</code> 报错 paymentMethod 值无效。<br>
+        原因：Swagger 示例写的是中文，但后端只接受英文码。<br>
+        已修正所有接口的示例值为正确格式。
+      </div>
+      <div class="api">paymentMethod 可选值：
+  property_coin — 物业币
+  point         — 积分
+  wechat        — 微信
+  mixed         — 混合支付
+
+注意：必须传英文码，不能传中文</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num bug">11</div>
+        <div class="issue-title">预约服务混合支付已实现 <span class="badge badge-fix">已修复</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现物业币支付报错 paymentMethod 值无效，同时混合支付功能缺失。<br>
+        已实现混合支付：支持积分+物业币+微信组合付款。<br>
+        微信部分传0或不传即可跳过，测试时只用积分+物业币就能跑通。
+      </div>
+      <div class="api">预约服务混合支付：
+POST /services/{id}/book
+
+{
+  "paymentMethod": "mixed",
+  "pointUsed": 5000,      // 使用积分数
+  "coinUsed": 30,         // 使用物业币数
+  "address": "阳光花园1栋101",
+  "contactPhone": "13800138000"
+}
+
+计算逻辑：
+  积分部分 = pointUsed × 兑换比例（默认0.01）
+  物业币部分 = coinUsed × 1元
+  微信部分 = 总金额 - 积分部分 - 物业币部分
+  微信部分为0时自动跳过，无需对接微信支付</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num bug">12</div>
+        <div class="issue-title">不支持退出家庭 <span class="badge badge-fix">已修复</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现普通成员无法自行退出家庭。<br>
+        已新增退出家庭接口，户主不可退出（需先转让），积分物业币按成员人数平均分配。
+      </div>
+      <div class="api">退出家庭：
+POST /families/me/leave
+Header: Authorization: Bearer {token}
+
+响应示例：
+{
+  "memberId": "res_xxx",
+  "familyId": "fam_xxx",
+  "pointsHandling": "TRANSFER",
+  "coinsHandling": "TRANSFER"
+}
+
+限制：户主不可退出，需先转让户主或解散家庭</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num bug">2</div>
+        <div class="issue-title">时间格式问题 <span class="badge badge-fix">已修复</span></div>
+      </div>
+      <div class="issue-desc">
+        测试反馈时间显示怪异（如 2026-07-06T06:23:00.000Z）。<br>
+        原因：后端返回UTC时间，对国内用户不友好。<br>
+        已改为北京时间，格式：2026-07-06 14:23:00
+      </div>
+      <div class="api">改前：2026-07-06T06:23:00.000Z（UTC）
+改后：2026-07-06 14:23:00（北京时间）
+
+影响范围：所有接口的 createdAt、updatedAt、paidAt 等时间字段</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num bug">+</div>
+        <div class="issue-title">商家分类数据修正 <span class="badge badge-fix">已修复</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现商家分类名称与PRD不一致（如"餐饮""超市"不是PRD定义的分类）。<br>
+        已按PRD修正为6类，SQL已执行。
+      </div>
+      <div class="api">PRD定义的6类：
+  外卖 / 外卖小吃 / 周围商家 / 农家 / 自营 / 团购
+
+已修正的商家：
+  口福餐厅 → 外卖小吃
+  便民超市 → 周围商家
+  绿色农场 → 农家
+  我的超市 → 周围商家</div>
+    </div>
+  </div>
+
+  <!-- 前端待处理 -->
+  <div class="card">
+    <div class="card-title">🔧 前端待处理</div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">1</div>
+        <div class="issue-title">权限配置无法在前端体现 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        后端接口正常返回权限数据，但前端页面没有展示出来。<br>
+        需要前端调用权限接口并渲染到页面上。
+      </div>
+      <div class="api">获取用户权限：
+GET /admin/users/{id}/permissions
+Header: Authorization: Bearer {token}
+
+返回字段：
+  effectivePermissions — 当前生效的权限列表（如 ["permission:read", "permission:manage"]）
+  appliedPreset        — 角色预设信息（如 {id, name, code}）
+  overrides            — 自定义权限覆盖记录</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">3</div>
+        <div class="issue-title">禁用用户显示为"已冻结" <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现被禁用的用户在积分管理界面显示"已冻结"，解冻后账号恢复正常。<br>
+        原因：后端有4个独立状态，前端可能都当成了冻结显示。
+      </div>
+      <div class="api">后端返回的 status 字段值：
+  active   — 正常（显示"正常"）
+  frozen   — 冻结（显示"已冻结"）
+  disabled — 禁用（显示"已禁用"）
+  deleted  — 已删除（显示"已删除"）
+
+前端需要根据 status 字段分别显示不同文案</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">4</div>
+        <div class="issue-title">草稿公告混乱 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现草稿和已发布的公告混在一起，无法区分。<br>
+        后端支持按状态筛选，前端需要加Tab或筛选功能。
+      </div>
+      <div class="api">按状态筛选公告：
+GET /admin/announcements?status=draft      — 只看草稿
+GET /admin/announcements?status=published  — 只看已发布
+GET /admin/announcements?status=archived   — 只看已归档
+
+status 可选值：draft / published / archived</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">5</div>
+        <div class="issue-title">已加入小组却显示未加入 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现已加入的活动小组，详情页仍显示"未加入"。<br>
+        后端有订阅状态查询接口，前端未正确调用或展示。
+      </div>
+      <div class="api">查询订阅状态：
+GET /activity-groups/{id}/subscription-status
+Header: Authorization: Bearer {token}
+
+返回：
+{
+  "subscribed": true    // true=已加入 false=未加入
+}</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">6</div>
+        <div class="issue-title">外卖分类点击后显示商家但无商品 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试点击"外卖"分类后，商家显示了但商品列表为空。<br>
+        原因：商品的category（饮料/粮油）和商家的category（外卖）是不同字段，筛选逻辑有误。
+      </div>
+      <div class="api">筛选商家分类：
+GET /merchants?category=外卖
+
+PRD定义6类：外卖 / 周围商家 / 自营 / 农家 / 外卖小吃 / 团购
+
+获取商家下的商品（不能用category筛选）：
+GET /products?merchantId=mch_demo001</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">7</div>
+        <div class="issue-title">商家联盟分类筛选看不到商品 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        系统采用两级分类：商家有商家分类（外卖等），商品有子类目（饮料等）。<br>
+        筛选商品时必须用商家ID，不能用商家分类去筛商品。
+      </div>
+      <div class="api">获取某个商家的商品：
+GET /products?merchantId=mch_demo001
+
+错误做法：
+GET /products?category=外卖  ← 这样筛不到，因为商品category是"饮料""面食"等
+
+正确流程：
+1. 先按商家分类筛商家列表：GET /merchants?category=外卖
+2. 点击某个商家
+3. 再调用 GET /products?merchantId=xxx 获取该商家的所有商品</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">9</div>
+        <div class="issue-title">个人信息下拉框无法修改 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现性别、婚姻状况、是否有子女的下拉框无法修改保存。<br>
+        后端支持修改这些字段，前端下拉框未绑定提交逻辑。
+      </div>
+      <div class="api">修改个人信息：
+PUT /residents/me
+Header: Authorization: Bearer {token}
+
+请求体：
+{
+  "gender": 1,              // 0=未知 1=男 2=女
+  "maritalStatus": "已婚",   // 已婚/未婚/离异/丧偶
+  "hasChildren": true        // true=有子女 false=无子女
+}
+
+其他可修改字段：name, avatarUrl, age, building, unit, room</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">10</div>
+        <div class="issue-title">聊天模块无法相互聊天 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现用户之间无法发送消息。<br>
+        后端聊天接口完整，前端WebSocket连接或消息收发逻辑需排查。
+      </div>
+      <div class="api">发送邻里消息：
+POST /messages/neighbor-chat
+{
+  "targetResidentId": "res_xxx",
+  "content": "你好"
+}
+
+获取消息列表：
+GET /messages?page=1&pageSize=20
+
+获取未读数：
+GET /messages/unread-count
+
+WebSocket连接：
+ws://{host}/ws?token={accessToken}</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">13</div>
+        <div class="issue-title">不同角色看到管理员模块 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试用不同角色登录，都能看到管理员模块。<br>
+        后端权限拦截正常，前端菜单未根据角色隐藏/显示。
+      </div>
+      <div class="api">获取当前用户信息：
+GET /auth/profile
+Header: Authorization: Bearer {token}
+
+返回 role 字段，可选值：
+  platform_admin  — 平台管理员（可看所有管理模块）
+  property_admin  — 物业管理员（可看本物业管理模块）
+  resident        — 业主（只看业主端）
+  merchant        — 商家（只看商家端）
+  courier         — 快递员（只看配送端）
+
+前端根据 role 决定显示哪些菜单</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">14</div>
+        <div class="issue-title">管理端按钮/下拉框 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试发现部分按钮和下拉框点击无反应。<br>
+        需要和产品确认哪些交互需要实现。
+      </div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">15</div>
+        <div class="issue-title">缴费记录详情打开空白 <span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试点击缴费记录的"详情"按钮，页面显示空白。<br>
+        后端详情接口正常返回数据，前端页面路由或数据绑定有问题。
+      </div>
+      <div class="api">获取物业费详情：
+GET /property-fees/{id}
+Header: Authorization: Bearer {token}
+
+返回字段：
+{
+  "id": "pf_xxx",
+  "residentName": "张三",
+  "building": "3栋",
+  "unit": "1单元",
+  "room": "1201室",
+  "feeType": "property",
+  "period": "2026-07",
+  "amount": 156.80,
+  "paidAmount": 151.56,
+  "remainingAmount": 5.24,
+  "paymentStatus": "partial",
+  "dueDate": "2026-07-31"
+}</div>
+    </div>
+
+    <div class="issue">
+      <div class="issue-header">
+        <div class="issue-num">16</div>
+        <div class="issue-title">立即缴费跳到商品订单支付页面（¥0.00）<span class="badge badge-fe">前端</span></div>
+      </div>
+      <div class="issue-desc">
+        测试点击"立即缴费"跳到了商品订单支付页，显示¥0.00并报"订单信息异常"。<br>
+        原因：前端跳转到了商品订单支付页（/orders/{id}/pay），应该跳物业费支付页（/property-fees/{id}/pay）。
+      </div>
+      <div class="api">物业费支付接口（不是商品订单支付）：
+POST /property-fees/{id}/pay
+Header: Authorization: Bearer {token}
+
+请求体：
+{
+  "paymentMethod": "property_coin",
+  "amount": 5.24
+}
+
+paymentMethod 可选值：
+  property_coin — 物业币（1物业币=1元）
+  point         — 积分（按兑换比例折算）
+  wechat        — 微信（暂未对接）
+  mixed         — 混合支付（需传 pointUsed 和 coinUsed）
+
+注意：前端应该跳转到物业费支付页，不是商品订单支付页</div>
+    </div>
+  </div>
+
+  <div style="text-align:center; padding:16px; font-size:12px; color:#999;">
+    Base URL：https://test.yuanxusoftware.top/api/v1
+  </div>
+</div>
+</body>
+</html>

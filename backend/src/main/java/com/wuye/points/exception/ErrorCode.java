@@ -37,6 +37,7 @@ public enum ErrorCode {
     AUDIT_ALREADY_PROCESSED(60003, "审核已处理"),
     PRODUCT_NOT_FOUND(60004, "商品不存在"),
     MERCHANT_ALREADY_KICKED(60005, "商家已被踢出"),
+    MERCHANT_CONFIG_NOT_FOUND(60006, "商家在该物业下未完成挂接配置"),
 
     // 订单 70xxx
     ORDER_NOT_FOUND(70001, "订单不存在"),

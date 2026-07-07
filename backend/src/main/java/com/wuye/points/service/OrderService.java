@@ -87,6 +87,7 @@ public class OrderService {
         Merchant merchant = merchantRepository.findById(request.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
         assertMerchantAvailable(merchant);
+        loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
 
         List<PreparedItem> preparedItems = prepareItems(request.getItems(), merchant.getId(), resident);
         BigDecimal subtotal = preparedItems.stream()
@@ -235,6 +236,7 @@ public class OrderService {
             String merchantId,
             String startDate,
             String endDate,
+            String keyword,
             String sort) {
         roleGuard.requireAnyRole("resident");
         if (pageSize > 100) {
@@ -255,7 +257,8 @@ public class OrderService {
                         merchantId,
                         orderStatus,
                         start,
-                        end),
+                        end,
+                        normalizeKeyword(keyword)),
                 pageable);
 
         return buildPageResponse(orderPage, page, pageSize, LIST_ITEM_PREVIEW_LIMIT);
@@ -271,6 +274,7 @@ public class OrderService {
             String propertyCompanyId,
             String startDate,
             String endDate,
+            String keyword,
             String sort) {
         roleGuard.requireAnyRole("merchant", "property_admin", "platform_admin");
         if (pageSize > 100) {
@@ -293,7 +297,8 @@ public class OrderService {
                         scopedMerchantId,
                         orderStatus,
                         start,
-                        end),
+                        end,
+                        normalizeKeyword(keyword)),
                 pageable);
 
         return buildPageResponse(orderPage, page, pageSize, LIST_ITEM_PREVIEW_LIMIT);
@@ -686,7 +691,8 @@ public class OrderService {
     private MerchantPropertyConfig loadMerchantConfig(String merchantId, String propertyCompanyId) {
         return merchantPropertyConfigRepository
                 .findByMerchantIdAndPropertyCompanyId(merchantId, propertyCompanyId)
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "商家在该物业下未完成挂接配置"));
+                .filter(config -> "active".equals(config.getStatus()))
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_CONFIG_NOT_FOUND));
     }
 
     private void assertMerchantAvailable(Merchant merchant) {
@@ -853,6 +859,17 @@ public class OrderService {
         if (StringUtils.hasText(merchantId) && !merchantId.startsWith("mch_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "merchantId格式不正确");
         }
+    }
+
+    private String normalizeKeyword(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return null;
+        }
+        String trimmed = keyword.trim();
+        if (trimmed.length() > 100) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "keyword长度不能超过100");
+        }
+        return trimmed;
     }
 
     private String buildDefaultAddress(Resident resident) {

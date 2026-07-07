@@ -213,7 +213,8 @@ public class DistributionService {
         String scopedPropertyCompanyId = resolvePreviewPropertyCompanyId(propertyCompanyId);
         MerchantPropertyConfig config = merchantPropertyConfigRepository
                 .findByMerchantIdAndPropertyCompanyId(merchantId, scopedPropertyCompanyId)
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "商家在该物业下未完成挂接配置"));
+                .filter(item -> "active".equals(item.getStatus()))
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_CONFIG_NOT_FOUND));
 
         Resident resident = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));

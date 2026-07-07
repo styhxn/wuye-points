@@ -540,6 +540,28 @@ public class ActivityGroupService {
     }
 
     private ActivityGroupMember addMember(ActivityGroup group, String residentId, String role) {
+        Optional<ActivityGroupMember> existing = activityGroupMemberRepository
+                .findByGroupIdAndResidentId(group.getId(), residentId);
+
+        if (existing.isPresent()) {
+            ActivityGroupMember member = existing.get();
+            if ("active".equals(member.getStatus())) {
+                throw new BizException(ErrorCode.ACTIVITY_ALREADY_MEMBER);
+            }
+            member.setStatus("active");
+            member.setJoinedAt(LocalDateTime.now());
+            if (!"leader".equals(member.getRole())) {
+                member.setRole(role);
+            }
+            activityGroupMemberRepository.save(member);
+
+            if (!"leader".equals(role)) {
+                group.setMemberCount(activityGroupConverter.defaultCount(group.getMemberCount()) + 1);
+                activityGroupRepository.save(group);
+            }
+            return member;
+        }
+
         ActivityGroupMember member = new ActivityGroupMember();
         member.setId(idGenerator.generateId("agm"));
         member.setGroupId(group.getId());
@@ -660,7 +682,7 @@ public class ActivityGroupService {
     }
 
     private void validateActivityGroupId(String id) {
-        if (!StringUtils.hasText(id) || !id.startsWith("act_")) {
+        if (!StringUtils.hasText(id) || (!id.startsWith("act_") && !id.startsWith("ag_"))) {
             throw new BizException(ErrorCode.PARAM_INVALID, "活动组ID格式不正确");
         }
     }

@@ -75,9 +75,10 @@ public class OrderController {
             @Parameter(description = "商家ID") @RequestParam(required = false) String merchantId,
             @Parameter(description = "开始日期", example = "2026-01-01") @RequestParam(required = false) String startDate,
             @Parameter(description = "结束日期", example = "2026-12-31") @RequestParam(required = false) String endDate,
+            @Parameter(description = "关键词（订单号或商品名）") @RequestParam(required = false) String keyword,
             @Parameter(description = "排序字段", example = "-createdAt") @RequestParam(defaultValue = "-createdAt") String sort) {
         return ApiResponse.success(orderService.listMyOrders(
-                page, pageSize, orderStatus, merchantId, startDate, endDate, sort));
+                page, pageSize, orderStatus, merchantId, startDate, endDate, keyword, sort));
     }
 
     /**
@@ -95,10 +96,11 @@ public class OrderController {
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId,
             @Parameter(description = "开始日期", example = "2026-01-01") @RequestParam(required = false) String startDate,
             @Parameter(description = "结束日期", example = "2026-12-31") @RequestParam(required = false) String endDate,
+            @Parameter(description = "关键词（订单号或商品名）") @RequestParam(required = false) String keyword,
             @Parameter(description = "排序字段", example = "-createdAt") @RequestParam(defaultValue = "-createdAt") String sort) {
         return ApiResponse.success(orderService.listOrders(
                 page, pageSize, orderStatus, merchantId, residentId,
-                propertyCompanyId, startDate, endDate, sort));
+                propertyCompanyId, startDate, endDate, keyword, sort));
     }
 
     /**

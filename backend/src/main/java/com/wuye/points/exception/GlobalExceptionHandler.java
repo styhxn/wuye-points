@@ -73,7 +73,7 @@ public class GlobalExceptionHandler {
                 || code == 30003
                 || code == 40001 || code == 50001 || code == 93004
                 || code == 94004 || code == 80001) return HttpStatus.BAD_REQUEST;
-        if (code == 404 || code == 30001 || code == 60001 || code == 60004 || code == 70001 || code == 90001
+        if (code == 404 || code == 30001 || code == 60001 || code == 60004 || code == 60006 || code == 70001 || code == 90001
                 || code == 91001 || code == 91002 || code == 91003
                 || code == 92001 || code == 92002 || code == 93001
                 || code == 40002 || code == 90012 || code == 95001

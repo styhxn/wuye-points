@@ -1,9 +1,20 @@
 # 物业积分服务系统 — API 接口文档
 
-> **版本**：v0.8  
+> **版本**：v1.5  
 > **Base URL**：`https://test.yuanxusoftware.top/api/v1`  
-> **最后更新**：2026-07-04
+> **最后更新**：2026-07-07
 > **维护方**：连云港元序软件有限公司
+
+## v1.5 修订说明（2026-07-07）
+
+| 修订项 | 说明 |
+|--------|------|
+| 活动组订阅 `18.6` | 补充完整请求体、成功响应、错误响应示例 |
+| 活动组加入/退出 `18.7`/`18.8` | 明确免费组/付费组流程；支持退出后再次加入 |
+| 活动组 ID 格式 | 路径参数同时支持 `ag_`（历史/种子数据）与 `act_`（新建）前缀 |
+| 订单支付 `8.1`/`8.2` | 新增错误码 `60006`：商家在该物业下未完成挂接配置 |
+| 支付方式枚举 | 统一使用 `property_coin`，**勿使用** `coin` |
+| 错误码速查表 | 新增 `60006`；区分 `60001`（商家不存在）与 `60006`（挂接配置缺失） |
 
 ---
 
@@ -55,6 +66,7 @@
   - [管理端 — 个体负责人管理](#37-管理端--个体负责人管理)
   - [管理端 — 线下积分发放](#38-管理端--线下积分发放)
   - [管理端 — 板块负责人管理](#39-管理端--板块负责人管理)
+    - [板块负责人工作台](#396-板块负责人工作台)
   - [管理端 — 积分池管理](#40-管理端--积分池管理)
   - [管理端 — 统筹管理](#41-管理端--统筹管理)
   - [管理端 — 平台商家管理](#42-管理端--平台商家管理)
@@ -118,6 +130,15 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/auth/wechat-login \
 }
 ```
 
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `code` | `String` | ✅ | `@NotBlank @Size(max=256)` | 微信登录授权码 |
+| `encryptedData` | `String` | ❌ | | 加密数据（获取手机号时使用） |
+| `iv` | `String` | ❌ | `@Size(max=24)` | 解密向量 |
+| `propertyCompanyId` | `String` | ❌ | `@Size(max=32)` | 物业公司ID（新用户首次登录时必传） |
+
 **字段说明**：
 
 **data 字段**：
@@ -151,6 +172,18 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/auth/wechat-login \
 |--------|------|------|
 | `30003` | 400 | 微信授权失败 |
 | `20005` | 403 | 账号被禁用 |
+
+---
+
+> **鉴权说明**：以下接口已在代码中配置为 **Auth: Optional**，无需携带 Token 即可访问：
+> - `GET /announcements`、`GET /announcements/{id}`
+> - `GET /property-companies`、`GET /property-companies/{id}`、`GET /property-companies/{id}/communities`
+> - `GET /services`、`GET /services/{id}`
+> - `GET /activity-groups`、`GET /activity-groups/{id}`
+> - `GET /special-offers`、`GET /special-offers/{id}`
+> - `POST /auth/wechat-login`、`POST /auth/admin-login`、`POST /auth/refresh-token`
+> - `GET /products`、`GET /products/{id}`
+> - `GET /merchants`、`GET /merchants/{id}`（排除 `/merchants/my`）
 
 ---
 
@@ -2481,6 +2514,13 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders \
 | `remark` | `String` | ❌ | `@Size(max=500)` | 备注 |
 | `familyId` | `String` | ❌ | | 家庭ID |
 
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `60001` | 404 | 商家不存在 |
+| `60006` | 404 | 商家在该物业下未完成挂接配置 |
+
 **成功响应**：
 
 ```json
@@ -2529,7 +2569,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 
 | 字段 | 类型 | 必填 | 校验 | 说明 |
 |------|------|------|------|------|
-| `paymentMethod` | `String` | ✅ | `@NotBlank` | `point`/`coin`/`wechat`/`mixed` |
+| `paymentMethod` | `String` | ✅ | `@NotBlank` | `point`/`property_coin`/`wechat`/`mixed` |
 | `pointUsed` | `Integer` | ❌ | `@Min(0)` | 使用积分 |
 | `coinUsed` | `BigDecimal` | ❌ | `@Min(0)` | 使用物业币 |
 | `wechatPayCode` | `String` | ❌ | | 微信支付code |
@@ -2567,6 +2607,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 | `70003` | 409 | 并发冲突 |
 | `40001` | 400 | 积分余额不足 |
 | `50001` | 400 | 物业币余额不足 |
+| `60006` | 404 | 商家在该物业下未完成挂接配置 |
+
+> **说明**：`60001` 表示商家 ID 本身不存在；`60006` 表示商家存在，但在当前物业公司下缺少 `merchant_property_configs` 挂接记录（抽佣比例、积分兑换比等）。下单与支付均会校验挂接配置。
 
 ---
 
@@ -2578,9 +2621,22 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 **请求示例**：
 
 ```bash
-curl -X GET "https://test.yuanxusoftware.top/api/v1/orders/my?page=1&pageSize=10&orderStatus=paid" \
+curl -X GET "https://test.yuanxusoftware.top/api/v1/orders/my?page=1&pageSize=10&orderStatus=paid&keyword=可乐" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
 ```
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | `int` | ❌ | `1` | 页码 |
+| `pageSize` | `int` | ❌ | `20` | 每页条数 |
+| `orderStatus` | `String` | ❌ | | `pending`/`paid`/`delivering`/`completed`/`cancelled`/`refunding`/`refunded` |
+| `merchantId` | `String` | ❌ | | 商家ID |
+| `startDate` | `String` | ❌ | | 开始日期 `yyyy-MM-dd` |
+| `endDate` | `String` | ❌ | | 结束日期 `yyyy-MM-dd` |
+| `keyword` | `String` | ❌ | | 关键词搜索，按**订单号**或**商品名**模糊匹配（命中任一即返回），最长 100 字符 |
+| `sort` | `String` | ❌ | `-createdAt` | 排序 |
 
 ---
 
@@ -2592,7 +2648,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders/my?page=1&pageSize=10
 **请求示例**：
 
 ```bash
-curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&orderStatus=paid&startDate=2026-07-01" \
+curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&orderStatus=paid&startDate=2026-07-01&keyword=ORD202607" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
 ```
 
@@ -2608,6 +2664,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&or
 | `propertyCompanyId` | `String` | ❌ | | 物业公司ID |
 | `startDate` | `String` | ❌ | | 开始日期 `yyyy-MM-dd` |
 | `endDate` | `String` | ❌ | | 结束日期 `yyyy-MM-dd` |
+| `keyword` | `String` | ❌ | | 关键词搜索，按**订单号**或**商品名**模糊匹配（命中任一即返回），最长 100 字符 |
 | `sort` | `String` | ❌ | `-createdAt` | 排序 |
 
 **成功响应**：
@@ -3019,7 +3076,7 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/stat
 
 | 字段 | 类型 | 必填 | 校验 | 说明 |
 |------|------|------|------|------|
-| `status` | `String` | ✅ | `@NotBlank @Pattern("delivering|completed|cancelled")` | 目标状态 |
+| `status` | `String` | ✅ | `@NotBlank @Pattern("delivering|failed")` | 目标状态：`delivering`（快递员设置）/`failed`（物业管理员设置） |
 
 **成功响应**：
 
@@ -3211,6 +3268,152 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/delivery-rules/dr_demo001 \
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
+
+---
+
+## 10.5 管理端 — 送货管理
+
+### 10.5.1 GET `/admin/deliveries/overview` — 送货管理概览
+
+**Auth**: Required  
+**Roles**: `property_admin`, `platform_admin`
+
+**请求示例**：
+
+```bash
+curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/deliveries/overview?propertyCompanyId=pc_demo001" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `propertyCompanyId` | `String` | 超管必填 | 从token获取 | 物业公司ID |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "todayStats": {
+      "todayOrders": 12,
+      "orderGrowth": 3,
+      "onlineCouriers": 3,
+      "totalCouriers": 5,
+      "todayDeliveryFee": 156.50,
+      "capacityLoad": 60.0
+    },
+    "couriers": [
+      {
+        "id": "res_courier01",
+        "name": "吴十",
+        "todayCompleted": 5,
+        "monthIncome": 1250.00,
+        "status": "online"
+      },
+      {
+        "id": "res_courier02",
+        "name": "李四",
+        "todayCompleted": 3,
+        "monthIncome": 890.00,
+        "status": "offline"
+      }
+    ],
+    "recentDeliveries": [
+      {
+        "id": "dlv_demo001",
+        "time": "2026-07-05 14:30:00",
+        "residentName": "吴十",
+        "productDesc": "订单#ORD20260705001",
+        "fee": 1.00,
+        "status": "delivered"
+      }
+    ]
+  },
+  "timestamp": "2026-07-05 15:00:00"
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `todayStats.todayOrders` | `long` | 今日订单数 |
+| `todayStats.orderGrowth` | `long` | 订单增长率（与昨日对比） |
+| `todayStats.onlineCouriers` | `long` | 在线快递员数 |
+| `todayStats.totalCouriers` | `long` | 总快递员数 |
+| `todayStats.todayDeliveryFee` | `BigDecimal` | 今日配送费总额 |
+| `todayStats.capacityLoad` | `BigDecimal` | 运力负荷百分比 |
+| `couriers[].id` | `String` | 快递员ID |
+| `couriers[].name` | `String` | 快递员姓名 |
+| `couriers[].todayCompleted` | `long` | 今日完成单数 |
+| `couriers[].monthIncome` | `BigDecimal` | 本月收入 |
+| `couriers[].status` | `String` | `online`/`offline` |
+| `recentDeliveries[].id` | `String` | 配送单ID |
+| `recentDeliveries[].time` | `String` | 配送时间 |
+| `recentDeliveries[].residentName` | `String` | 快递员姓名 |
+| `recentDeliveries[].productDesc` | `String` | 商品描述 |
+| `recentDeliveries[].fee` | `BigDecimal` | 配送费 |
+| `recentDeliveries[].status` | `String` | 配送状态 |
+
+---
+
+### 10.5.2 GET `/admin/deliveries/capacity` — 运力效能分析
+
+**Auth**: Required  
+**Roles**: `property_admin`, `platform_admin`
+
+**请求示例**：
+
+```bash
+curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/deliveries/capacity?propertyCompanyId=pc_demo001&dimension=24h" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `propertyCompanyId` | `String` | 超管必填 | 从token获取 | 物业公司ID |
+| `dimension` | `String` | ❌ | `24h` | `24h`（今日）或 `7d`（近7天） |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "dimension": "24h",
+    "peakHour": "14:00",
+    "hourlyData": [
+      { "hour": 8, "label": "08:00", "deliveryCount": 2, "avgResponseMinutes": 12.5 },
+      { "hour": 9, "label": "09:00", "deliveryCount": 5, "avgResponseMinutes": 10.0 },
+      { "hour": 10, "label": "10:00", "deliveryCount": 3, "avgResponseMinutes": 11.2 },
+      { "hour": 11, "label": "11:00", "deliveryCount": 6, "avgResponseMinutes": 9.8 },
+      { "hour": 12, "label": "12:00", "deliveryCount": 4, "avgResponseMinutes": 10.5 },
+      { "hour": 13, "label": "13:00", "deliveryCount": 7, "avgResponseMinutes": 8.9 },
+      { "hour": 14, "label": "14:00", "deliveryCount": 8, "avgResponseMinutes": 8.5 },
+      { "hour": 15, "label": "15:00", "deliveryCount": 5, "avgResponseMinutes": 9.2 }
+    ]
+  },
+  "timestamp": "2026-07-05 15:30:00"
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `dimension` | `String` | 时间维度（`24h`/`7d`） |
+| `peakHour` | `String` | 配送高峰时段 |
+| `hourlyData[].hour` | `int` | 小时（0-23） |
+| `hourlyData[].label` | `String` | 时段标签（如 `14:00`） |
+| `hourlyData[].deliveryCount` | `long` | 该时段配送单数 |
+| `hourlyData[].avgResponseMinutes` | `BigDecimal` | 平均响应时间（分钟） |
 
 ---
 
@@ -4182,7 +4385,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/property-fees/pf_demo001/pay
 
 | 字段 | 类型 | 必填 | 校验 | 说明 |
 |------|------|------|------|------|
-| `paymentMethod` | `String` | ✅ | `@NotBlank` | 支付方式 |
+| `paymentMethod` | `String` | ✅ | `@NotBlank` | 支付方式：`point`/`property_coin`/`wechat`/`mixed` |
 | `amount` | `BigDecimal` | ✅ | `@NotNull @DecimalMin("0.01")` | 支付金额 |
 | `pointUsed` | `Integer` | ❌ | `@Min(0)` | 使用积分 |
 | `coinUsed` | `BigDecimal` | ❌ | `@DecimalMin("0.00")` | 使用物业币 |
@@ -4652,6 +4855,49 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services/svc_demo001/subscri
 
 ---
 
+### 17.4.1 POST `/services/{id}/unsubscribe` — 取消订阅
+
+**Auth**: Required  
+**Roles**: `resident`
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `String` | ✅ | 服务ID |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "ss_demo001",
+    "serviceId": "svc_demo001",
+    "serviceName": "家电维修",
+    "residentId": "res_b7m9x1",
+    "subType": "monthly",
+    "amount": 40.00,
+    "startDate": "2026-06-15",
+    "endDate": "2026-07-15",
+    "autoRenew": false,
+    "status": "cancelled",
+    "createdAt": "2026-06-15T10:00:00Z"
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+|--------|------|------|
+| `30001` | 404 | 服务不存在 |
+| `40001` | 400 | 未找到有效订阅 |
+
+---
+
 ### 17.5 POST `/services/{id}/book` — 预约服务
 
 **Auth**: Required  
@@ -4839,6 +5085,32 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/services/svc_demo001 \
 
 ## 18. 活动组模块 (Activity Groups)
 
+### 活动组 ID 格式
+
+路径参数 `{id}` 支持以下前缀：
+
+| 前缀 | 说明 | 示例 |
+|------|------|------|
+| `ag_` | 种子数据/早期活动组 | `ag_admin002` |
+| `act_` | 用户新建活动组（雪花 ID） | `act_74601000` |
+
+### 加入与订阅流程
+
+```
+免费活动组（monthlyFee=0 且 yearlyFee=0）
+  └─ POST /activity-groups/{id}/join  → 直接加入
+
+付费活动组（monthlyFee>0 或 yearlyFee>0）
+  ├─ 推荐：POST /activity-groups/{id}/subscribe  → 订阅并自动加入
+  └─ 或：先 subscribe，再 POST /join（须有效期内已订阅）
+
+退出后再次加入
+  └─ POST /leave 为软删除（status=inactive）
+  └─ 再次 join/subscribe 时复用原成员记录并重新激活
+```
+
+> **注意**：订阅接口 `subType` 使用小写 `monthly`/`yearly`；`paymentMethod` 必填，且须为 `property_coin`/`point`/`wechat`（不可用 `coin`）。
+
 ### 18.1 GET `/activity-groups/my-subscriptions` — 我的订阅列表
 
 **Auth**: Required  
@@ -4868,14 +5140,20 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-subscript
   "data": {
     "list": [
       {
-        "id": "ag_sub001",
-        "activityGroupId": "ag_demo001",
-        "activityGroupName": "广场舞队",
-        "subscriptionType": "free",
-        "status": "active",
+        "subscriptionId": "ags_001",
+        "groupId": "ag_demo001",
+        "groupName": "广场舞队",
+        "groupCover": "https://cdn.example.com/activity/ag_demo001.jpg",
+        "subType": "monthly",
+        "amount": 10.00,
+        "startDate": "2026-06-15",
+        "endDate": "2026-07-15",
+        "daysRemaining": 11,
+        "autoRenew": true,
+        "memberId": "agm_001",
         "isMember": true,
-        "subscribedAt": "2026-06-15 10:00:00",
-        "expiresAt": null
+        "status": "active",
+        "paidAt": "2026-06-15T10:00:00"
       }
     ],
     "pagination": {
@@ -4889,9 +5167,85 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-subscript
 }
 ```
 
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `subscriptionId` | `String` | 订阅记录ID |
+| `groupId` | `String` | 活动组ID |
+| `groupName` | `String` | 活动组名称 |
+| `groupCover` | `String` | 活动组封面 |
+| `subType` | `String` | 订阅类型：`monthly`/`yearly` |
+| `amount` | `BigDecimal` | 订阅金额 |
+| `startDate` | `String` | 订阅开始日期 |
+| `endDate` | `String` | 订阅结束日期 |
+| `daysRemaining` | `Integer` | 剩余天数 |
+| `autoRenew` | `Boolean` | 是否自动续费 |
+| `memberId` | `String` | 成员记录ID（`agm_xxx`），可用于退出/移除操作 |
+| `isMember` | `Boolean` | 当前是否已是活动组成员 |
+| `status` | `String` | 订阅状态：`active`/`expired`/`cancelled` |
+| `paidAt` | `String` | 支付时间 |
+
 ---
 
-### 18.2 GET `/activity-groups` — 活动组列表
+### 18.2 GET `/activity-groups/my-joined` — 我加入的活动组列表
+
+**Auth**: Required  
+**Roles**: `resident`
+
+**请求示例**：
+
+```bash
+curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-joined?page=1&pageSize=20" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `page` | `int` | ❌ | `1` | 页码 |
+| `pageSize` | `int` | ❌ | `20` | 每页条数 |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "list": [
+      {
+        "memberId": "agm_001",
+        "groupId": "ag_demo001",
+        "groupName": "广场舞队",
+        "groupCover": "https://cdn.example.com/activity/ag_demo001.jpg",
+        "role": "member",
+        "memberCount": 25,
+        "monthlyFee": 0.00,
+        "yearlyFee": 0.00,
+        "leaderId": "res_b7m9x1",
+        "leaderName": "张先生",
+        "status": "active",
+        "joinedAt": "2026-06-15T10:00:00"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "pageSize": 20,
+      "total": 1,
+      "totalPages": 1
+    }
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}
+```
+
+**注意**：此接口返回当前用户作为成员（包括组长和普通成员）加入的所有活动组，包含免费加入的组和订阅后加入的组。如需区分订阅信息，请调用 `GET /activity-groups/my-subscriptions`。
+
+---
+
+### 18.3 GET `/activity-groups` — 活动组列表
 
 **Auth**: Optional  
 **Roles**: `any`
@@ -4908,7 +5262,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-subscript
 
 ---
 
-### 18.3 POST `/activity-groups` — 创建活动组
+### 18.4 POST `/activity-groups` — 创建活动组
 
 **Auth**: Required  
 **Roles**: `resident`
@@ -4929,7 +5283,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
-### 18.4 GET `/activity-groups/{id}/members` — 成员列表
+### 18.5 GET `/activity-groups/{id}/members` — 成员列表
 
 **Auth**: Required  
 **Roles**: `resident`（活动组成员）, `property_admin`, `platform_admin`
@@ -4938,7 +5292,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `id` | `String` | ✅ | 活动组ID |
+| `id` | `String` | ✅ | 活动组ID（`ag_` 或 `act_` 前缀） |
 
 **成功响应**：
 
@@ -4975,36 +5329,191 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
-### 18.5 POST `/activity-groups/{id}/subscribe` — 订阅活动组
+### 18.6 POST `/activity-groups/{id}/subscribe` — 订阅活动组
 
 **Auth**: Required  
 **Roles**: `resident`
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `String` | ✅ | 活动组ID（`ag_` 或 `act_` 前缀） |
+
+**请求示例**：
+
+```bash
+curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups/ag_admin002/subscribe \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..." \
+  -d '{
+    "subType": "monthly",
+    "paymentMethod": "property_coin",
+    "autoRenew": false
+  }'
+```
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `subType` | `String` | ✅ | `@NotBlank` | 订阅类型：`monthly`（月订）/ `yearly`（年订），**小写** |
+| `paymentMethod` | `String` | ✅ | `@NotBlank` | 支付方式：`property_coin` / `point` / `wechat` |
+| `autoRenew` | `Boolean` | ❌ | | 是否自动续费，默认 `false` |
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "subscriptionId": "ags_xxx",
+    "groupId": "ag_admin002",
+    "groupName": "围棋社",
+    "subType": "monthly",
+    "amount": 20.00,
+    "startDate": "2026-07-07",
+    "endDate": "2026-08-07",
+    "autoRenew": false,
+    "status": "active",
+    "paidAt": "2026-07-07T05:20:00Z"
+  },
+  "timestamp": "2026-07-07 13:20:00"
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `subscriptionId` | `String` | 订阅记录ID（`ags_` 前缀） |
+| `groupId` | `String` | 活动组ID |
+| `groupName` | `String` | 活动组名称 |
+| `subType` | `String` | `monthly` / `yearly` |
+| `amount` | `BigDecimal` | 实付订阅金额（取活动组月费/年费） |
+| `startDate` | `String` | 订阅开始日期 `yyyy-MM-dd` |
+| `endDate` | `String` | 订阅结束日期 `yyyy-MM-dd` |
+| `autoRenew` | `Boolean` | 是否自动续费 |
+| `status` | `String` | 订阅状态，一般为 `active` |
+| `paidAt` | `String` | 支付时间（ISO-8601 UTC） |
+
+**业务说明**：
+
+- 订阅成功后会**自动加入**活动组（若当前不是活跃成员）
+- 免费活动组（月费/年费均为 0）调用本接口将返回 `10002`：`该活动组无需订阅`，请直接调用 `join`
+- 订阅金额按 `subType` 取活动组 `monthlyFee` 或 `yearlyFee`
 
 **错误响应**：
 
 | 错误码 | HTTP | 说明 |
 |--------|------|------|
-| `90008` | 409 | 已订阅该活动组 |
+| `10002` | 400 | 参数校验失败（如 `paymentMethod` 为空、`subType` 无效） |
+| `10002` | 400 | 该活动组无需订阅（免费组） |
+| `40001` | 400 | 积分余额不足（`paymentMethod=point`） |
+| `50001` | 400 | 物业币余额不足（`paymentMethod=property_coin`） |
+| `90008` | 409 | 已订阅该活动组（有效期内重复订阅） |
+
+**常见联调错误**：
+
+| 现象 | 原因 | 正确写法 |
+|------|------|----------|
+| `参数校验失败：支付方式不能为空` | 未传 `paymentMethod` 或字段名错误 | 请求体包含 `"paymentMethod": "property_coin"` |
+| `subType值无效` | 使用了 `MONTHLY`/`YEARLY` 大写 | 使用小写 `"monthly"` / `"yearly"` |
+| `paymentMethod值无效` | 使用了 `coin` | 使用 `property_coin` |
 
 ---
 
-### 18.6 POST `/activity-groups/{id}/join` — 加入活动组
+### 18.7 POST `/activity-groups/{id}/join` — 加入活动组
 
 **Auth**: Required  
 **Roles**: `resident`
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `String` | ✅ | 活动组ID（`ag_` 或 `act_` 前缀） |
+
+**请求示例**：
+
+```bash
+curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups/act_74601000/join \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**请求体**：无
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "groupId": "act_74601000",
+    "groupName": "周末跑步组",
+    "memberId": "agm_xxx",
+    "residentId": "res_dev001",
+    "role": "member",
+    "memberCount": 5,
+    "joinedAt": "2026-07-07T05:25:00Z"
+  },
+  "timestamp": "2026-07-07 13:25:00"
+}
+```
+
+**业务说明**：
+
+- **免费组**：直接加入
+- **付费组**：须先有有效期内的订阅记录，否则返回 `70002`：`请先订阅活动组`
+- **退出后再次加入**：允许；服务端复用原 `activity_group_members` 记录并重新激活（`status` 从 `inactive` → `active`）
 
 **错误响应**：
 
 | 错误码 | HTTP | 说明 |
 |--------|------|------|
-| `90009` | 409 | 已是活动组成员 |
+| `10002` | 400 | 活动组ID格式不正确 |
+| `70002` | 409 | 请先订阅活动组（付费组未订阅） |
+| `90009` | 409 | 已是活动组成员（当前为 active 状态） |
+| `90011` | 409 | 组长不能退出活动组 |
 
 ---
 
-### 18.7 POST `/activity-groups/{id}/leave` — 离开活动组
+### 18.8 POST `/activity-groups/{id}/leave` — 离开活动组
 
 **Auth**: Required  
 **Roles**: `resident`
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `String` | ✅ | 活动组ID（`ag_` 或 `act_` 前缀） |
+
+**请求体**：无
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "groupId": "act_74601000",
+    "residentId": "res_dev001",
+    "memberCount": 4,
+    "leftAt": "2026-07-07T05:30:00Z"
+  },
+  "timestamp": "2026-07-07 13:30:00"
+}
+```
+
+**业务说明**：
+
+- 退出为**软删除**（成员记录 `status` 置为 `inactive`，不物理删除）
+- 组长不可退出，须转让组长或解散活动组
+- 退出后可再次 `join` 或 `subscribe` 重新加入
 
 **错误响应**：
 
@@ -5015,7 +5524,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
-### 18.8 DELETE `/activity-groups/{id}/members/{memberId}` — 移除成员
+### 18.9 DELETE `/activity-groups/{id}/members/{memberId}` — 移除成员
 
 **Auth**: Required  
 **Roles**: `activity_leader`
@@ -5044,7 +5553,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
-### 18.9 PUT `/activity-groups/{id}` — 更新活动组
+### 18.10 PUT `/activity-groups/{id}` — 更新活动组
 
 **Auth**: Required  
 **Roles**: `activity_leader`
@@ -5083,7 +5592,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
-### 18.10 GET `/activity-groups/{id}` — 活动组详情
+### 18.11 GET `/activity-groups/{id}` — 活动组详情
 
 **Auth**: Optional  
 **Roles**: `any`
@@ -5160,6 +5669,15 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/opinion-boxes \
     "endTime": "2026-07-31 23:59:59"
   }'
 ```
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+|------|------|------|------|------|
+| `title` | `String` | ✅ | `@NotBlank @Size(max=200)` | 标题 |
+| `content` | `String` | ✅ | `@NotBlank @Size(max=2000)` | 内容 |
+| `startTime` | `String` | ❌ | | 开始时间，支持格式：`yyyy-MM-dd HH:mm:ss` 或 ISO-8601（`yyyy-MM-ddTHH:mm:ssZ`），默认当前时间 |
+| `endTime` | `String` | ❌ | | 结束时间，支持格式：`yyyy-MM-dd HH:mm:ss` 或 ISO-8601（`yyyy-MM-ddTHH:mm:ssZ`），必须晚于开始时间 |
 
 **错误响应**：
 
@@ -6621,6 +7139,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/residents/me/delete-request 
 | `30006` | 409 | 存在未支付的物业费 |
 | `30007` | 409 | 物业币余额不为0 |
 | `30008` | 409 | 户主家庭有其他成员 |
+| `30009` | 409 | 注销申请不存在或已被取消 |
 
 ---
 
@@ -7751,6 +8270,65 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/sector-leaders/sl_demo0
 
 ---
 
+## 39.6 板块负责人工作台
+
+### GET `/sector-leaders/my` — 获取当前板块负责人信息
+
+**Auth**: Required  
+**Roles**: `sector_leader`
+
+**请求示例**：
+```bash
+curl -X GET https://test.yuanxusoftware.top/api/v1/sector-leaders/my \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**成功响应**：
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "sl_demo001",
+    "residentName": "板块负责人-李娜",
+    "phone": "13900000003",
+    "propertyCompanyId": "pc_demo001",
+    "propertyCompanyName": "万达花园物业",
+    "sector": "cleaning",
+    "sectorName": "保洁板块",
+    "coordinatorId": "coo_demo001",
+    "coordinatorName": "统筹-张伟",
+    "individualLeaderCount": 3,
+    "merchantCount": 5,
+    "activeSpecialOfferCount": 2,
+    "totalEarnings": 1200.00,
+    "status": "active"
+  },
+  "timestamp": "2026-07-07 10:00:00"
+}
+```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `String` | 板块负责人ID |
+| `residentName` | `String` | 业主姓名 |
+| `phone` | `String` | 手机号 |
+| `propertyCompanyId` | `String` | 物业公司ID |
+| `propertyCompanyName` | `String` | 物业公司名称 |
+| `sector` | `String` | 板块编码 |
+| `sectorName` | `String` | 板块名称 |
+| `coordinatorId` | `String` | 统筹负责人ID |
+| `coordinatorName` | `String` | 统筹负责人姓名 |
+| `individualLeaderCount` | `Long` | 下级个体负责人数量 |
+| `merchantCount` | `Long` | 板块商家数量 |
+| `activeSpecialOfferCount` | `Long` | 进行中特惠数量 |
+| `totalEarnings` | `BigDecimal` | 累计收益 |
+| `status` | `String` | 状态：`active`/`inactive` |
+
+---
+
 ## 40. 管理端 — 积分池管理
 
 **Auth**: Required  
@@ -8382,35 +8960,25 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/dashboard/overview?pro
   "code": 0,
   "message": "success",
   "data": {
-    "period": "month",
-    "startDate": "2026-06-01",
-    "endDate": "2026-06-30",
     "summary": {
       "totalOrders": 1250,
       "totalRevenue": 62500.00,
       "totalResidents": 520,
-      "activeResidents": 380,
-      "newResidents": 15,
+      "totalFamilies": 200,
       "totalMerchants": 18,
-      "activeMerchants": 15,
-      "totalPointsIssued": 25000,
-      "totalPointsRedeemed": 8000,
-      "totalCoinIssued": 3125.00,
-      "totalCoinRedeemed": 1250.00,
-      "propertyFeeCollectionRate": 0.88,
-      "propertyFeeAmount": 88000.00,
-      "propertyFeeCollected": 77440.00
+      "totalCoinIssued": 482000.00,
+      "coinConsumed": 120540.00,
+      "coinInCirculation": 361460.00
     },
     "trends": {
       "orderGrowthRate": 0.12,
       "revenueGrowthRate": 0.15,
-      "residentGrowthRate": 0.03,
-      "merchantGrowthRate": 0.05
+      "newResidentGrowthRate": 0.03
     },
     "topMerchants": [
       {
-        "merchantId": "mch_demo001",
-        "merchantName": "万达超市",
+        "id": "mch_demo001",
+        "name": "万达超市",
         "orderCount": 320,
         "revenue": 16000.00
       }
@@ -8419,13 +8987,38 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/dashboard/overview?pro
       {
         "type": "new_resident",
         "description": "新业主入驻：王五",
-        "timestamp": "2026-06-30 14:30:00"
+        "time": "2026-06-30T14:30:00"
       }
     ]
   },
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
+
+**响应字段说明**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `summary.totalOrders` | `long` | 订单总数 |
+| `summary.totalRevenue` | `BigDecimal` | 已完成订单总营收 |
+| `summary.totalResidents` | `long` | 住户总数 |
+| `summary.totalFamilies` | `long` | 家庭总数 |
+| `summary.totalMerchants` | `long` | 商户总数 |
+| `summary.totalCoinIssued` | `BigDecimal` | 物业币发行总量 |
+| `summary.coinConsumed` | `BigDecimal` | 物业币已消费 |
+| `summary.coinInCirculation` | `BigDecimal` | 物业币流通中 |
+| `trends.orderGrowthRate` | `BigDecimal` | 订单增长率 |
+| `trends.revenueGrowthRate` | `BigDecimal` | 营收增长率 |
+| `trends.newResidentGrowthRate` | `BigDecimal` | 新增住户增长率 |
+| `topMerchants` | `List` | 热门商户列表（按订单数排序，最多5个） |
+| `topMerchants[].id` | `String` | 商户ID |
+| `topMerchants[].name` | `String` | 商户名称 |
+| `topMerchants[].orderCount` | `long` | 订单数 |
+| `topMerchants[].revenue` | `BigDecimal` | 营收金额 |
+| `recentActivity` | `List` | 最近活动列表 |
+| `recentActivity[].type` | `String` | 活动类型：`order`/`new_resident` |
+| `recentActivity[].description` | `String` | 活动描述 |
+| `recentActivity[].time` | `String` | 活动时间 |
 
 ---
 
@@ -8569,6 +9162,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/platform-merchants/pm_
 ---
 
 ## 47. 管理端 — 盈利空间
+
+> **注意**：盈利空间接口在 `/admin/platform-merchants` 路径下，不是 `/admin/merchants`
 
 **Auth**: Required  
 **Roles**: `property_admin`, `platform_admin`
@@ -9590,9 +10185,11 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | 值 | 说明 |
 |----|------|
 | `point` | 积分 |
-| `coin` | 物业币 |
+| `property_coin` | 物业币 |
 | `wechat` | 微信 |
 | `mixed` | 混合 |
+
+> **v1.5 注意**：全系统统一使用 `property_coin`，**不接受** `coin` 作为支付方式枚举值。传 `coin` 将返回 `10002` 参数无效。
 
 ## 积分来源 (PointSource)
 
@@ -9697,6 +10294,11 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | `30002` | 409 | 家庭人数超限 | 家庭成员超过15人 |
 | `30003` | 400 | 微信授权失败 | 微信绑定授权被拒绝 |
 | `30004` | 409 | 重复挂接 | 该商家已在当前物业下挂接 |
+| `30005` | 409 | 存在未完成的订单（注销） | 注销前有未完成订单 |
+| `30006` | 409 | 存在未支付的物业费（注销） | 注销前有未缴纳物业费 |
+| `30007` | 409 | 物业币余额不为0（注销） | 注销前需清空物业币 |
+| `30008` | 409 | 户主家庭有其他成员（注销） | 户主需先移除其他成员 |
+| `30009` | 409 | 注销申请不存在或已被取消 | 注销请求ID无效或已撤销 |
 
 ## 积分错误 (40xxx)
 
@@ -9720,6 +10322,8 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | `60002` | 409 | 商家入驻审核中 | 商家状态不允许操作 |
 | `60003` | 409 | 审核已处理 | 重复审核 |
 | `60004` | 404 | 商品不存在 | 商品ID无效 |
+| `60005` | 409 | 商家已被踢出 | 商家被物业踢出 |
+| `60006` | 404 | 商家在该物业下未完成挂接配置 | `merchant_property_configs` 无对应记录 |
 
 ## 订单错误 (70xxx)
 
@@ -9729,6 +10333,7 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | `70002` | 409 | 订单状态不允许操作 | 已完成订单不可取消等 |
 | `70003` | 409 | 并发冲突 | 同一订单多人同时支付 |
 | `71001` | 404 | 物业费账单不存在 | 账单ID无效 |
+| `71002` | 409 | 该账期已存在物业费账单 | 同住户同账期不可重复创建 |
 
 ## 配送错误 (80xxx)
 
@@ -9750,7 +10355,7 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | `90006` | 409 | 每家庭每月仅可发表1条意见 | 月度限制 |
 | `90007` | 404 | 活动组不存在 | 活动组ID无效 |
 | `90008` | 409 | 已订阅该活动组 | 重复订阅 |
-| `90009` | 409 | 已是活动组成员 | 重复加入 |
+| `90009` | 409 | 已是活动组成员 | 当前为 active 成员时重复加入 |
 | `90010` | 409 | 不是活动组成员 | 尝试退出非成员活动组 |
 | `90011` | 409 | 组长不能退出活动组 | 组长限制 |
 | `90012` | 404 | 消息不存在 | 消息ID无效 |
@@ -9799,6 +10404,12 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
 | `96002` | 404 | 服务订单不存在 | 服务订单ID无效 |
 | `96003` | 409 | 已订阅该服务 | 重复订阅 |
 | `97001` | 404 | 物业公司不存在 | 物业公司ID无效 |
+
+## 服务/社区错误 (17xxx)
+
+| 错误码 | HTTP | 含义 | 触发场景 |
+|--------|------|------|---------|
+| `17001` | 400 | 服务已下架 | 社区服务下架后不可操作 |
 
 ## 系统错误 (99xxx)
 
@@ -9866,6 +10477,43 @@ curl -X PATCH https://test.yuanxusoftware.top/api/v1/admin/property-companies/pc
     │
     └──→ 积分池资金
 ```
+
+## 活动组加入/订阅流程
+
+```
+                    ┌─────────────────────────┐
+                    │  GET /activity-groups/{id} │
+                    │  查看 monthlyFee/yearlyFee   │
+                    └─────────────┬───────────────┘
+                                  │
+              ┌───────────────────┴───────────────────┐
+              │                                       │
+        免费组（费用=0）                          付费组（费用>0）
+              │                                       │
+              ▼                                       ▼
+    POST /activity-groups/{id}/join          POST /activity-groups/{id}/subscribe
+    （直接加入）                              （传 subType + paymentMethod）
+              │                                       │
+              │                              订阅成功自动加入成员
+              │                                       │
+              └───────────────────┬───────────────────┘
+                                  │
+                    可选：POST /activity-groups/{id}/leave
+                    （软删除，status=inactive）
+                                  │
+                    再次 join / subscribe 可重新激活成员记录
+```
+
+## 商家挂接与订单支付前置条件
+
+商家在物业公司下开展业务前，须在 `merchant_property_configs` 表中完成挂接配置（抽佣比例、积分兑换比、物业币返现等）。
+
+| 阶段 | 校验 | 缺失时错误码 |
+|------|------|-------------|
+| 创建订单 `POST /orders` | 校验挂接配置 | `60006` |
+| 支付订单 `POST /orders/{id}/pay` | 校验挂接配置 | `60006` |
+
+测试环境需确保 demo 商家（如 `mch_demo002`）在 `pc_demo001` 下有对应 `merchant_property_configs` 记录。
 
 ---
 
@@ -9952,8 +10600,9 @@ wss://test.yuanxusoftware.top/ws?token=<accessToken>
 
 ## 日期格式
 
-- 所有日期时间字段使用 `yyyy-MM-dd HH:mm:ss` 格式
+- 所有日期时间字段使用 `yyyy-MM-dd HH:mm:ss` 格式（本地时间）
 - 日期字段使用 `yyyy-MM-dd` 格式
+- `ApiResponse.timestamp` 字段同样使用 `yyyy-MM-dd HH:mm:ss` 本地时间格式
 
 ---
 

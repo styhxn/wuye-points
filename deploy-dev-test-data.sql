@@ -170,6 +170,15 @@ INSERT IGNORE INTO property_fees (id, resident_id, family_id, property_company_i
 ('pf_dev016', 'res_dev001', 'fam_dev001', 'pc_demo001', 'com_demo001', 'electricity', '2026-07', 156.80, 0.00, 0, 0.00, 'unpaid', '2026-07-31', NULL);
 
 -- ============================================================
+-- 5.5 商家-物业挂接配置（支付/分成必需）
+-- ============================================================
+
+INSERT IGNORE INTO merchant_property_configs (id, merchant_id, property_company_id, commission_rate, point_exchange_rate, member_discount_price, coin_rebate_rate, coin_rebate_enabled, status) VALUES
+('mpc_001', 'mch_demo001', 'pc_demo001', 0.1500, 100.0000, NULL, 0.0200, TRUE, 'active'),
+('mpc_002', 'mch_demo002', 'pc_demo001', 0.1000, 200.0000, NULL, 0.0100, TRUE, 'active'),
+('mpc_003', 'mch_demo003', 'pc_demo001', 0.2000, 50.0000, NULL, 0.0300, TRUE, 'active');
+
+-- ============================================================
 -- 6. 商家订单（模拟消费记录）
 -- ============================================================
 
