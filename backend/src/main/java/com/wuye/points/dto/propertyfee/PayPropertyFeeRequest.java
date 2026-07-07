@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 @Schema(description = "物业费支付请求")
 public class PayPropertyFeeRequest {
 
-    @Schema(description = "支付方式", example = "微信支付", required = true)
+    @Schema(description = "支付方式（property_coin/point/wechat/mixed）", example = "wechat", required = true)
     @NotBlank(message = "支付方式不能为空")
     private String paymentMethod;
 

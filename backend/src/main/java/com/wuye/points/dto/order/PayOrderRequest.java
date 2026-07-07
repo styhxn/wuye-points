@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 public class PayOrderRequest {
 
     @NotBlank(message = "支付方式不能为空")
-    @Schema(description = "支付方式", required = true, example = "wechat", allowableValues = {"point", "coin", "wechat", "mixed"})
+    @Schema(description = "支付方式", required = true, example = "wechat", allowableValues = {"point", "property_coin", "wechat", "mixed"})
     private String paymentMethod;
 
     @Min(value = 0, message = "使用积分不能为负数")

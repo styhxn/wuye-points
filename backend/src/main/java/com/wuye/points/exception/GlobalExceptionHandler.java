@@ -67,22 +67,29 @@ public class GlobalExceptionHandler {
     }
 
     private HttpStatus getHttpStatus(int code) {
-        if (code >= 20001 && code <= 20005) return HttpStatus.UNAUTHORIZED;
+        if (code >= 20001 && code <= 20003) return HttpStatus.UNAUTHORIZED;
+        if (code == 20004 || code == 20005) return HttpStatus.FORBIDDEN;
         if (code == 10001 || code == 10002 || code == 10003
                 || code == 30003
                 || code == 40001 || code == 50001 || code == 93004
-                || code == 94004) return HttpStatus.BAD_REQUEST;
+                || code == 94004 || code == 80001) return HttpStatus.BAD_REQUEST;
         if (code == 404 || code == 30001 || code == 60001 || code == 60004 || code == 70001 || code == 90001
                 || code == 91001 || code == 91002 || code == 91003
                 || code == 92001 || code == 92002 || code == 93001
                 || code == 40002 || code == 90012 || code == 95001
-                || code == 96001 || code == 96002 || code == 97001) {
+                || code == 96001 || code == 96002 || code == 97001
+                || code == 90004 || code == 90007 || code == 80002) {
             return HttpStatus.NOT_FOUND;
         }
-        if (code == 20004 || code == 50002 || code == 93003) return HttpStatus.FORBIDDEN;
+        if (code == 50002 || code == 93003) return HttpStatus.FORBIDDEN;
         if (code == 70003 || code == 60002 || code == 60003 || code == 70002 || code == 90002
                 || code == 30002 || code == 30004 || code == 94001 || code == 94003
-                || code == 90013 || code == 96003) return HttpStatus.CONFLICT;
+                || code == 90013 || code == 96003
+                || code == 90003 || code == 90005 || code == 90006
+                || code == 90008 || code == 90009 || code == 90010 || code == 90011
+                || code == 93002 || code == 94002
+                || code == 71002 || code == 80003
+                || code == 30006 || code == 30007 || code == 30008 || code == 30009) return HttpStatus.CONFLICT;
         return HttpStatus.INTERNAL_SERVER_ERROR;
     }
 }

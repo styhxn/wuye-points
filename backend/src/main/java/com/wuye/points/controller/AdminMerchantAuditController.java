@@ -1,8 +1,5 @@
 package com.wuye.points.controller;
 
-import com.wuye.points.dto.admin.coinwithdrawal.AuditCoinWithdrawalRequest;
-import com.wuye.points.dto.admin.coinwithdrawal.AuditCoinWithdrawalResponse;
-import com.wuye.points.dto.admin.coinwithdrawal.CoinWithdrawalListItemResponse;
 import com.wuye.points.dto.admin.merchantaudit.AuditMerchantPointPurchaseRequest;
 import com.wuye.points.dto.admin.merchantaudit.AuditMerchantPointPurchaseResponse;
 import com.wuye.points.dto.admin.merchantaudit.AuditMerchantWithdrawalRequest;

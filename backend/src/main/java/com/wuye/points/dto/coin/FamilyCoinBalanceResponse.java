@@ -19,7 +19,10 @@ public class FamilyCoinBalanceResponse {
     private String familyName;
 
     @Schema(description = "家庭物业币余额", example = "500.00")
-    private BigDecimal totalCoinBalance;
+    private BigDecimal coinBalance;
+
+    @Schema(description = "家庭成员数量", example = "3")
+    private Integer memberCount;
 
     @Schema(description = "家庭成员列表")
     private List<Member> members;

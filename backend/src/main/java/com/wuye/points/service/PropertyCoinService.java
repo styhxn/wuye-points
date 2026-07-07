@@ -133,7 +133,8 @@ public class PropertyCoinService {
         return FamilyCoinBalanceResponse.builder()
                 .familyId(family.getId())
                 .familyName(family.getName())
-                .totalCoinBalance(defaultFamilyCoinBalance(family))
+                .coinBalance(defaultFamilyCoinBalance(family))
+                .memberCount(memberItems.size())
                 .members(memberItems)
                 .build();
     }

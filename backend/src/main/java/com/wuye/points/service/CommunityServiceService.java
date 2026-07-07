@@ -193,8 +193,11 @@ public class CommunityServiceService {
         order.setRemark(StringUtils.hasText(request.getRemark()) ? request.getRemark().trim() : null);
         order.setOrderStatus("pending");
 
-        executeBookPayment(resident, service, amount, request.getPaymentMethod());
-        if (!"wechat".equals(request.getPaymentMethod())) {
+        PaymentBreakdown breakdown = resolvePaymentBreakdown(
+                request.getPaymentMethod(), amount, request.getPointUsed(), request.getCoinUsed(),
+                resident.getPropertyCompanyId());
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务预约");
+        if (!"wechat".equals(request.getPaymentMethod()) || breakdown.cashAmount().compareTo(BigDecimal.ZERO) == 0) {
             order.setOrderStatus("confirmed");
         }
 
@@ -226,7 +229,10 @@ public class CommunityServiceService {
             throw new BizException(ErrorCode.PARAM_INVALID, "订阅金额无效");
         }
 
-        executeSubscriptionPayment(resident, service, amount, request.getPaymentMethod());
+        PaymentBreakdown breakdown = resolvePaymentBreakdown(
+                request.getPaymentMethod(), amount, request.getPointUsed(), request.getCoinUsed(),
+                resident.getPropertyCompanyId());
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务订阅");
 
         LocalDate startDate = today;
         LocalDate endDate = "yearly".equals(request.getSubType())
@@ -257,6 +263,38 @@ public class CommunityServiceService {
                 .endDate(subscription.getEndDate().toString())
                 .autoRenew(subscription.getAutoRenew())
                 .status(subscription.getStatus())
+                .createdAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
+                .build();
+    }
+
+    @Transactional
+    public SubscribeServiceResponse unsubscribe(String id) {
+        roleGuard.requireAnyRole("resident");
+        validateServiceId(id);
+
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        CommunityService service = getReadableService(id, resident);
+
+        ServiceSubscription subscription = serviceSubscriptionRepository
+                .findByServiceIdAndResidentIdAndStatus(service.getId(), resident.getId(), "active");
+        if (subscription == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "未找到有效订阅");
+        }
+
+        subscription.setStatus("cancelled");
+        serviceSubscriptionRepository.save(subscription);
+
+        return SubscribeServiceResponse.builder()
+                .id(subscription.getId())
+                .serviceId(service.getId())
+                .serviceName(service.getName())
+                .residentId(resident.getId())
+                .subType(subscription.getSubType())
+                .amount(subscription.getAmount())
+                .startDate(subscription.getStartDate().toString())
+                .endDate(subscription.getEndDate().toString())
+                .autoRenew(false)
+                .status("cancelled")
                 .createdAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
                 .build();
     }
@@ -304,13 +342,16 @@ public class CommunityServiceService {
                 .id(order.getId())
                 .serviceId(order.getServiceId())
                 .serviceName(service != null ? service.getName() : null)
+                .serviceCategory(service != null ? service.getCategory() : null)
                 .residentId(order.getResidentId())
                 .residentName(resident != null ? resident.getName() : null)
                 .providerId(order.getProviderId())
                 .providerName(provider != null ? provider.getName() : null)
                 .propertyCompanyId(order.getPropertyCompanyId())
                 .orderStatus(order.getOrderStatus())
-                .amount(order.getAmount())
+                .price(order.getAmount())
+                .memberPrice(service != null ? service.getMemberPrice() : null)
+                .paidAmount(order.getAmount())
                 .paymentMethod(order.getPaymentMethod())
                 .serviceTime(DateTimeUtil.toIsoUtc(order.getServiceTime()))
                 .address(order.getAddress())
@@ -488,42 +529,60 @@ public class CommunityServiceService {
         return base;
     }
 
-    private void executeBookPayment(
-            Resident resident,
-            CommunityService service,
+    private PaymentBreakdown resolvePaymentBreakdown(
+            String paymentMethod,
             BigDecimal amount,
-            String paymentMethod) {
-        executePayment(resident, service.getId(), amount, paymentMethod, "服务预约");
+            Integer pointUsed,
+            BigDecimal coinUsed,
+            String propertyCompanyId) {
+        return switch (paymentMethod) {
+            case "property_coin" -> new PaymentBreakdown(0, amount, BigDecimal.ZERO);
+            case "point" -> {
+                BigDecimal rate = resolvePointToFeeRate(propertyCompanyId);
+                int points = amount.divide(rate, 0, RoundingMode.UP).intValue();
+                yield new PaymentBreakdown(points, BigDecimal.ZERO, BigDecimal.ZERO);
+            }
+            case "wechat" -> new PaymentBreakdown(0, BigDecimal.ZERO, amount);
+            case "mixed" -> {
+                int points = pointUsed != null ? pointUsed : 0;
+                BigDecimal coins = coinUsed != null ? coinUsed : BigDecimal.ZERO;
+                BigDecimal rate = resolvePointToFeeRate(propertyCompanyId);
+                BigDecimal pointValue = rate.multiply(BigDecimal.valueOf(points))
+                        .setScale(2, RoundingMode.HALF_UP);
+                BigDecimal cashAmount = amount.subtract(pointValue).subtract(coins);
+                if (cashAmount.compareTo(BigDecimal.ZERO) < 0) {
+                    cashAmount = BigDecimal.ZERO;
+                }
+                BigDecimal covered = pointValue.add(coins).add(cashAmount);
+                if (covered.compareTo(amount) < 0) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "混合支付金额不足");
+                }
+                yield new PaymentBreakdown(points, coins, cashAmount);
+            }
+            default -> throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod值无效");
+        };
     }
 
-    private void executeSubscriptionPayment(
-            Resident resident,
-            CommunityService service,
-            BigDecimal amount,
-            String paymentMethod) {
-        executePayment(resident, service.getId(), amount, paymentMethod, "服务订阅");
-    }
-
-    private void executePayment(
+    private void executePaymentBreakdown(
             Resident resident,
             String referenceId,
             BigDecimal amount,
-            String paymentMethod,
+            PaymentBreakdown breakdown,
             String remark) {
-        switch (paymentMethod) {
-            case "property_coin" -> propertyCoinService.spendCoins(
-                    resident, amount, "manual", referenceId, remark, null, false);
-            case "point" -> {
-                BigDecimal rate = resolvePointToFeeRate(resident.getPropertyCompanyId());
-                int points = amount.divide(rate, 0, RoundingMode.UP).intValue();
-                pointService.spendPoints(
-                        resident, points, "manual", referenceId, remark, null, false);
-            }
-            case "wechat" -> {
-                // 微信支付由前端完成，后端先创建订单
-            }
-            default -> throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod值无效");
+        if (breakdown.pointUsed() > 0) {
+            pointService.spendPoints(
+                    resident, breakdown.pointUsed(), "manual", referenceId, remark, null, false);
         }
+        if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.spendCoins(
+                    resident, breakdown.coinUsed(), "manual", referenceId, remark, null, false);
+        }
+        if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
+            // 微信支付由前端完成，后端先创建订单
+        }
+    }
+
+    private record PaymentBreakdown(int pointUsed, BigDecimal coinUsed, BigDecimal cashAmount) {
     }
 
     private BigDecimal resolvePointToFeeRate(String propertyCompanyId) {

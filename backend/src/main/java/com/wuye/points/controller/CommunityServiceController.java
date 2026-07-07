@@ -74,6 +74,13 @@ public class CommunityServiceController {
         return ApiResponse.success(communityServiceService.subscribe(id, request));
     }
 
+    @Operation(summary = "取消订阅", description = "取消订阅指定社区服务")
+    @PostMapping("/{id}/unsubscribe")
+    public ApiResponse<SubscribeServiceResponse> unsubscribe(
+            @Parameter(description = "服务ID") @PathVariable String id) {
+        return ApiResponse.success(communityServiceService.unsubscribe(id));
+    }
+
     @Operation(summary = "预约服务", description = "预约指定社区服务，生成服务订单")
     @PostMapping("/{id}/book")
     public ApiResponse<ServiceOrderDetailResponse> bookService(

@@ -113,6 +113,7 @@ public class ResidentConverter {
                 .status(resident.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(resident.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(resident.getUpdatedAt()))
+                .onTimePaymentBadge(Boolean.TRUE.equals(resident.getOnTimePaymentBadge()))
                 .build();
     }
 

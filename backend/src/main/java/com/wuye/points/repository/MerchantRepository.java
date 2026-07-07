@@ -20,6 +20,8 @@ public interface MerchantRepository extends JpaRepository<Merchant, String>, Jpa
 
     Optional<Merchant> findByPlatformMerchantIdAndPropertyCompanyId(String platformMerchantId, String propertyCompanyId);
 
+    Optional<Merchant> findByPlatformMerchantId(String platformMerchantId);
+
     Optional<Merchant> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 
     boolean existsByPlatformMerchantIdAndPropertyCompanyId(String platformMerchantId, String propertyCompanyId);

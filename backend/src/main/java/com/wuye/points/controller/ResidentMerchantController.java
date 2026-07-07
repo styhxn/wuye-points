@@ -32,7 +32,9 @@ public class ResidentMerchantController {
     @GetMapping("/me/consumed-merchants")
     public ApiResponse<PageResponse<ConsumedMerchantListItemResponse>> listConsumedMerchants(
             @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
-            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.success(residentMerchantService.listConsumedMerchants(page, pageSize));
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "搜索关键词（商家名称）") @RequestParam(required = false) String keyword,
+            @Parameter(description = "排序字段", example = "-lastOrderAt") @RequestParam(defaultValue = "-lastOrderAt") String sort) {
+        return ApiResponse.success(residentMerchantService.listConsumedMerchants(page, pageSize, keyword, sort));
     }
 }

@@ -26,4 +26,10 @@ public class NeighborSearchResponse {
 
     @Schema(description = "房间号", example = "301")
     private String room;
+
+    @Schema(description = "小区名称", example = "演示小区")
+    private String communityName;
+
+    @Schema(description = "聊天状态", example = "not_chatted")
+    private String chatStatus;
 }

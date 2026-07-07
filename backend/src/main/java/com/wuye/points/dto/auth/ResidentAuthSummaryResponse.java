@@ -39,6 +39,6 @@ public class ResidentAuthSummaryResponse {
     @Schema(description = "是否新用户", example = "false")
     private Boolean newUser;
 
-    @Schema(description = "用户状态", example = "active", allowableValues = {"active", "inactive", "pending"})
+    @Schema(description = "用户状态", example = "active", allowableValues = {"active", "frozen", "disabled"})
     private String status;
 }

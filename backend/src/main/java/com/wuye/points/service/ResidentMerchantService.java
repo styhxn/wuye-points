@@ -38,15 +38,17 @@ public class ResidentMerchantService {
     private final RoleGuard roleGuard;
 
     @Transactional(readOnly = true)
-    public PageResponse<ConsumedMerchantListItemResponse> listConsumedMerchants(int page, int pageSize) {
+    public PageResponse<ConsumedMerchantListItemResponse> listConsumedMerchants(int page, int pageSize,
+            String keyword, String sort) {
         roleGuard.requireAnyRole("resident");
         String userId = UserContext.currentUserId();
         Resident resident = getActiveResident(userId);
 
+        Sort springSort = parseSort(sort);
         Pageable pageable = PageRequest.of(
                 Math.max(page, 1) - 1,
                 Math.min(Math.max(pageSize, 1), 100),
-                Sort.by(Sort.Direction.DESC, "createdAt"));
+                springSort);
 
         Page<Order> orderPage = orderRepository.findByResidentId(resident.getId(), pageable);
 
@@ -92,9 +94,35 @@ public class ResidentMerchantService {
                                     : null)
                             .build();
                 })
+                .filter(item -> {
+                    if (StringUtils.hasText(keyword)) {
+                        return item.getMerchantName() != null
+                                && item.getMerchantName().toLowerCase().contains(keyword.toLowerCase());
+                    }
+                    return true;
+                })
                 .toList();
 
-        return PageResponse.of(list, page, pageSize, merchantIds.size());
+        int total = list.size();
+        int from = (int) pageable.getOffset();
+        int to = Math.min(from + pageable.getPageSize(), total);
+        List<ConsumedMerchantListItemResponse> pagedList = from < total ? list.subList(from, to) : List.of();
+
+        return PageResponse.of(pagedList, page, pageSize, total);
+    }
+
+    private Sort parseSort(String sort) {
+        if (!StringUtils.hasText(sort)) {
+            return Sort.by(Sort.Direction.DESC, "createdAt");
+        }
+        boolean descending = sort.startsWith("-");
+        String field = sort.startsWith("-") || sort.startsWith("+") ? sort.substring(1) : sort;
+        String springField = switch (field) {
+            case "lastOrderAt" -> "paidAt";
+            case "orderCount" -> "createdAt";
+            default -> "createdAt";
+        };
+        return Sort.by(descending ? Sort.Direction.DESC : Sort.Direction.ASC, springField);
     }
 
     private Resident getActiveResident(String userId) {

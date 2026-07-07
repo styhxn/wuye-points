@@ -12,6 +12,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
+import java.security.Principal;
 import java.util.Map;
 
 @Slf4j
@@ -39,10 +40,13 @@ public class WebSocketAuthInterceptor implements HandshakeInterceptor {
         try {
             Claims claims = jwtUtil.parseTokenClaims(token);
             jwtUtil.validateAccessToken(claims);
-            attributes.put("userId", claims.getSubject());
+            String userId = claims.getSubject();
+            attributes.put("userId", userId);
             attributes.put("role", claims.get("role", String.class));
             attributes.put("propertyCompanyId", claims.get("propertyCompanyId", String.class));
             attributes.put("familyId", claims.get("familyId", String.class));
+            // 设置 Principal 以支持 /user/queue/notifications 用户路由
+            attributes.put("user", (Principal) () -> userId);
             return true;
         } catch (Exception e) {
             log.warn("WebSocket连接token校验失败: {}", e.getMessage());

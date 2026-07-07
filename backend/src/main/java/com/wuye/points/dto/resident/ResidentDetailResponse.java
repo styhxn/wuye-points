@@ -94,4 +94,7 @@ public class ResidentDetailResponse {
 
     @Schema(description = "更新时间", example = "2026-01-01T00:00:00.000Z")
     private String updatedAt;
+
+    @Schema(description = "是否准时缴费用户", example = "true")
+    private Boolean onTimePaymentBadge;
 }

@@ -184,6 +184,11 @@ public class PropertyFeeService {
             communityId = resident.getCommunityId();
         }
 
+        // 校验同住户+同账期是否已存在账单
+        if (propertyFeeRepository.existsByResidentIdAndPeriod(resident.getId(), request.getPeriod())) {
+            throw new BizException(ErrorCode.PROPERTY_FEE_DUPLICATE_PERIOD, "该账期已存在物业费账单");
+        }
+
         PropertyFee fee = new PropertyFee();
         fee.setId(idGenerator.generateId("pf"));
         fee.setResidentId(resident.getId());
@@ -274,6 +279,7 @@ public class PropertyFeeService {
                 pointRecordRepository.save(rewardRecord);
 
                 resident.setPointBalance(resident.getPointBalance() + 100);
+                resident.setOnTimePaymentBadge(true);
                 residentRepository.save(resident);
 
                 if (fee.getFamilyId() != null) {

@@ -11,20 +11,20 @@ import lombok.experimental.SuperBuilder;
 @Schema(description = "订单详情响应")
 public class OrderDetailResponse extends OrderListItemResponse {
 
-    @Schema(description = "用户ID", example = "res_b7m9x1")
-    private String residentId;
-
     @Schema(description = "物业公司ID", example = "pc_abc123")
     private String propertyCompanyId;
-
-    @Schema(description = "配送地址", example = "阳光花园1号楼1单元101")
-    private String address;
 
     @Schema(description = "联系电话", example = "13800138000")
     private String contactPhone;
 
     @Schema(description = "备注", example = "请尽快配送")
     private String remark;
+
+    @Schema(description = "快递员姓名", example = "李师傅")
+    private String courierName;
+
+    @Schema(description = "配送单ID", example = "dlv_abc123")
+    private String deliveryId;
 
     @Schema(description = "取消时间", example = "2026-01-01T00:00:00.000Z")
     private String cancelledAt;

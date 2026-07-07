@@ -41,6 +41,15 @@ public class DashboardOverviewResponse {
 
         @Schema(description = "商户总数", example = "50")
         private long totalMerchants;
+
+        @Schema(description = "物业币发行总量", example = "482000")
+        private BigDecimal totalCoinIssued;
+
+        @Schema(description = "物业币已消费", example = "120540")
+        private BigDecimal coinConsumed;
+
+        @Schema(description = "物业币流通中", example = "361460")
+        private BigDecimal coinInCirculation;
     }
 
     @Data

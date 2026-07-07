@@ -331,6 +331,49 @@ public class FamilyService {
         return resident;
     }
 
+    @Transactional
+    public RemoveFamilyMemberResponse leaveFamily() {
+        roleGuard.requireAnyRole("resident");
+        Resident current = getActiveResident(UserContext.currentUserId());
+        if (!StringUtils.hasText(current.getFamilyId())) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "未加入任何家庭");
+        }
+
+        Family family = getFamilyOrThrow(current.getFamilyId());
+        if (family.getOwnerId().equals(current.getId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "户主不可退出家庭，请先转让或解散家庭");
+        }
+
+        int memberCount = defaultMemberCount(family);
+        if (memberCount <= 1) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "家庭至少保留一名成员");
+        }
+
+        int avgPoints = defaultPointBalance(family) / memberCount;
+        BigDecimal avgCoin = defaultCoinBalance(family)
+                .divide(BigDecimal.valueOf(memberCount), 2, RoundingMode.DOWN);
+
+        current.setPointBalance(avgPoints);
+        current.setCoinBalance(avgCoin);
+        current.setFamilyId(null);
+        current.setFamilyRelation(null);
+
+        family.setPointBalance(defaultPointBalance(family) - avgPoints);
+        family.setCoinBalance(defaultCoinBalance(family).subtract(avgCoin));
+        family.setMemberCount(memberCount - 1);
+
+        familyRepository.save(family);
+        residentRepository.save(current);
+
+        return RemoveFamilyMemberResponse.builder()
+                .memberId(current.getId())
+                .familyId(family.getId())
+                .removedAt(DateTimeUtil.nowIsoUtc())
+                .pointsHandling(POINTS_HANDLING_TRANSFER)
+                .coinsHandling(COINS_HANDLING_TRANSFER)
+                .build();
+    }
+
     private void assertFamilyOwner(Family family) {
         String currentUserId = UserContext.currentUserId();
         if (currentUserId == null || !currentUserId.equals(family.getOwnerId())) {

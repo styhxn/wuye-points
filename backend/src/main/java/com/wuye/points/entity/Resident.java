@@ -113,4 +113,8 @@ public class Resident extends BaseEntity {
     /** 软删除时间 */
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    /** 是否准时缴费用户 */
+    @Column(name = "on_time_payment_badge")
+    private Boolean onTimePaymentBadge;
 }

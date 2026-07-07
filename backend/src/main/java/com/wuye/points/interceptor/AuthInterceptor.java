@@ -44,7 +44,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     }
 
     /**
-     * GET /merchants、GET /merchants/:id、GET /products、GET /products/:id 允许未登录浏览
+     * GET /merchants、GET /merchants/:id、GET /products、GET /products/:id、GET /announcements 等允许未登录浏览
      */
     private boolean isOptionalAuth(HttpServletRequest request) {
         if (!"GET".equalsIgnoreCase(request.getMethod())) {
@@ -54,18 +54,26 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (uri == null) {
             return false;
         }
-        if (isOptionalMerchantPath(uri)) {
-            return true;
-        }
-        return isOptionalProductPath(uri);
+
+        // 提取相对路径
+        String path = extractRelativePath(uri);
+
+        return isOptionalMerchantPath(path)
+                || isOptionalProductPath(path)
+                || isOptionalPublicPath(path);
     }
 
-    private boolean isOptionalMerchantPath(String uri) {
-        String path = uri;
-        int apiIndex = uri.indexOf("/merchants");
-        if (apiIndex >= 0) {
-            path = uri.substring(apiIndex);
+    private String extractRelativePath(String uri) {
+        String[] prefixes = {"/api/v1", "/api"};
+        for (String prefix : prefixes) {
+            if (uri.startsWith(prefix)) {
+                return uri.substring(prefix.length());
+            }
         }
+        return uri;
+    }
+
+    private boolean isOptionalMerchantPath(String path) {
         if ("/merchants".equals(path)) {
             return true;
         }
@@ -76,18 +84,30 @@ public class AuthInterceptor implements HandlerInterceptor {
         return false;
     }
 
-    private boolean isOptionalProductPath(String uri) {
-        String path = uri;
-        int apiIndex = uri.indexOf("/products");
-        if (apiIndex >= 0) {
-            path = uri.substring(apiIndex);
-        }
+    private boolean isOptionalProductPath(String path) {
         if ("/products".equals(path)) {
             return true;
         }
         if (path.startsWith("/products/")) {
             String suffix = path.substring("/products/".length());
             return !suffix.isEmpty() && !suffix.contains("/");
+        }
+        return false;
+    }
+
+    private boolean isOptionalPublicPath(String path) {
+        // 精确匹配路径
+        if ("/announcements".equals(path) || "/services".equals(path)
+                || "/activity-groups".equals(path) || "/special-offers".equals(path)
+                || "/property-companies".equals(path)) {
+            return true;
+        }
+        // 匹配 /{resource}/{id} 模式（排除子路径）
+        if (path.startsWith("/announcements/") || path.startsWith("/services/")
+                || path.startsWith("/activity-groups/") || path.startsWith("/special-offers/")
+                || path.startsWith("/property-companies/")) {
+            String suffix = path.substring(path.indexOf('/', 1) + 1);
+            return !suffix.contains("/");
         }
         return false;
     }

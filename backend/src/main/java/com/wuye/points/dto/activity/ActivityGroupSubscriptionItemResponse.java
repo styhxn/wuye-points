@@ -41,6 +41,12 @@ public class ActivityGroupSubscriptionItemResponse {
     @Schema(description = "是否自动续费", example = "true")
     private Boolean autoRenew;
 
+    @Schema(description = "成员ID", example = "agm_001")
+    private String memberId;
+
+    @Schema(description = "是否已是成员", example = "true")
+    private Boolean isMember;
+
     @Schema(description = "订阅状态", example = "active")
     private String status;
 

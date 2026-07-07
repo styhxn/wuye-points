@@ -4,6 +4,8 @@ import com.wuye.points.entity.ActivityGroupMember;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -24,4 +26,6 @@ public interface ActivityGroupMemberRepository extends JpaRepository<ActivityGro
             Collection<String> groupIds, String residentId, String status);
 
     boolean existsByGroupIdAndResidentIdAndStatus(String groupId, String residentId, String status);
+
+    Page<ActivityGroupMember> findByResidentIdAndStatus(String residentId, String status, Pageable pageable);
 }

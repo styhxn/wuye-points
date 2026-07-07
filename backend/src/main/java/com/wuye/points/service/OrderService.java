@@ -211,7 +211,6 @@ public class OrderService {
         }
 
         deliveryService.createDeliveryForPaidOrder(order, merchant);
-        distributionService.calculateAndSave(order, resident, config);
 
         return PayOrderResponse.builder()
                 .orderId(order.getId())
@@ -393,6 +392,12 @@ public class OrderService {
         } catch (OptimisticLockingFailureException ex) {
             throw new BizException(ErrorCode.ORDER_CONFLICT);
         }
+
+        // 确认收货时生成分成记录
+        Merchant merchant = merchantRepository.findById(order.getMerchantId())
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        MerchantPropertyConfig config = loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
+        distributionService.calculateAndSave(order, resident, config);
 
         return ConfirmOrderResponse.builder()
                 .orderId(order.getId())

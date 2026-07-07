@@ -45,6 +45,7 @@ public enum ErrorCode {
 
     // 物业费 71xxx
     PROPERTY_FEE_NOT_FOUND(71001, "物业费账单不存在"),
+    PROPERTY_FEE_DUPLICATE_PERIOD(71002, "该账期已存在物业费账单"),
 
     // 配送 80xxx
     DELIVERY_GRAB_FAILED(80001, "快递员抢单失败"),
@@ -95,9 +96,16 @@ public enum ErrorCode {
     SERVICE_NOT_FOUND(96001, "服务不存在"),
     SERVICE_ORDER_NOT_FOUND(96002, "服务订单不存在"),
     SERVICE_ALREADY_SUBSCRIBED(96003, "已订阅该服务"),
+    SERVICE_UNAVAILABLE(17001, "服务已下架"),
 
     // 物业公司 97xxx
     PROPERTY_COMPANY_NOT_FOUND(97001, "物业公司不存在"),
+
+    // 注销账号 30xxx
+    ACCOUNT_DELETION_PENDING_ORDER(30006, "存在未完成的订单，请先处理"),
+    ACCOUNT_DELETION_PENDING_FEE(30007, "存在未缴纳的物业费，请先处理"),
+    ACCOUNT_DELETION_COIN_BALANCE(30008, "物业币余额不为0，请先处理"),
+    ACCOUNT_DELETION_FAMILY_MEMBERS(30009, "您是户主，请先移除家庭成员"),
 
     // 系统 99xxx
     SYSTEM_ERROR(99001, "内部服务异常");

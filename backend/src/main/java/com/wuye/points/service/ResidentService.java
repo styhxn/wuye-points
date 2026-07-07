@@ -5,6 +5,7 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.resident.DeleteAccountResponse;
 import com.wuye.points.dto.resident.MyCoinsResponse;
 import com.wuye.points.dto.resident.MyPointsResponse;
+import com.wuye.points.dto.resident.RequestAccountDeletionRequest;
 import com.wuye.points.dto.resident.ResidentDetailResponse;
 import com.wuye.points.dto.resident.ResidentListItemResponse;
 import com.wuye.points.dto.resident.ResidentStatusResponse;
@@ -22,6 +23,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PointRecordRepository;
 import com.wuye.points.repository.PropertyCoinRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.PropertyFeeRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.ResidentSpecifications;
 import com.wuye.points.util.DateTimeUtil;
@@ -57,6 +59,7 @@ public class ResidentService {
     private final PropertyCoinRecordRepository propertyCoinRecordRepository;
     private final ResidentConverter residentConverter;
     private final RoleGuard roleGuard;
+    private final PropertyFeeRepository propertyFeeRepository;
     private final WebSocketService webSocketService;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -407,13 +410,50 @@ public class ResidentService {
     }
 
     @Transactional
-    public DeleteAccountResponse requestAccountDeletion() {
+    public DeleteAccountResponse requestAccountDeletion(RequestAccountDeletionRequest request) {
         roleGuard.requireAnyRole("resident");
         Resident resident = getActiveResident(UserContext.currentUserId());
 
-        resident.setStatus("disabled");
-        resident.setDeletedAt(LocalDateTime.now());
+        // 1. 校验 confirmText
+        if (!"确认注销".equals(request.getConfirmText())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请确认注销操作");
+        }
+
+        // 2. 四项前置校验
+        // 2.1 存在未完成订单
+        long pendingOrders = orderRepository.countPendingOrdersByResidentId(resident.getId());
+        if (pendingOrders > 0) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETION_PENDING_ORDER);
+        }
+
+        // 2.2 存在未缴物业费
+        long unpaidFees = propertyFeeRepository.countByResidentIdAndPaymentStatusNotIn(resident.getId());
+        if (unpaidFees > 0) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETION_PENDING_FEE);
+        }
+
+        // 2.3 物业币余额不为 0
+        BigDecimal coinBalance = resident.getCoinBalance() != null ? resident.getCoinBalance() : BigDecimal.ZERO;
+        if (coinBalance.compareTo(BigDecimal.ZERO) > 0) {
+            throw new BizException(ErrorCode.ACCOUNT_DELETION_COIN_BALANCE);
+        }
+
+        // 2.4 户主家庭有其他成员
+        familyRepository.findByOwnerId(resident.getId()).ifPresent(family -> {
+            if (family.getMemberCount() != null && family.getMemberCount() > 1) {
+                throw new BizException(ErrorCode.ACCOUNT_DELETION_FAMILY_MEMBERS);
+            }
+        });
+
+        // 3. 设置 pending_deletion 状态和 15 天冷静期
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime expiresAt = now.plusDays(15);
+        resident.setStatus("pending_deletion");
+        resident.setDeletedAt(expiresAt);
         residentRepository.save(resident);
+
+        // 4. 生成请求 ID
+        String requestId = idGenerator.generateId("del");
 
         webSocketService.broadcast("account_deletion_request", Map.of(
                 "residentId", resident.getId(),
@@ -423,8 +463,10 @@ public class ResidentService {
 
         return DeleteAccountResponse.builder()
                 .residentId(resident.getId())
-                .status("disabled")
-                .message("账号注销申请已提交，管理员将尽快处理")
+                .status("pending")
+                .message("账号注销申请已提交，请在15天冷静期内确认")
+                .requestId(requestId)
+                .expiresAt(DateTimeUtil.toLocalDateTimeString(expiresAt))
                 .build();
     }
 

@@ -4,6 +4,7 @@ import com.wuye.points.dto.activity.ActivityGroupDetailResponse;
 import com.wuye.points.dto.activity.ActivityGroupListItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupMemberItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupSubscriptionItemResponse;
+import com.wuye.points.dto.activity.MyJoinedGroupItemResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
 import com.wuye.points.entity.ActivityGroup;
 import com.wuye.points.entity.ActivityGroupMember;
@@ -100,7 +101,8 @@ public class ActivityGroupConverter {
 
     public ActivityGroupSubscriptionItemResponse toSubscriptionItem(ActivityGroupSubscription subscription,
                                                                     ActivityGroup group,
-                                                                    Boolean autoRenew) {
+                                                                    Boolean autoRenew,
+                                                                    ActivityGroupMember membership) {
         LocalDate today = LocalDate.now();
         int daysRemaining = 0;
         if (subscription.getEndDate() != null && !subscription.getEndDate().isBefore(today)) {
@@ -118,8 +120,29 @@ public class ActivityGroupConverter {
                 .endDate(formatDate(subscription.getEndDate()))
                 .daysRemaining(daysRemaining)
                 .autoRenew(Boolean.TRUE.equals(autoRenew))
+                .memberId(membership != null ? membership.getId() : null)
+                .isMember(membership != null && "active".equals(membership.getStatus()))
                 .status(resolveSubscriptionStatus(subscription))
                 .paidAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
+                .build();
+    }
+
+    public MyJoinedGroupItemResponse toJoinedGroupItem(ActivityGroupMember member,
+                                                        ActivityGroup group,
+                                                        Resident leader) {
+        return MyJoinedGroupItemResponse.builder()
+                .memberId(member.getId())
+                .groupId(group.getId())
+                .groupName(group.getName())
+                .groupCover(group.getCoverUrl())
+                .role(member.getRole())
+                .memberCount(defaultCount(group.getMemberCount()))
+                .monthlyFee(defaultFee(group.getMonthlyFee()))
+                .yearlyFee(defaultFee(group.getYearlyFee()))
+                .leaderId(group.getLeaderId())
+                .leaderName(leader != null ? leader.getName() : null)
+                .status(defaultStatus(group.getStatus()))
+                .joinedAt(DateTimeUtil.toIsoUtc(member.getJoinedAt()))
                 .build();
     }
 

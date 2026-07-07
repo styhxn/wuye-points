@@ -7,6 +7,7 @@ import com.wuye.points.dto.activity.ActivityGroupSubscriptionItemResponse;
 import com.wuye.points.dto.activity.CreateActivityGroupRequest;
 import com.wuye.points.dto.activity.JoinActivityGroupResponse;
 import com.wuye.points.dto.activity.LeaveActivityGroupResponse;
+import com.wuye.points.dto.activity.MyJoinedGroupItemResponse;
 import com.wuye.points.dto.activity.RemoveActivityGroupMemberResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupRequest;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
@@ -48,6 +49,14 @@ public class ActivityGroupController {
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
             @Parameter(description = "订阅状态") @RequestParam(required = false) String status) {
         return ApiResponse.success(activityGroupService.listMySubscriptions(page, pageSize, status));
+    }
+
+    @Operation(summary = "我加入的活动组", description = "获取当前用户加入的活动组列表（作为成员的组）")
+    @GetMapping("/my-joined")
+    public ApiResponse<PageResponse<MyJoinedGroupItemResponse>> listMyJoinedGroups(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(activityGroupService.listMyJoinedGroups(page, pageSize));
     }
 
     @Operation(summary = "活动组列表", description = "获取活动组列表（分页/筛选）")

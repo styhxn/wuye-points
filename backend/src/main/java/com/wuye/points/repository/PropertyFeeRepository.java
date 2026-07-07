@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 
 /**
@@ -16,6 +17,11 @@ import java.util.Optional;
  */
 @Repository
 public interface PropertyFeeRepository extends JpaRepository<PropertyFee, String>, JpaSpecificationExecutor<PropertyFee> {
+
+    boolean existsByResidentIdAndPeriod(String residentId, String period);
+
+    @Query("SELECT COUNT(f) FROM PropertyFee f WHERE f.residentId = :residentId AND f.paymentStatus NOT IN ('paid', 'cancelled')")
+    long countByResidentIdAndPaymentStatusNotIn(@Param("residentId") String residentId);
 
     Page<PropertyFee> findByPropertyCompanyId(String propertyCompanyId, Pageable pageable);
 
@@ -34,4 +40,16 @@ public interface PropertyFeeRepository extends JpaRepository<PropertyFee, String
             ORDER BY f.dueDate ASC
             """)
     Page<PropertyFee> findOldestUnpaidFees(@Param("residentId") String residentId, Pageable pageable);
+
+    @Query("""
+            SELECT COALESCE(SUM(f.amount), 0) FROM PropertyFee f
+            WHERE f.propertyCompanyId = :propertyCompanyId
+            """)
+    BigDecimal sumAmountByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
+    @Query("""
+            SELECT COALESCE(SUM(f.paidAmount), 0) FROM PropertyFee f
+            WHERE f.propertyCompanyId = :propertyCompanyId AND f.paymentStatus = 'paid'
+            """)
+    BigDecimal sumPaidAmountByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
 }

@@ -7,10 +7,13 @@ import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
 import com.wuye.points.dto.message.MessageDetailResponse;
 import com.wuye.points.dto.message.MessageListItemResponse;
+import com.wuye.points.dto.message.NeighborBlockRequest;
+import com.wuye.points.dto.message.NeighborBlockResponse;
 import com.wuye.points.dto.message.NeighborChatRequest;
 import com.wuye.points.dto.message.NeighborChatResponse;
 import com.wuye.points.dto.message.NeighborLimitResponse;
 import com.wuye.points.dto.message.NeighborSearchResponse;
+import com.wuye.points.dto.message.UnreadCountResponse;
 import com.wuye.points.service.MessageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -25,8 +28,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 /**
  * 消息模块
  */
@@ -38,12 +39,16 @@ public class MessageController {
 
     private final MessageService messageService;
 
-    @Operation(summary = "搜索邻居", description = "根据楼栋和单元搜索邻居")
+    @Operation(summary = "搜索邻居", description = "根据关键词搜索同小区邻居，支持分页")
     @GetMapping("/neighbors")
-    public ApiResponse<List<NeighborSearchResponse>> searchNeighbors(
-            @Parameter(description = "楼栋", example = "1") @RequestParam String building,
-            @Parameter(description = "单元", example = "1") @RequestParam String unit) {
-        return ApiResponse.success(messageService.searchNeighbors(building, unit));
+    public ApiResponse<PageResponse<NeighborSearchResponse>> searchNeighbors(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "搜索关键词（姓名/房号）") @RequestParam(required = false) String keyword,
+            @Parameter(description = "小区ID") @RequestParam(required = false) String communityId,
+            @Parameter(description = "楼栋") @RequestParam(required = false) String building,
+            @Parameter(description = "排序字段", example = "-createdAt") @RequestParam(defaultValue = "-createdAt") String sort) {
+        return ApiResponse.success(messageService.searchNeighbors(page, pageSize, keyword, communityId, building, sort));
     }
 
     @Operation(summary = "获取邻居搜索限制", description = "获取邻居搜索限制")
@@ -99,5 +104,25 @@ public class MessageController {
     public ApiResponse<MarkMessageReadResponse> markRead(
             @Parameter(description = "消息ID", example = "1") @PathVariable String id) {
         return ApiResponse.success(messageService.markRead(id));
+    }
+
+    @Operation(summary = "屏蔽邻居", description = "屏蔽指定邻居，不再接收其私聊消息")
+    @PostMapping("/neighbors/block")
+    public ApiResponse<NeighborBlockResponse> blockNeighbor(
+            @Valid @RequestBody NeighborBlockRequest request) {
+        return ApiResponse.success(messageService.blockNeighbor(request));
+    }
+
+    @Operation(summary = "取消屏蔽邻居", description = "取消屏蔽指定邻居")
+    @PostMapping("/neighbors/unblock")
+    public ApiResponse<NeighborBlockResponse> unblockNeighbor(
+            @Valid @RequestBody NeighborBlockRequest request) {
+        return ApiResponse.success(messageService.unblockNeighbor(request));
+    }
+
+    @Operation(summary = "获取未读消息数", description = "获取当前用户未读消息总数及分类统计")
+    @GetMapping("/unread-count")
+    public ApiResponse<UnreadCountResponse> getUnreadCount() {
+        return ApiResponse.success(messageService.getUnreadCount());
     }
 }

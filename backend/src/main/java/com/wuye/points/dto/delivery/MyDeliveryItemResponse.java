@@ -26,6 +26,9 @@ public class MyDeliveryItemResponse {
     @Schema(description = "商家名称", example = "幸福超市")
     private String merchantName;
 
+    @Schema(description = "商家地址", example = "小区东门")
+    private String merchantAddress;
+
     @Schema(description = "取货地址", example = "幸福超市")
     private String pickupAddress;
 
@@ -52,6 +55,9 @@ public class MyDeliveryItemResponse {
 
     @Schema(description = "送达时间", example = "2024-01-01T10:45:00")
     private String deliveredAt;
+
+    @Schema(description = "超时时间", example = "2024-01-01T10:30:00")
+    private String timeoutAt;
 
     @Schema(description = "创建时间", example = "2024-01-01T10:00:00")
     private String createdAt;

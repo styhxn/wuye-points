@@ -24,4 +24,6 @@ public interface ServiceSubscriptionRepository extends JpaRepository<ServiceSubs
             String serviceId, String residentId, String status, LocalDate date);
 
     List<ServiceSubscription> findByEndDateBetweenAndStatus(LocalDate start, LocalDate end, String status);
+
+    ServiceSubscription findByServiceIdAndResidentIdAndStatus(String serviceId, String residentId, String status);
 }

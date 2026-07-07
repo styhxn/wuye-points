@@ -149,7 +149,7 @@ public class RoleGuard {
     public static final Set<String> SERVICE_ORDER_STATUS = Set.of(
             "pending", "confirmed", "in_progress", "completed", "cancelled");
     public static final Set<String> PROPERTY_COMPANY_STATUS = Set.of("active", "inactive");
-    public static final Set<String> COIN_ISSUE_MODES = Set.of("auto", "manual_approval");
+    public static final Set<String> COIN_ISSUE_MODES = Set.of("auto", "manual");
 
     public static final Set<String> VALID_ROLES = Set.of(
             "platform_admin", "property_admin", "community_admin",

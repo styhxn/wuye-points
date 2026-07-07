@@ -88,7 +88,7 @@ public class OrderConverter {
                 .createdAt(base.getCreatedAt())
                 .residentId(order.getResidentId())
                 .propertyCompanyId(order.getPropertyCompanyId())
-                .address(order.getAddress())
+                .deliveryAddress(order.getAddress())
                 .contactPhone(contactPhone)
                 .remark(order.getRemark())
                 .cancelledAt(DateTimeUtil.toIsoUtc(order.getCancelledAt()))

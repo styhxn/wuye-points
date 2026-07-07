@@ -95,6 +95,8 @@ public class DistributionService {
 
         if (breakdown.distributableAmount().compareTo(BigDecimal.ZERO) < 0) {
             absorbPoolDiff(resident.getPropertyCompanyId(), breakdown.distributableAmount(), order.getId());
+        } else if (breakdown.propertyShare().compareTo(BigDecimal.ZERO) > 0) {
+            addToPoolFromDistribution(resident.getPropertyCompanyId(), breakdown.propertyShare(), order.getId());
         }
         return record;
     }
@@ -547,6 +549,29 @@ public class DistributionService {
         poolRecord.setSource("pool_diff");
         poolRecord.setSourceId(orderId);
         poolRecord.setDescription("分成负差额入积分池");
+        pointPoolRecordRepository.save(poolRecord);
+    }
+
+    private void addToPoolFromDistribution(String propertyCompanyId, BigDecimal amount, String orderId) {
+        PointPool pool = pointPoolRepository.findByPropertyCompanyId(propertyCompanyId).orElse(null);
+        if (pool == null) {
+            return;
+        }
+
+        BigDecimal newBalance = defaultDecimal(pool.getBalance()).add(amount);
+        pool.setBalance(newBalance);
+        pool.setTotalIn(defaultDecimal(pool.getTotalIn()).add(amount));
+        pointPoolRepository.save(pool);
+
+        PointPoolRecord poolRecord = new PointPoolRecord();
+        poolRecord.setId(idGenerator.generateId("ppr"));
+        poolRecord.setPropertyCompanyId(propertyCompanyId);
+        poolRecord.setPoolType("pool_in");
+        poolRecord.setAmount(amount);
+        poolRecord.setBalance(newBalance);
+        poolRecord.setSource("exchange_diff");
+        poolRecord.setSourceId(orderId);
+        poolRecord.setDescription("订单分成入积分池");
         pointPoolRecordRepository.save(poolRecord);
     }
 

@@ -37,6 +37,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -379,13 +381,20 @@ public class OpinionBoxService {
         return resident;
     }
 
+    private static final DateTimeFormatter LOCAL_DATETIME_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private LocalDateTime parseIsoDateTime(String value) {
         if (!StringUtils.hasText(value)) {
             throw new BizException(ErrorCode.PARAM_MISSING);
         }
         try {
             return LocalDateTime.ofInstant(Instant.parse(value), ZONE_SHANGHAI);
-        } catch (Exception ex) {
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(value, LOCAL_DATETIME_FORMATTER);
+        } catch (DateTimeParseException ex) {
             throw new BizException(ErrorCode.PARAM_INVALID, "时间格式不正确");
         }
     }

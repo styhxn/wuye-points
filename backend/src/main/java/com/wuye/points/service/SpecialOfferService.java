@@ -71,7 +71,7 @@ public class SpecialOfferService {
     @Transactional(readOnly = true)
     public PageResponse<SpecialOfferListItemResponse> list(
             int page, int pageSize, String targetType, String status) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        roleGuard.requireAnyRole("property_admin", "platform_admin", "sector_leader");
 
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);

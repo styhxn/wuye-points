@@ -6,6 +6,7 @@ import com.wuye.points.dto.resident.CreateResidentRequest;
 import com.wuye.points.dto.resident.DeleteAccountResponse;
 import com.wuye.points.dto.resident.MyCoinsResponse;
 import com.wuye.points.dto.resident.MyPointsResponse;
+import com.wuye.points.dto.resident.RequestAccountDeletionRequest;
 import com.wuye.points.dto.resident.ResidentDetailResponse;
 import com.wuye.points.dto.resident.ResidentListItemResponse;
 import com.wuye.points.dto.resident.ResidentStatusResponse;
@@ -164,7 +165,8 @@ public class ResidentController {
      */
     @Operation(summary = "申请注销账号", description = "申请注销账号，需登录，角色：resident")
     @PostMapping("/me/delete-request")
-    public ApiResponse<DeleteAccountResponse> requestAccountDeletion() {
-        return ApiResponse.success(residentService.requestAccountDeletion());
+    public ApiResponse<DeleteAccountResponse> requestAccountDeletion(
+            @Valid @RequestBody RequestAccountDeletionRequest request) {
+        return ApiResponse.success(residentService.requestAccountDeletion(request));
     }
 }

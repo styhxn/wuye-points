@@ -8,6 +8,7 @@ import com.wuye.points.dto.activity.ActivityGroupSubscriptionItemResponse;
 import com.wuye.points.dto.activity.CreateActivityGroupRequest;
 import com.wuye.points.dto.activity.JoinActivityGroupResponse;
 import com.wuye.points.dto.activity.LeaveActivityGroupResponse;
+import com.wuye.points.dto.activity.MyJoinedGroupItemResponse;
 import com.wuye.points.dto.activity.RemoveActivityGroupMemberResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupRequest;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
@@ -161,6 +162,9 @@ public class ActivityGroupService {
         Map<String, ActivityGroup> groupMap = loadGroups(subscriptions.stream()
                 .map(ActivityGroupSubscription::getGroupId)
                 .toList());
+        Map<String, ActivityGroupMember> membershipMap = loadMemberships(
+                subscriptions.stream().map(ActivityGroupSubscription::getGroupId).toList(),
+                resident.getId());
 
         List<ActivityGroupSubscriptionItemResponse> list = subscriptions.stream()
                 .map(subscription -> {
@@ -171,11 +175,51 @@ public class ActivityGroupService {
                         group.setName("");
                     }
                     refreshSubscriptionStatus(subscription);
-                    return activityGroupConverter.toSubscriptionItem(subscription, group, false);
+                    return activityGroupConverter.toSubscriptionItem(subscription, group, false,
+                            membershipMap.get(subscription.getGroupId()));
                 })
                 .toList();
 
         return PageResponse.of(list, page, pageSize, subscriptionPage.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MyJoinedGroupItemResponse> listMyJoinedGroups(
+            int page,
+            int pageSize) {
+        roleGuard.requireAnyRole("resident");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        Pageable pageable = PageRequest.of(Math.max(page, 1) - 1, pageSize, Sort.by(Sort.Direction.DESC, "joinedAt"));
+
+        Page<ActivityGroupMember> memberPage = activityGroupMemberRepository
+                .findByResidentIdAndStatus(resident.getId(), "active", pageable);
+
+        List<ActivityGroupMember> members = memberPage.getContent();
+        Map<String, ActivityGroup> groupMap = loadGroups(members.stream()
+                .map(ActivityGroupMember::getGroupId)
+                .toList());
+        Map<String, Resident> leaderMap = loadResidents(groupMap.values().stream()
+                .map(ActivityGroup::getLeaderId)
+                .toList());
+
+        List<MyJoinedGroupItemResponse> list = members.stream()
+                .map(member -> {
+                    ActivityGroup group = groupMap.get(member.getGroupId());
+                    if (group == null) {
+                        group = new ActivityGroup();
+                        group.setId(member.getGroupId());
+                        group.setName("");
+                    }
+                    Resident leader = leaderMap.get(group.getLeaderId());
+                    return activityGroupConverter.toJoinedGroupItem(member, group, leader);
+                })
+                .toList();
+
+        return PageResponse.of(list, page, pageSize, memberPage.getTotalElements());
     }
 
     @Transactional(readOnly = true)

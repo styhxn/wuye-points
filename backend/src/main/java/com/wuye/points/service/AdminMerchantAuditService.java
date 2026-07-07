@@ -42,7 +42,7 @@ public class AdminMerchantAuditService {
 
     private static final Set<String> PURCHASE_AUDIT_RESULTS = Set.of("approved", "rejected");
     private static final Set<String> WITHDRAWAL_AUDIT_RESULTS = Set.of("approved", "rejected", "completed");
-    private static final Set<String> PURCHASE_AUDIT_STATUS = Set.of("pending", "approved", "rejected");
+    private static final Set<String> PURCHASE_AUDIT_STATUS = Set.of("pending", "pending_audit", "approved", "rejected");
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
@@ -298,6 +298,9 @@ public class AdminMerchantAuditService {
         }
         if (!allowed.contains(value)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "auditStatus值无效");
+        }
+        if ("pending_audit".equals(value)) {
+            return "pending";
         }
         return value;
     }

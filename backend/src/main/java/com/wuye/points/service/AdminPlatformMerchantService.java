@@ -190,36 +190,75 @@ public class AdminPlatformMerchantService {
     }
 
     @Transactional(readOnly = true)
-    public ProfitSpaceResponse getProfitSpace(String merchantId, BigDecimal consumptionAmount) {
-        permissionGuard.requirePlatformAdmin();
+    public ProfitSpaceResponse getProfitSpace(String platformMerchantId, BigDecimal consumptionAmount) {
+        permissionGuard.requireAdmin();
 
-        com.wuye.points.entity.Merchant merchant = merchantRepository.findById(merchantId)
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        PlatformMerchant platformMerchant = platformMerchantRepository.findById(platformMerchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "平台商家不存在"));
+
+        com.wuye.points.entity.Merchant merchant = merchantRepository
+                .findByPlatformMerchantId(platformMerchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "商家未挂接到物业公司"));
 
         String propertyCompanyId = merchant.getPropertyCompanyId();
 
         MerchantPropertyConfig config = merchantPropertyConfigRepository
-                .findByMerchantIdAndPropertyCompanyId(merchantId, propertyCompanyId)
+                .findByMerchantIdAndPropertyCompanyId(merchant.getId(), propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "未配置物业参数"));
 
         PropertyCompany pc = propertyCompanyRepository.findById(propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.SYSTEM_ERROR));
 
         BigDecimal commissionAmount = consumptionAmount.multiply(config.getCommissionRate());
-        BigDecimal distributable = commissionAmount;
+        BigDecimal deliveryFee = pc.getDeliveryBaseFee() != null ? pc.getDeliveryBaseFee() : BigDecimal.ZERO;
+        BigDecimal pointCost = BigDecimal.ZERO;
+        BigDecimal coinCost = BigDecimal.ZERO;
+        BigDecimal distributable = commissionAmount.subtract(deliveryFee).subtract(pointCost).subtract(coinCost);
+        if (distributable.compareTo(BigDecimal.ZERO) < 0) {
+            distributable = BigDecimal.ZERO;
+        }
+
+        BigDecimal propertyShare = distributable.multiply(pc.getPropertyShareRate());
+        BigDecimal coordinatorShare = distributable.multiply(pc.getCoordinatorShareRate());
+        BigDecimal sectorLeaderShare = coordinatorShare.multiply(pc.getSectorLeaderRate());
+        BigDecimal individualLeaderShare = sectorLeaderShare.multiply(pc.getIndividualLeaderRate());
+        BigDecimal platformShare = BigDecimal.ZERO;
+        BigDecimal netProfit = distributable.subtract(propertyShare).subtract(coordinatorShare).subtract(platformShare);
+        BigDecimal profitMargin = consumptionAmount.compareTo(BigDecimal.ZERO) > 0
+                ? netProfit.divide(consumptionAmount, 4, java.math.RoundingMode.HALF_UP)
+                : BigDecimal.ZERO;
 
         return ProfitSpaceResponse.builder()
-                .merchantId(merchantId)
-                .merchantName(merchant.getName())
+                .platformMerchantId(platformMerchantId)
+                .platformMerchantName(platformMerchant.getName())
                 .propertyCompanyId(propertyCompanyId)
-                .consumptionAmount(consumptionAmount)
-                .commissionRate(config.getCommissionRate())
-                .commissionAmount(commissionAmount)
-                .distributableAmount(distributable)
-                .propertyShare(distributable.multiply(pc.getPropertyShareRate()))
-                .coordinatorShare(distributable.multiply(pc.getCoordinatorShareRate()))
-                .sectorLeaderShare(distributable.multiply(pc.getCoordinatorShareRate()).multiply(pc.getSectorLeaderRate()))
-                .individualLeaderShare(distributable.multiply(pc.getCoordinatorShareRate()).multiply(pc.getSectorLeaderRate()).multiply(pc.getIndividualLeaderRate()))
+                .propertyName(pc.getName())
+                .period("month")
+                .startDate(java.time.LocalDate.now().withDayOfMonth(1).toString())
+                .endDate(java.time.LocalDate.now().toString())
+                .metrics(ProfitSpaceResponse.Metrics.builder()
+                        .totalOrders(0L)
+                        .totalRevenue(consumptionAmount)
+                        .totalCommission(commissionAmount)
+                        .totalDeliveryFee(deliveryFee)
+                        .totalPointCost(pointCost)
+                        .totalCoinCost(coinCost)
+                        .netProfit(netProfit)
+                        .profitMargin(profitMargin)
+                        .build())
+                .breakdown(ProfitSpaceResponse.Breakdown.builder()
+                        .propertyShare(propertyShare)
+                        .coordinatorShare(coordinatorShare)
+                        .sectorLeaderShare(sectorLeaderShare)
+                        .individualLeaderShare(individualLeaderShare)
+                        .platformShare(platformShare)
+                        .build())
+                .comparison(ProfitSpaceResponse.Comparison.builder()
+                        .lastPeriodRevenue(BigDecimal.ZERO)
+                        .revenueGrowthRate(BigDecimal.ZERO)
+                        .lastPeriodProfit(BigDecimal.ZERO)
+                        .profitGrowthRate(BigDecimal.ZERO)
+                        .build())
                 .build();
     }
 

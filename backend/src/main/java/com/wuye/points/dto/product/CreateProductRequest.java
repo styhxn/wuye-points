@@ -5,6 +5,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -52,6 +53,7 @@ public class CreateProductRequest {
     @Schema(description = "商品分类", example = "绿植")
     private String category;
 
+    @Pattern(regexp = "active|inactive|sold_out", message = "商品状态只能为active、inactive或sold_out")
     @Schema(description = "商品状态", example = "active", allowableValues = {"active", "inactive", "sold_out"})
     private String status;
 }

@@ -1,10 +1,11 @@
 package com.wuye.points.dto.common;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.wuye.points.util.DateTimeUtil;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -27,7 +28,7 @@ public class ApiResponse<T> {
     private List<FieldError> errors;
 
     public ApiResponse() {
-        this.timestamp = Instant.now().toString();
+        this.timestamp = DateTimeUtil.toLocalDateTimeString(LocalDateTime.now());
     }
 
     public static <T> ApiResponse<T> success(T data) {

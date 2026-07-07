@@ -44,7 +44,7 @@ import java.util.Set;
 public class MerchantPointService {
 
     private static final BigDecimal DEFAULT_POINT_EXCHANGE_RATE = new BigDecimal("100.0000");
-    private static final Set<String> PURCHASE_AUDIT_STATUS = Set.of("pending", "approved", "rejected");
+    private static final Set<String> PURCHASE_AUDIT_STATUS = Set.of("pending", "pending_audit", "approved", "rejected");
 
     private final MerchantPointPurchaseRepository merchantPointPurchaseRepository;
     private final MerchantPointGrantRepository merchantPointGrantRepository;
@@ -91,6 +91,9 @@ public class MerchantPointService {
         }
         if (StringUtils.hasText(auditStatus) && !PURCHASE_AUDIT_STATUS.contains(auditStatus)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "auditStatus值无效");
+        }
+        if ("pending_audit".equals(auditStatus)) {
+            auditStatus = "pending";
         }
 
         Pageable pageable = buildPageable(page, pageSize);

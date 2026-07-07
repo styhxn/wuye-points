@@ -18,6 +18,12 @@ public class OrderListItemResponse {
     @Schema(description = "订单编号", example = "20260101000001")
     private String orderNo;
 
+    @Schema(description = "用户ID", example = "res_b7m9x1")
+    private String residentId;
+
+    @Schema(description = "用户姓名", example = "张先生")
+    private String residentName;
+
     @Schema(description = "商家ID", example = "mer_abc123")
     private String merchantId;
 
@@ -47,6 +53,9 @@ public class OrderListItemResponse {
 
     @Schema(description = "现金支付金额", example = "84.90")
     private BigDecimal cashAmount;
+
+    @Schema(description = "配送地址", example = "阳光花园1号楼1单元101")
+    private String deliveryAddress;
 
     @Schema(description = "商品数量", example = "2")
     private Integer itemCount;

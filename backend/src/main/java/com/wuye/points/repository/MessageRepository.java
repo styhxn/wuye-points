@@ -24,4 +24,13 @@ public interface MessageRepository extends JpaRepository<Message, String>, JpaSp
 
     @Query("SELECT m FROM Message m WHERE m.toId = :receiverId")
     Page<Message> findByReceiverId(@Param("receiverId") String receiverId, Pageable pageable);
+
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.toId = :receiverId AND m.readStatus = 'UNREAD'")
+    long countUnreadByReceiverId(@Param("receiverId") String receiverId);
+
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.toId = :receiverId AND m.readStatus = 'UNREAD' AND m.messageType = :messageType")
+    long countUnreadByReceiverIdAndMessageType(@Param("receiverId") String receiverId, @Param("messageType") String messageType);
+
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.toId = :receiverId AND m.readStatus = 'UNREAD' AND m.chatType = 'SINGLE'")
+    long countUnreadSingleByReceiverId(@Param("receiverId") String receiverId);
 }

@@ -84,6 +84,11 @@ public class AuthService {
 
         assertAccountActive(resident);
 
+        String role = resident.getRole();
+        if ("resident".equals(role) || "tenant".equals(role)) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "该账号无管理端登录权限");
+        }
+
         TokenResponse tokens = buildTokenResponse(resident);
         return AuthLoginResponse.builder()
                 .accessToken(tokens.getAccessToken())

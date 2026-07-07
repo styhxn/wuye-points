@@ -12,7 +12,7 @@ public class SubscribeActivityGroupRequest {
     @NotBlank(message = "subType不能为空")
     private String subType;
 
-    @Schema(description = "支付方式", example = "wechat", allowableValues = {"point", "coin", "wechat", "mixed"}, required = true)
+    @Schema(description = "支付方式", example = "wechat", allowableValues = {"point", "property_coin", "wechat", "mixed"}, required = true)
     @NotBlank(message = "支付方式不能为空")
     private String paymentMethod;
 

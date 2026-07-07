@@ -49,6 +49,9 @@ public class PermissionInterceptor implements HandlerInterceptor {
             Map.entry("GET:/admin/role-presets", "permission:read"),
             Map.entry("GET:/admin/users", "permission:read"),
             Map.entry("POST:/admin/users", "permission:manage"),
+            Map.entry("GET:/admin/users/*/permissions", "permission:read"),
+            Map.entry("POST:/admin/users/*/permissions/grant", "permission:manage"),
+            Map.entry("POST:/admin/users/*/permissions/revoke", "permission:manage"),
             Map.entry("GET:/admin/permission-change-logs", "permission:read"),
             // 统筹管理
             Map.entry("GET:/admin/coordinators", "coordinator:read"),
@@ -75,7 +78,6 @@ public class PermissionInterceptor implements HandlerInterceptor {
             // 操作日志
             Map.entry("GET:/admin/operation-logs", "log:read"),
             // 物业币管控
-            Map.entry("POST:/admin/residents", "coin:freeze"),
             Map.entry("GET:/admin/coin-freeze-records", "coin:freeze"),
             Map.entry("POST:/admin/coin-withdrawals", "coin:freeze"),
             Map.entry("GET:/admin/coin-withdrawals", "coin:freeze"),
@@ -127,11 +129,21 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if (adminIndex < 0) {
             return uri;
         }
-        String path = uri.substring(adminIndex + "/admin".length());
-        String[] segments = path.split("/");
-        if (segments.length >= 2) {
-            return "/" + segments[1];
+        // 获取 /admin/ 之后的所有路径
+        String fullPath = uri.substring(adminIndex);
+        // 将路径参数（纯数字）替换为 *
+        String[] segments = fullPath.split("/");
+        StringBuilder result = new StringBuilder();
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) {
+                result.append("/");
+            }
+            if (segments[i].matches("\\d+") || segments[i].matches("[a-z]+_[a-zA-Z0-9]+")) {
+                result.append("*");
+            } else {
+                result.append(segments[i]);
+            }
         }
-        return path;
+        return result.toString();
     }
 }

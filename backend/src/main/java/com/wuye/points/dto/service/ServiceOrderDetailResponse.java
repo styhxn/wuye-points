@@ -38,8 +38,17 @@ public class ServiceOrderDetailResponse {
     @Schema(description = "订单状态", example = "待服务")
     private String orderStatus;
 
+    @Schema(description = "服务分类", example = "cleaning_repair")
+    private String serviceCategory;
+
     @Schema(description = "订单金额", example = "100.00")
-    private BigDecimal amount;
+    private BigDecimal price;
+
+    @Schema(description = "会员价格", example = "80.00")
+    private BigDecimal memberPrice;
+
+    @Schema(description = "实付金额", example = "80.00")
+    private BigDecimal paidAmount;
 
     @Schema(description = "支付方式", example = "微信支付")
     private String paymentMethod;

@@ -44,4 +44,31 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
                       @Param("courierId") String courierId,
                       @Param("acceptedAt") LocalDateTime acceptedAt,
                       @Param("courierEarning") BigDecimal courierEarning);
+
+    long countByPropertyCompanyIdAndCreatedAtBetween(
+            String propertyCompanyId, LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT COALESCE(SUM(d.fee), 0) FROM Delivery d WHERE d.propertyCompanyId = :propertyCompanyId AND d.createdAt >= :start AND d.createdAt < :end")
+    BigDecimal sumFeeByPropertyCompanyIdAndCreatedAtBetween(
+            @Param("propertyCompanyId") String propertyCompanyId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
+    long countByCourierIdAndStatusAndDeliveredAtBetween(
+            String courierId, String status, LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d WHERE d.courierId = :courierId AND d.status = 'delivered' AND d.deliveredAt >= :start AND d.deliveredAt < :end")
+    BigDecimal sumCourierEarningByCourierIdAndDeliveredAtBetween(
+            @Param("courierId") String courierId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
+    List<Delivery> findByCourierIdInAndStatus(List<String> courierIds, String status);
+
+    boolean existsByCourierIdAndStatusIn(String courierId, List<String> statuses);
+
+    List<Delivery> findTop10ByPropertyCompanyIdOrderByCreatedAtDesc(String propertyCompanyId);
+
+    List<Delivery> findByPropertyCompanyIdAndCreatedAtBetween(
+            String propertyCompanyId, LocalDateTime start, LocalDateTime end);
 }

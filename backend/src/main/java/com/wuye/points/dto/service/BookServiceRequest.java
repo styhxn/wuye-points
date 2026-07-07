@@ -22,7 +22,13 @@ public class BookServiceRequest {
     @Schema(description = "备注", example = "请提前联系")
     private String remark;
 
-    @Schema(description = "支付方式", example = "微信支付", required = true)
+    @Schema(description = "支付方式（property_coin/point/wechat/mixed）", example = "wechat", required = true)
     @NotBlank(message = "支付方式不能为空")
     private String paymentMethod;
+
+    @Schema(description = "使用积分（mixed时可选）", example = "5000")
+    private Integer pointUsed;
+
+    @Schema(description = "使用物业币（mixed时可选）", example = "30")
+    private java.math.BigDecimal coinUsed;
 }

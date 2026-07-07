@@ -35,16 +35,16 @@ public class ProfileResponse {
     @Schema(description = "年龄", example = "30")
     private Integer age;
 
-    @Schema(description = "婚姻状态", example = "已婚")
+    @Schema(description = "婚姻状态", example = "married")
     private String maritalStatus;
 
     @Schema(description = "是否有子女", example = "true")
     private Boolean hasChildren;
 
-    @Schema(description = "用户类型", example = "resident")
+    @Schema(description = "用户类型", example = "owner")
     private String userType;
 
-    @Schema(description = "角色", example = "user")
+    @Schema(description = "角色", example = "resident")
     private String role;
 
     @Schema(description = "物业公司ID", example = "pc_abc123")

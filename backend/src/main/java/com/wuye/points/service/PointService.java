@@ -129,7 +129,8 @@ public class PointService {
         return FamilyPointBalanceResponse.builder()
                 .familyId(family.getId())
                 .familyName(family.getName())
-                .totalPointBalance(defaultFamilyPointBalance(family))
+                .pointBalance(defaultFamilyPointBalance(family))
+                .memberCount(memberItems.size())
                 .members(memberItems)
                 .build();
     }

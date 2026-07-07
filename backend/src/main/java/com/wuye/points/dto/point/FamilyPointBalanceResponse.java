@@ -17,7 +17,10 @@ public class FamilyPointBalanceResponse {
     private String familyName;
 
     @Schema(description = "家庭积分余额", example = "1200")
-    private Integer totalPointBalance;
+    private Integer pointBalance;
+
+    @Schema(description = "家庭成员数量", example = "3")
+    private Integer memberCount;
 
     @Schema(description = "家庭成员列表")
     private List<Member> members;

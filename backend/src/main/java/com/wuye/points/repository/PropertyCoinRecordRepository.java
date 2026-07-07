@@ -51,6 +51,13 @@ public interface PropertyCoinRecordRepository extends JpaRepository<PropertyCoin
             """)
     BigDecimal sumIssuedByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
 
+    @Query("""
+            SELECT COALESCE(SUM(ABS(r.amount)), 0) FROM PropertyCoinRecord r
+            WHERE r.propertyCompanyId = :propertyCompanyId
+            AND r.coinType = 'spend'
+            """)
+    BigDecimal sumConsumedByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
     List<PropertyCoinRecord> findByResidentIdAndCoinTypeAndCreatedAtBefore(
             String residentId, String coinType, LocalDateTime createdAt);
 

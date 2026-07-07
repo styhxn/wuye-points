@@ -103,6 +103,16 @@ public class FamilyController {
     }
 
     /**
+     * 退出家庭
+     * Auth: Required | Roles: resident（非户主）
+     */
+    @Operation(summary = "退出家庭", description = "当前用户退出所在家庭，需登录，角色：resident（非户主）")
+    @PostMapping("/me/leave")
+    public ApiResponse<RemoveFamilyMemberResponse> leaveFamily() {
+        return ApiResponse.success(familyService.leaveFamily());
+    }
+
+    /**
      * 移除家庭成员
      * Auth: Required | Roles: resident（仅户主）
      */

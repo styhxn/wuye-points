@@ -7,11 +7,15 @@ import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
 import com.wuye.points.dto.message.MessageDetailResponse;
 import com.wuye.points.dto.message.MessageListItemResponse;
+import com.wuye.points.dto.message.NeighborBlockRequest;
+import com.wuye.points.dto.message.NeighborBlockResponse;
 import com.wuye.points.dto.message.NeighborChatRequest;
 import com.wuye.points.dto.message.NeighborChatResponse;
 import com.wuye.points.dto.message.NeighborLimitResponse;
 import com.wuye.points.dto.message.NeighborSearchResponse;
+import com.wuye.points.dto.message.UnreadCountResponse;
 import com.wuye.points.entity.Message;
+import com.wuye.points.entity.NeighborBlock;
 import com.wuye.points.entity.NeighborContactLimit;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
@@ -19,6 +23,7 @@ import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.MessageRepository;
+import com.wuye.points.repository.NeighborBlockRepository;
 import com.wuye.points.repository.NeighborContactLimitRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
@@ -52,6 +57,7 @@ public class MessageService {
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
 
     private final MessageRepository messageRepository;
+    private final NeighborBlockRepository neighborBlockRepository;
     private final NeighborContactLimitRepository neighborContactLimitRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
@@ -289,22 +295,43 @@ public class MessageService {
     }
 
     @Transactional(readOnly = true)
-    public List<NeighborSearchResponse> searchNeighbors(String building, String unit) {
+    public PageResponse<NeighborSearchResponse> searchNeighbors(int page, int pageSize, String keyword,
+            String communityId, String building, String sort) {
         roleGuard.requireAnyRole("resident");
 
         Resident currentResident = getActiveResident(UserContext.currentUserId());
         String propertyCompanyId = currentResident.getPropertyCompanyId();
 
-        if (!StringUtils.hasText(building) || !StringUtils.hasText(unit)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "楼栋和单元不能为空");
-        }
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 1) - 1,
+                Math.min(Math.max(pageSize, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
 
         List<Resident> neighbors = residentRepository
-                .findByPropertyCompanyIdAndBuildingAndUnitAndStatus(
-                        propertyCompanyId, building, unit, "active");
+                .findByPropertyCompanyIdAndStatus(propertyCompanyId, "active");
 
-        return neighbors.stream()
+        List<NeighborSearchResponse> results = neighbors.stream()
                 .filter(r -> !r.getId().equals(currentResident.getId()))
+                .filter(r -> {
+                    if (StringUtils.hasText(keyword)) {
+                        String kw = keyword.toLowerCase();
+                        return (r.getName() != null && r.getName().toLowerCase().contains(kw))
+                                || (r.getRoom() != null && r.getRoom().toLowerCase().contains(kw));
+                    }
+                    return true;
+                })
+                .filter(r -> {
+                    if (StringUtils.hasText(communityId)) {
+                        return communityId.equals(r.getCommunityId());
+                    }
+                    return true;
+                })
+                .filter(r -> {
+                    if (StringUtils.hasText(building)) {
+                        return building.equals(r.getBuilding());
+                    }
+                    return true;
+                })
                 .map(r -> NeighborSearchResponse.builder()
                         .residentId(r.getId())
                         .name(r.getName())
@@ -312,8 +339,114 @@ public class MessageService {
                         .building(r.getBuilding())
                         .unit(r.getUnit())
                         .room(r.getRoom())
+                        .communityName(null)
+                        .chatStatus("not_chatted")
                         .build())
                 .toList();
+
+        int total = results.size();
+        int from = (int) pageable.getOffset();
+        int to = Math.min(from + pageable.getPageSize(), total);
+        List<NeighborSearchResponse> pagedList = from < total ? results.subList(from, to) : List.of();
+
+        return PageResponse.of(pagedList, page, pageSize, total);
+    }
+
+    @Transactional
+    public NeighborBlockResponse blockNeighbor(NeighborBlockRequest request) {
+        roleGuard.requireAnyRole("resident");
+
+        Resident currentResident = getActiveResident(UserContext.currentUserId());
+        String blockedId = request.getBlockedId();
+        validateResidentId(blockedId);
+
+        if (currentResident.getId().equals(blockedId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "不能屏蔽自己");
+        }
+
+        Resident blockedResident = getActiveResident(blockedId);
+        assertSameProperty(currentResident.getPropertyCompanyId(), blockedResident.getPropertyCompanyId());
+
+        boolean alreadyBlocked = neighborBlockRepository
+                .existsByBlockerIdAndBlockedId(currentResident.getId(), blockedId);
+        if (alreadyBlocked) {
+            return NeighborBlockResponse.builder()
+                    .success(true)
+                    .action("blocked")
+                    .blockedId(blockedId)
+                    .message("已经屏蔽过该邻居")
+                    .build();
+        }
+
+        NeighborBlock block = new NeighborBlock();
+        block.setId(idGenerator.generateId("nb"));
+        block.setBlockerId(currentResident.getId());
+        block.setBlockedId(blockedId);
+        block.setPropertyCompanyId(currentResident.getPropertyCompanyId());
+        block.setBlockedAt(java.time.LocalDateTime.now());
+        neighborBlockRepository.save(block);
+
+        return NeighborBlockResponse.builder()
+                .success(true)
+                .action("blocked")
+                .blockedId(blockedId)
+                .message("已屏蔽该邻居")
+                .build();
+    }
+
+    @Transactional
+    public NeighborBlockResponse unblockNeighbor(NeighborBlockRequest request) {
+        roleGuard.requireAnyRole("resident");
+
+        Resident currentResident = getActiveResident(UserContext.currentUserId());
+        String blockedId = request.getBlockedId();
+        validateResidentId(blockedId);
+
+        NeighborBlock block = neighborBlockRepository
+                .findByBlockerIdAndBlockedId(currentResident.getId(), blockedId)
+                .orElse(null);
+
+        if (block == null) {
+            return NeighborBlockResponse.builder()
+                    .success(true)
+                    .action("unblocked")
+                    .blockedId(blockedId)
+                    .message("未屏蔽该邻居")
+                    .build();
+        }
+
+        neighborBlockRepository.delete(block);
+
+        return NeighborBlockResponse.builder()
+                .success(true)
+                .action("unblocked")
+                .blockedId(blockedId)
+                .message("已取消屏蔽该邻居")
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public UnreadCountResponse getUnreadCount() {
+        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin", "merchant", "courier", "technician");
+
+        String currentUserId = UserContext.currentUserId();
+        if (currentUserId == null) {
+            throw new BizException(ErrorCode.TOKEN_MISSING);
+        }
+
+        long totalUnread = messageRepository.countUnreadByReceiverId(currentUserId);
+        long systemUnread = messageRepository.countUnreadByReceiverIdAndMessageType(currentUserId, "system_message");
+        long propertyUnread = messageRepository.countUnreadByReceiverIdAndMessageType(currentUserId, "property_message");
+        long merchantUnread = messageRepository.countUnreadByReceiverIdAndMessageType(currentUserId, "community_message");
+        long neighborUnread = messageRepository.countUnreadSingleByReceiverId(currentUserId);
+
+        return UnreadCountResponse.builder()
+                .totalUnread((int) totalUnread)
+                .systemUnread((int) systemUnread)
+                .propertyUnread((int) propertyUnread)
+                .merchantUnread((int) merchantUnread)
+                .neighborUnread((int) neighborUnread)
+                .build();
     }
 
     private PageResponse<MessageListItemResponse> buildListPage(Page<Message> messagePage, int page, int pageSize) {

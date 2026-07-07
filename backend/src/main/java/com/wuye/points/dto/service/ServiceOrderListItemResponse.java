@@ -20,6 +20,9 @@ public class ServiceOrderListItemResponse {
     @Schema(description = "服务名称", example = "家政保洁")
     private String serviceName;
 
+    @Schema(description = "服务分类", example = "cleaning_repair")
+    private String serviceCategory;
+
     @Schema(description = "住户ID", example = "res_b7m9x1")
     private String residentId;
 
@@ -29,13 +32,22 @@ public class ServiceOrderListItemResponse {
     @Schema(description = "服务商ID", example = "prov_x9k2m1")
     private String providerId;
 
-    @Schema(description = "订单状态", example = "待服务")
+    @Schema(description = "服务商名称", example = "阳光家政")
+    private String providerName;
+
+    @Schema(description = "订单状态", example = "pending")
     private String orderStatus;
 
     @Schema(description = "订单金额", example = "100.00")
-    private BigDecimal amount;
+    private BigDecimal price;
 
-    @Schema(description = "支付方式", example = "微信支付")
+    @Schema(description = "会员价格", example = "80.00")
+    private BigDecimal memberPrice;
+
+    @Schema(description = "实付金额", example = "80.00")
+    private BigDecimal paidAmount;
+
+    @Schema(description = "支付方式", example = "wechat")
     private String paymentMethod;
 
     @Schema(description = "服务时间", example = "2026-01-01T10:00:00.000Z")

@@ -19,6 +19,9 @@ import java.util.Optional;
 @Repository
 public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecificationExecutor<Order> {
 
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.residentId = :residentId AND o.orderStatus NOT IN ('completed', 'cancelled')")
+    long countPendingOrdersByResidentId(@Param("residentId") String residentId);
+
     Page<Order> findByPropertyCompanyId(String propertyCompanyId, Pageable pageable);
 
     Page<Order> findByResidentId(String residentId, Pageable pageable);
@@ -45,4 +48,23 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
             AND o.merchantId IS NOT NULL
             """)
     List<String> findDistinctMerchantIdsByResidentId(@Param("residentId") String residentId);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.propertyCompanyId = :propertyCompanyId")
+    long countByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
+    @Query("""
+            SELECT COALESCE(SUM(o.totalAmount), 0) FROM Order o
+            WHERE o.propertyCompanyId = :propertyCompanyId AND o.orderStatus = 'completed'
+            """)
+    BigDecimal sumRevenueByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
+    @Query("""
+            SELECT o.merchantId, COUNT(o) AS cnt, COALESCE(SUM(o.totalAmount), 0) AS rev
+            FROM Order o
+            WHERE o.propertyCompanyId = :propertyCompanyId AND o.orderStatus = 'completed'
+            AND o.merchantId IS NOT NULL
+            GROUP BY o.merchantId
+            ORDER BY cnt DESC
+            """)
+    List<Object[]> findTopMerchantsByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
 }
