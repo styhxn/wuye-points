@@ -67,4 +67,16 @@ public class DistributionRecord extends BaseEntity {
 
     @Column(name = "individual_leader_id", length = 32)
     private String individualLeaderId;
+
+    /** 平台分成（金额） */
+    @Column(name = "platform_share", precision = 10, scale = 2)
+    private BigDecimal platformShare;
+
+    /** 平台收益（金额） */
+    @Column(name = "platform_earning", precision = 10, scale = 2)
+    private BigDecimal platformEarning;
+
+    /** 平台手续费分成（金额） */
+    @Column(name = "platform_fee_share", precision = 10, scale = 2)
+    private BigDecimal platformFeeShare;
 }

@@ -52,4 +52,7 @@ public class AnnouncementListItemResponse {
 
     @Schema(description = "创建时间", example = "2024-01-01T10:00:00")
     private String createdAt;
+
+    @Schema(description = "关联活动组ID（活动公告专用）", example = "act_001")
+    private String activityGroupId;
 }

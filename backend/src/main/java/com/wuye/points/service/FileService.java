@@ -45,7 +45,8 @@ public class FileService {
             "announcement", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 9, true),
             "merchant", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 12, true),
             "service", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 6, true),
-            "activity", new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true)
+            "activity", new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true),
+            "product", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 20, true)
     );
 
     private final FileRepository fileRepository;

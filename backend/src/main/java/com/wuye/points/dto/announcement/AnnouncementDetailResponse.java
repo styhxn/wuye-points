@@ -62,6 +62,9 @@ public class AnnouncementDetailResponse {
     @Schema(description = "商家ID", example = "merchant_001")
     private String merchantId;
 
+    @Schema(description = "关联活动组ID（活动公告专用）", example = "act_001")
+    private String activityGroupId;
+
     @Schema(description = "目标角色列表", example = "{\"owner\", \"tenant\"}")
     private List<String> targetRoles;
 

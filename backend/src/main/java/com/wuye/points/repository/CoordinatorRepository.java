@@ -33,4 +33,7 @@ public interface CoordinatorRepository extends JpaRepository<Coordinator, String
 
     Optional<Coordinator> findFirstByPropertyCompanyIdAndStatusOrderByCommissionRateDesc(
             String propertyCompanyId, String status);
+
+    Optional<Coordinator> findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+            String residentId, String propertyCompanyId, String status);
 }

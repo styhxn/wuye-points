@@ -47,6 +47,7 @@ public class AnnouncementConverter {
                 .readStatus("unread")
                 .publishedAt(DateTimeUtil.toIsoUtc(announcement.getPublishedAt()))
                 .createdAt(DateTimeUtil.toIsoUtc(announcement.getCreatedAt()))
+                .activityGroupId(announcement.getActivityGroupId())
                 .build();
     }
 
@@ -72,6 +73,7 @@ public class AnnouncementConverter {
                 .propertyCompanyId(announcement.getPropertyCompanyId())
                 .communityId(announcement.getCommunityId())
                 .merchantId(announcement.getMerchantId())
+                .activityGroupId(announcement.getActivityGroupId())
                 .targetRoles(parseStringList(announcement.getTargetRoles()))
                 .targetBuildings(parseStringList(announcement.getTargetBuildings()))
                 .collectFields(parseCollectFields(announcement.getCollectFields()))

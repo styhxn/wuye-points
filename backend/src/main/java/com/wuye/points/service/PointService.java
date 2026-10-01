@@ -16,6 +16,8 @@ import com.wuye.points.dto.point.SpendPointRequest;
 import com.wuye.points.dto.point.SpendPointResponse;
 import com.wuye.points.dto.point.TransferPointRequest;
 import com.wuye.points.dto.point.TransferPointResponse;
+import com.wuye.points.dto.resident.TransferToPropertyPointRequest;
+import com.wuye.points.dto.resident.TransferToPropertyPointResponse;
 import com.wuye.points.entity.Family;
 import com.wuye.points.entity.PointRecord;
 import com.wuye.points.entity.PropertyCompany;
@@ -32,6 +34,7 @@ import com.wuye.points.repository.PropertyFeeRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.PointRecordSpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.FeatureSwitchGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -62,6 +65,9 @@ public class PointService {
     private static final Set<String> SPEND_SOURCES = Set.of(
             "order", "fee_deduct", "manual", "transfer");
 
+    /** 住户主动转给物业的流水来源标识，须与管理端对账查询（AdminTransferToPropertyService）保持一致。 */
+    public static final String SOURCE_TRANSFER_TO_PROPERTY = "transfer_to_property";
+
     private final PointRecordRepository pointRecordRepository;
     private final ResidentRepository residentRepository;
     private final FamilyRepository familyRepository;
@@ -70,6 +76,7 @@ public class PointService {
     private final PointConverter pointConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final FeatureSwitchGuard featureSwitchGuard;
 
     @Transactional(readOnly = true)
     public PointBalanceResponse getBalance() {
@@ -544,6 +551,26 @@ public class PointService {
                 sourceId,
                 description,
                 operatorId);
+    }
+
+    /**
+     * 住户主动将积分转赠给物业（个人积分扣减，记 spend 流水，不计入家庭池）。
+     */
+    @Transactional
+    public TransferToPropertyPointResponse transferToProperty(TransferToPropertyPointRequest request) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        featureSwitchGuard.assertPointEnabled(resident.getPropertyCompanyId());
+        int amount = request.getPointAmount();
+        PointRecord record = spendPoints(resident, amount, SOURCE_TRANSFER_TO_PROPERTY, resident.getId(),
+                request.getRemark() != null ? request.getRemark() : "住户积分转赠物业", null, false);
+        return TransferToPropertyPointResponse.builder()
+                .recordId(record.getId())
+                .residentId(resident.getId())
+                .pointAmount(amount)
+                .balanceAfter(record.getBalance())
+                .transferredAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                .build();
     }
 
     /**

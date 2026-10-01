@@ -85,6 +85,62 @@ public class Merchant extends BaseEntity {
     @Column(name = "free_delivery_threshold", precision = 10, scale = 2)
     private BigDecimal freeDeliveryThreshold;
 
+    /** 满额免配送费出资方 platform/merchant */
+    @Column(name = "free_delivery_sponsor", length = 20)
+    private String freeDeliverySponsor;
+
+    /** 是否启用满额减免 */
+    @Column(name = "free_delivery_enabled")
+    private Boolean freeDeliveryEnabled;
+
+    /** 多档配送费配置 JSON：[{minKm,maxKm,fee,enabled}] */
+    @Column(name = "delivery_fee_tiers", columnDefinition = "json")
+    private String deliveryFeeTiers;
+
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 关联住户ID */
+    @Column(name = "resident_id", length = 32)
+    private String residentId;
+
+    /** 配送范围 */
+    @Column(name = "delivery_scope", length = 100)
+    private String deliveryScope;
+
+    /** 商家类型（canteen 等） */
+    @Column(name = "merchant_type", length = 30)
+    private String merchantType;
+
+    /** 是否社区食堂主商家 */
+    @Column(name = "is_canteen_main_merchant")
+    private Boolean isCanteenMainMerchant;
+
+    /** 是否服务全部社区 */
+    @Column(name = "serve_all_communities")
+    private Boolean serveAllCommunities;
+
+    /** 提现是否被冻结 */
+    @Column(name = "withdrawal_blocked")
+    private Boolean withdrawalBlocked;
+
+    /** 商家来源（technician 等） */
+    @Column(name = "merchant_source", length = 30)
+    private String merchantSource;
+
+    /** 是否官方推荐（平台/物业推荐给住户） */
+    @Column(name = "is_recommended")
+    private Boolean isRecommended;
+
+    /** 推荐排序（越大越靠前） */
+    @Column(name = "recommended_sort")
+    private Integer recommendedSort;
+
+    /** 归属个体负责人ID（个体负责人新增/关联的商家） */
+    @Column(name = "individual_leader_id", length = 32)
+    private String individualLeaderId;
+
+    /** 个体负责人与商家的分成比例(0~1)，经审批后生效 */
+    @Column(name = "individual_leader_rate", precision = 5, scale = 4)
+    private BigDecimal individualLeaderRate;
 }

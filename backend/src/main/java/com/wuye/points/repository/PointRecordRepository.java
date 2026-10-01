@@ -11,6 +11,8 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 
+import java.util.List;
+
 /**
  * 积分记录 Repository
  */
@@ -58,4 +60,23 @@ public interface PointRecordRepository extends JpaRepository<PointRecord, String
     Integer sumFamilySpentBetween(@Param("familyId") String familyId,
                                   @Param("start") LocalDateTime start,
                                   @Param("end") LocalDateTime end);
+
+    @Query("SELECT FUNCTION('DATE', r.createdAt), " +
+           "COALESCE(SUM(CASE WHEN r.pointType = 'earn' THEN r.amount ELSE 0 END), 0), " +
+           "COALESCE(SUM(CASE WHEN r.pointType = 'spend' THEN ABS(r.amount) ELSE 0 END), 0) " +
+           "FROM PointRecord r " +
+           "WHERE r.propertyCompanyId = :propertyCompanyId AND r.createdAt >= :start AND r.createdAt < :end " +
+           "GROUP BY FUNCTION('DATE', r.createdAt) ORDER BY FUNCTION('DATE', r.createdAt)")
+    List<Object[]> dailyTrendByRange(@Param("propertyCompanyId") String propertyCompanyId,
+                                    @Param("start") LocalDateTime start,
+                                    @Param("end") LocalDateTime end);
+
+    @Query("SELECT r.source, COALESCE(SUM(ABS(r.amount)), 0) " +
+           "FROM PointRecord r " +
+           "WHERE r.propertyCompanyId = :propertyCompanyId AND r.pointType = 'spend' " +
+           "AND r.createdAt >= :start AND r.createdAt < :end " +
+           "GROUP BY r.source")
+    List<Object[]> consumptionGroupBySource(@Param("propertyCompanyId") String propertyCompanyId,
+                                            @Param("start") LocalDateTime start,
+                                            @Param("end") LocalDateTime end);
 }

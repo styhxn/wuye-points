@@ -60,21 +60,32 @@ public class AdminPointPoolService {
     public PointPoolBalanceResponse getBalance(String propertyCompanyId) {
         permissionGuard.requirePermissionWithFallback("pool.read", "points.input", "data.view");
         String scopedPropertyCompanyId = resolveRequiredPropertyCompanyId(propertyCompanyId);
-        PointPool pool = getPoolOrThrow(scopedPropertyCompanyId);
         PropertyCompany company = propertyCompanyRepository.findById(scopedPropertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
 
-        BigDecimal balance = defaultDecimal(pool.getBalance());
+        // 2026-09-07 前端问题 E：历史物业公司可能没有 point_pools 行，此时返回 0 概览而非 404
+        PointPool pool = pointPoolRepository.findByPropertyCompanyId(scopedPropertyCompanyId).orElse(null);
+        BigDecimal balance = BigDecimal.ZERO;
+        BigDecimal totalIn = BigDecimal.ZERO;
+        BigDecimal totalOut = BigDecimal.ZERO;
+        String updatedAt = null;
+        if (pool != null) {
+            balance = defaultDecimal(pool.getBalance());
+            totalIn = defaultDecimal(pool.getTotalIn());
+            totalOut = defaultDecimal(pool.getTotalOut());
+            updatedAt = DateTimeUtil.toIsoUtc(pool.getUpdatedAt());
+        }
+
         BigDecimal rate = resolvePointToFeeRate(company);
 
         return PointPoolBalanceResponse.builder()
                 .propertyCompanyId(scopedPropertyCompanyId)
                 .propertyCompanyName(company.getName())
                 .balance(balance)
-                .totalIn(defaultDecimal(pool.getTotalIn()))
-                .totalOut(defaultDecimal(pool.getTotalOut()))
+                .totalIn(totalIn)
+                .totalOut(totalOut)
                 .equivalentAmount(balance.multiply(rate).setScale(2, RoundingMode.HALF_UP))
-                .updatedAt(DateTimeUtil.toIsoUtc(pool.getUpdatedAt()))
+                .updatedAt(updatedAt)
                 .build();
     }
 
@@ -117,7 +128,16 @@ public class AdminPointPoolService {
         }
 
         String scopedPropertyCompanyId = resolveRequiredPropertyCompanyId(request.getPropertyCompanyId());
-        PointPool pool = getPoolOrThrow(scopedPropertyCompanyId);
+        // 调整积分池时若池不存在则自动建池（与新建物业初始化逻辑对齐），避免历史公司无法入账
+        PointPool pool = pointPoolRepository.findByPropertyCompanyId(scopedPropertyCompanyId).orElse(null);
+        if (pool == null) {
+            pool = new PointPool();
+            pool.setId(idGenerator.generateId("pp"));
+            pool.setPropertyCompanyId(scopedPropertyCompanyId);
+            pool.setBalance(BigDecimal.ZERO);
+            pool.setTotalIn(BigDecimal.ZERO);
+            pool.setTotalOut(BigDecimal.ZERO);
+        }
 
         BigDecimal absAmount = request.getAmount().abs();
         String poolType;

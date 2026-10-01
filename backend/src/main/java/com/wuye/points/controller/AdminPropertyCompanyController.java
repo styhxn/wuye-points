@@ -4,12 +4,14 @@ import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyResponse;
+import com.wuye.points.dto.propertycompany.UpdateCoinUseConditionRequest;
 import com.wuye.points.dto.propertycompany.PropertyCompanyDetailResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyListItemResponse;
 import com.wuye.points.dto.propertycompany.UpdatePropertyCompanyRequest;
 import com.wuye.points.service.PropertyCompanyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -79,5 +81,23 @@ public class AdminPropertyCompanyController {
             @Parameter(description = "资源ID") @PathVariable String id,
             @Valid @RequestBody UpdatePropertyCompanyRequest request) {
         return ApiResponse.success(propertyCompanyService.updatePropertyCompany(id, request));
+    }
+
+    @Operation(summary = "删除物业公司", description = "真实删除物业公司（仅平台管理员；存在关联商家/住户/订单/社区时拒绝）。角色: platform_admin")
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> deletePropertyCompany(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id) {
+        propertyCompanyService.deletePropertyCompany(id);
+        return ApiResponse.success(null);
+    }
+
+    @Operation(summary = "设置物业币使用条件",
+            description = "设置物业币使用条件（§79.2）：none / point_threshold / property_fee_paid / manual_issue。"
+                    + "角色: property_admin, platform_admin")
+    @PutMapping("/{id}/coin-use-condition")
+    public ApiResponse<PropertyCompanyDetailResponse> updateCoinUseCondition(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Valid @RequestBody UpdateCoinUseConditionRequest request) {
+        return ApiResponse.success(propertyCompanyService.updateCoinUseCondition(id, request));
     }
 }

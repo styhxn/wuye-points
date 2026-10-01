@@ -24,6 +24,7 @@ public class PropertyCompanyConverter {
                 .contactPhone(company.getContactPhone())
                 .address(company.getAddress())
                 .distributionRates(PropertyCompanyCurrentResponse.DistributionRates.builder()
+                        .platformRate(company.getPlatformShareRate())
                         .propertyRate(company.getPropertyShareRate())
                         .coordinatorRate(company.getCoordinatorShareRate())
                         .sectorLeaderRate(company.getSectorLeaderRate())
@@ -77,6 +78,7 @@ public class PropertyCompanyConverter {
                 .contactPhone(company.getContactPhone())
                 .address(company.getAddress())
                 .status(company.getStatus())
+                .platformShareRate(company.getPlatformShareRate())
                 .propertyShareRate(company.getPropertyShareRate())
                 .coordinatorShareRate(company.getCoordinatorShareRate())
                 .sectorLeaderRate(company.getSectorLeaderRate())
@@ -111,12 +113,17 @@ public class PropertyCompanyConverter {
     }
 
     public AdminAccountResponse toAdminAccount(Resident resident, String email) {
+        return toAdminAccount(resident, email, null);
+    }
+
+    public AdminAccountResponse toAdminAccount(Resident resident, String email, String initialPassword) {
         return AdminAccountResponse.builder()
                 .id(resident.getId())
                 .name(resident.getName())
                 .phone(resident.getPhone())
                 .role(resident.getRole())
                 .email(email)
+                .initialPassword(initialPassword)
                 .build();
     }
 }

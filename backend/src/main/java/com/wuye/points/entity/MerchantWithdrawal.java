@@ -54,4 +54,27 @@ public class MerchantWithdrawal extends BaseEntity {
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
+
+    /** 平台手续费分成 */
+    @Column(name = "platform_fee_share", precision = 10, scale = 2)
+    private BigDecimal platformFeeShare;
+
+    /** 打款渠道：manual(人工)/auto_wechat(微信自动) */
+    @Column(name = "disburse_channel", length = 20)
+    private String disburseChannel;
+
+    /** 微信打款流水号(trade_no) */
+    @Column(name = "disburse_trade_no", length = 64)
+    private String disburseTradeNo;
+
+    /** 打款状态：pending/success/failed */
+    @Column(name = "disburse_status", length = 20)
+    private String disburseStatus;
+
+    @Column(name = "disburse_at")
+    private LocalDateTime disburseAt;
+
+    /** 打款失败原因/备注 */
+    @Column(name = "disburse_remark", length = 255)
+    private String disburseRemark;
 }

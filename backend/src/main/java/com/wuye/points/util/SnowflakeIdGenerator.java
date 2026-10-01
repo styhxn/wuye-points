@@ -51,16 +51,19 @@ public class SnowflakeIdGenerator {
     }
 
     /**
-     * 生成带前缀的字符串 ID，如 res_b7m9x1
+     * 生成带前缀的字符串 ID，如 res_17a2f3c4d5e6f708。
+     *
+     * <p><b>必须使用完整 63 位雪花 ID（16 位 hex），严禁截断。</b>历史版本截取后 8 位 hex（仅 32 bit）：
+     * 时间戳低 15 bit 约每 32.7 秒循环一次，sequence 归零后会在「相隔 32.7 秒整数倍的同一毫秒」
+     * 复现完全相同的主键，导致 payment_records 等表出现 Duplicate entry for key PRIMARY
+     * （下单高并发下可观测为大量主键冲突）。完整 ID 中时间戳占 46 bit，循环周期约 2235 年，可忽略。</p>
+     *
+     * <p>多实例部署时，每个实例必须配置互不相同的 {@code app.machine-id}（如环境变量
+     * {@code MACHINE_ID}），否则跨实例仍可能同毫秒同 sequence 撞号。</p>
      */
     public String generateId(String prefix) {
         long id = nextId();
-        String hex = Long.toHexString(id);
-        // 取后6-8位
-        if (hex.length() > 8) {
-            hex = hex.substring(hex.length() - 8);
-        }
-        return prefix + "_" + hex;
+        return prefix + "_" + Long.toHexString(id);
     }
 
     private long waitNextMillis(long lastTimestamp) {

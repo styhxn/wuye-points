@@ -3,10 +3,13 @@ package com.wuye.points.service;
 import com.wuye.points.dto.order.OrderDetailResponse;
 import com.wuye.points.dto.order.OrderItemSnapshotResponse;
 import com.wuye.points.dto.order.OrderListItemResponse;
+import com.wuye.points.entity.Delivery;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.Order;
 import com.wuye.points.entity.OrderItem;
+import com.wuye.points.repository.DeliveryRepository;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.DisplayLabelUtil;
 import com.wuye.points.util.PhoneUtil;
 import org.springframework.stereotype.Component;
 
@@ -18,9 +21,11 @@ import java.util.List;
 public class OrderConverter {
 
     private final MerchantConverter merchantConverter;
+    private final DeliveryRepository deliveryRepository;
 
-    public OrderConverter(MerchantConverter merchantConverter) {
+    public OrderConverter(MerchantConverter merchantConverter, DeliveryRepository deliveryRepository) {
         this.merchantConverter = merchantConverter;
+        this.deliveryRepository = deliveryRepository;
     }
 
     public OrderListItemResponse toListItem(Order order,
@@ -52,6 +57,11 @@ public class OrderConverter {
                 .deliveredAt(DateTimeUtil.toIsoUtc(order.getDeliveredAt()))
                 .completedAt(DateTimeUtil.toIsoUtc(order.getCompletedAt()))
                 .createdAt(DateTimeUtil.toIsoUtc(order.getCreatedAt()))
+                .requiresDelivery(order.getRequiresDelivery() == null ? Boolean.TRUE : order.getRequiresDelivery())
+                .fulfillmentMode(order.getFulfillmentMode())
+                .fulfillmentModeLabel(DisplayLabelUtil.fulfillmentModeLabel(order.getFulfillmentMode()))
+                .fulfillmentDeadline(DateTimeUtil.toIsoUtc(order.getFulfillmentDeadline()))
+                .fulfillmentChosenAt(DateTimeUtil.toIsoUtc(order.getFulfillmentChosenAt()))
                 .build();
     }
 
@@ -94,7 +104,17 @@ public class OrderConverter {
                 .cancelledAt(DateTimeUtil.toIsoUtc(order.getCancelledAt()))
                 .version(order.getVersion())
                 .updatedAt(DateTimeUtil.toIsoUtc(order.getUpdatedAt()))
+                .deliveryId(resolveDeliveryId(order.getId()))
+                .carrierType(resolveCarrierType(order.getId()))
                 .build();
+    }
+
+    private String resolveDeliveryId(String orderId) {
+        return deliveryRepository.findByOrderId(orderId).map(Delivery::getId).orElse(null);
+    }
+
+    private String resolveCarrierType(String orderId) {
+        return deliveryRepository.findByOrderId(orderId).map(Delivery::getCarrierType).orElse(null);
     }
 
     public OrderItemSnapshotResponse toItemSnapshot(OrderItem item) {

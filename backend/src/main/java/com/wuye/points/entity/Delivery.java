@@ -60,4 +60,32 @@ public class Delivery extends BaseEntity {
 
     @Column(name = "delivered_at")
     private LocalDateTime deliveredAt;
+
+    /** 商家配送费分成 */
+    @Column(name = "merchant_delivery_fee_share", precision = 10, scale = 2)
+    private BigDecimal merchantDeliveryFeeShare;
+
+    /** 平台收益 */
+    @Column(name = "platform_earning", precision = 10, scale = 2)
+    private BigDecimal platformEarning;
+
+    /** 结算状态 */
+    @Column(name = "settlement_status", length = 20)
+    private String settlementStatus;
+
+    /** 结算时间 */
+    @Column(name = "settled_at")
+    private LocalDateTime settledAt;
+
+    /** 承运类型：courier（平台配送员）/ merchant（商家自配），见 FulfillmentConstants */
+    @Column(name = "carrier_type", length = 20)
+    private String carrierType;
+
+    /** 配送完成凭证图片URL列表（JSON） */
+    @Column(name = "proof_image_urls")
+    private String proofImageUrls;
+
+    /** 配送完成备注 */
+    @Column(name = "complete_remark", length = 200)
+    private String completeRemark;
 }

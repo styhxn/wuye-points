@@ -4,6 +4,7 @@ import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.coinfreeze.CoinFreezeRecordItemResponse;
 import com.wuye.points.dto.coin.CoinBalanceResponse;
 import com.wuye.points.dto.coin.CoinRecordItemResponse;
+import com.wuye.points.dto.coin.CoinUseConditionResponse;
 import com.wuye.points.dto.coin.EarnCoinRequest;
 import com.wuye.points.dto.coin.EarnCoinResponse;
 import com.wuye.points.dto.coin.ExpiringCoinResponse;
@@ -19,12 +20,16 @@ import com.wuye.points.dto.coin.SpendCoinResponse;
 import com.wuye.points.dto.coin.UnfreezeCoinRequest;
 import com.wuye.points.dto.coin.UnfreezeCoinResponse;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.resident.TransferToPropertyCoinRequest;
+import com.wuye.points.dto.resident.TransferToPropertyCoinResponse;
 import com.wuye.points.entity.CoinFreezeRecord;
 import com.wuye.points.entity.Family;
+import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PropertyCoinRecord;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.CoinType;
+import com.wuye.points.enums.CoinUseCondition;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
@@ -32,9 +37,11 @@ import com.wuye.points.repository.CoinFreezeRecordRepository;
 import com.wuye.points.repository.FamilyRepository;
 import com.wuye.points.repository.PropertyCoinRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.PropertyFeeRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.PropertyCoinRecordSpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.FeatureSwitchGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -61,14 +68,19 @@ public class PropertyCoinService {
     private static final Set<String> EARN_SOURCES = Set.of("order", "property_fee", "manual");
     private static final Set<String> SPEND_SOURCES = Set.of("order", "property_fee", "manual");
 
+    /** 住户主动转给物业的流水来源标识，须与管理端对账查询（AdminTransferToPropertyService）保持一致。 */
+    public static final String SOURCE_TRANSFER_TO_PROPERTY = "transfer_to_property";
+
     private final PropertyCoinRecordRepository coinRecordRepository;
     private final CoinFreezeRecordRepository coinFreezeRecordRepository;
     private final ResidentRepository residentRepository;
     private final FamilyRepository familyRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
+    private final PropertyFeeRepository propertyFeeRepository;
     private final PropertyCoinConverter coinConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final FeatureSwitchGuard featureSwitchGuard;
 
     @Transactional(readOnly = true)
     public CoinBalanceResponse getBalance() {
@@ -248,6 +260,22 @@ public class PropertyCoinService {
                 .familyBalanceAfter(resolveFamilyBalanceAfter(resident))
                 .rechargedAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 微信支付回调确认后物业币充值到账（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 充值走 outbox 单次投递保证不重复到账；此处仅对金额做兜底校验。
+     */
+    @Transactional
+    public void completeChannelPayment(PaymentRecord record) {
+        Resident resident = residentRepository.findById(record.getResidentId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        BigDecimal amount = record.getAmount() != null ? record.getAmount() : BigDecimal.ZERO;
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        earnCoins(resident, amount, CoinType.recharge.name(), "manual",
+                record.getId(), "物业币充值", null);
     }
 
     @Transactional
@@ -430,6 +458,56 @@ public class PropertyCoinService {
                 .build();
     }
 
+    /**
+     * 当前物业币使用条件（§79.1 GET /property-coins/use-condition）。
+     *
+     * <p>条件来自物业公司配置（§79.2 设置）：
+     * none / point_threshold（积分门槛）/ property_fee_paid（物业费已缴清）/ manual_issue（仅物业配发物业币可用）。
+     * 未配置时按 {@code none} 处理，保证前端可展示、不因配置缺失而报错。</p>
+     */
+    @Transactional(readOnly = true)
+    public CoinUseConditionResponse getUseCondition() {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+
+        String conditionCode = CoinUseCondition.NONE.getCode();
+        Integer pointThreshold = 0;
+        if (StringUtils.hasText(resident.getPropertyCompanyId())) {
+            PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
+                    .orElse(null);
+            if (company != null && StringUtils.hasText(company.getCoinUseCondition())) {
+                conditionCode = company.getCoinUseCondition();
+                pointThreshold = company.getCoinPointThreshold() != null
+                        ? company.getCoinPointThreshold() : 0;
+            }
+        }
+
+        boolean satisfied = resolveUseConditionSatisfied(resident, conditionCode, pointThreshold);
+        boolean frozen = Boolean.TRUE.equals(resident.getCoinFrozen());
+        return CoinUseConditionResponse.builder()
+                .condition(conditionCode)
+                .pointThreshold(conditionCode.equals(CoinUseCondition.POINT_THRESHOLD.getCode())
+                        ? pointThreshold : null)
+                .satisfied(satisfied)
+                .eligible(satisfied && !frozen)
+                .build();
+    }
+
+    private boolean resolveUseConditionSatisfied(Resident resident, String conditionCode, int pointThreshold) {
+        CoinUseCondition condition = CoinUseCondition.fromCode(conditionCode);
+        return switch (condition) {
+            case NONE -> true;
+            case POINT_THRESHOLD -> {
+                int balance = resident.getPointBalance() != null ? resident.getPointBalance() : 0;
+                yield balance >= pointThreshold;
+            }
+            case PROPERTY_FEE_PAID -> propertyFeeRepository
+                    .countByResidentIdAndPaymentStatusNotIn(resident.getId()) == 0;
+            case MANUAL_ISSUE -> coinRecordRepository
+                    .existsByResidentIdAndSourceAndCoinType(resident.getId(), "manual", CoinType.earn.name());
+        };
+    }
+
     @Transactional(readOnly = true)
     public PageResponse<CoinFreezeRecordItemResponse> listFreezeRecords(
             int page, int pageSize, String residentId, String action,
@@ -534,6 +612,53 @@ public class PropertyCoinService {
                 sourceId,
                 description,
                 operatorId);
+    }
+
+    /**
+     * 住户主动将家庭物业币转赠给物业。
+     *
+     * <p>账户边界：仅<b>家庭物业币池</b>可转给物业公司；个人物业币不得转赠（个人名义持有、不从集体划转）。
+     * 无家庭或家庭余额不足时将拒绝。扣减家庭余额，记 consume 流水。</p>
+     */
+    @Transactional
+    public TransferToPropertyCoinResponse transferToProperty(TransferToPropertyCoinRequest request) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!ResidentStatus.active.name().equals(resident.getStatus())) {
+            throw new BizException(ErrorCode.ACCOUNT_DISABLED);
+        }
+        featureSwitchGuard.assertCoinEnabled(resident.getPropertyCompanyId());
+        assertCoinNotFrozen(resident);
+
+        String familyId = resident.getFamilyId();
+        if (!StringUtils.hasText(familyId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "您尚未加入家庭，无家庭物业币可转赠物业");
+        }
+        Family family = familyRepository.findById(familyId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+
+        BigDecimal amount = request.getCoinAmount();
+        BigDecimal familyBalance = defaultFamilyCoinBalance(family);
+        if (familyBalance.compareTo(amount) < 0) {
+            throw new BizException(ErrorCode.COIN_INSUFFICIENT, "家庭物业币余额不足，无法转赠物业");
+        }
+
+        BigDecimal newFamilyBalance = familyBalance.subtract(amount);
+        family.setCoinBalance(newFamilyBalance);
+        familyRepository.save(family);
+
+        PropertyCoinRecord record = createRecord(
+                resident, familyId, CoinType.spend.name(), amount.negate(),
+                newFamilyBalance, SOURCE_TRANSFER_TO_PROPERTY, resident.getId(),
+                request.getRemark() != null ? request.getRemark() : "住户家庭物业币转赠物业", null);
+        return TransferToPropertyCoinResponse.builder()
+                .recordId(record.getId())
+                .residentId(resident.getId())
+                .coinAmount(amount)
+                .balanceAfter(newFamilyBalance)
+                .transferredAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                .build();
     }
 
     /**

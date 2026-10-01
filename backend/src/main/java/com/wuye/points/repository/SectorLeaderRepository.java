@@ -23,6 +23,10 @@ public interface SectorLeaderRepository extends JpaRepository<SectorLeader, Stri
     Optional<SectorLeader> findFirstByPropertyCompanyIdAndSectorAndCoordinatorIdAndStatus(
             String propertyCompanyId, String sector, String coordinatorId, String status);
 
+    /** 申请审核通过后按板块挂载个体负责人：取该物业该板块下任一启用中的板块负责人 */
+    Optional<SectorLeader> findFirstByPropertyCompanyIdAndSectorAndStatus(
+            String propertyCompanyId, String sector, String status);
+
     Optional<SectorLeader> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 
     Optional<SectorLeader> findByResidentIdAndPropertyCompanyIdAndStatus(
@@ -35,4 +39,7 @@ public interface SectorLeaderRepository extends JpaRepository<SectorLeader, Stri
 
     long countByPropertyCompanyIdAndCoordinatorIdAndStatus(
             String propertyCompanyId, String coordinatorId, String status);
+
+    Optional<SectorLeader> findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+            String residentId, String propertyCompanyId, String status);
 }

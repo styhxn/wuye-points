@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import com.wuye.points.dto.coin.CoinBalanceResponse;
 import com.wuye.points.dto.coin.CoinRecordItemResponse;
+import com.wuye.points.dto.coin.CoinUseConditionResponse;
 import com.wuye.points.dto.coin.EarnCoinRequest;
 import com.wuye.points.dto.coin.EarnCoinResponse;
 import com.wuye.points.dto.coin.ExpiringCoinResponse;
@@ -22,6 +23,8 @@ import com.wuye.points.dto.coin.UnfreezeCoinRequest;
 import com.wuye.points.dto.coin.UnfreezeCoinResponse;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.resident.TransferToPropertyCoinRequest;
+import com.wuye.points.dto.resident.TransferToPropertyCoinResponse;
 import com.wuye.points.service.PropertyCoinService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +64,18 @@ public class PropertyCoinController {
     @GetMapping("/family-balance")
     public ApiResponse<FamilyCoinBalanceResponse> getFamilyBalance() {
         return ApiResponse.success(propertyCoinService.getFamilyBalance());
+    }
+
+    /**
+     * 当前物业币使用条件
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "当前物业币使用条件",
+            description = "返回当前物业公司的物业币使用条件（none/point_threshold/property_fee_paid/manual_issue）"
+                    + "及当前用户是否满足。无配置时返回 condition=none。需登录，角色：resident")
+    @GetMapping("/use-condition")
+    public ApiResponse<CoinUseConditionResponse> getUseCondition() {
+        return ApiResponse.success(propertyCoinService.getUseCondition());
     }
 
     /**
@@ -150,5 +165,18 @@ public class PropertyCoinController {
     @PostMapping("/unfreeze")
     public ApiResponse<UnfreezeCoinResponse> unfreeze(@Valid @RequestBody UnfreezeCoinRequest request) {
         return ApiResponse.success(propertyCoinService.unfreeze(request));
+    }
+
+    /**
+     * 物业币转赠物业
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "物业币转赠物业（兼容别名）",
+            description = "与 POST /residents/me/coins/transfer-to-property 等价（§2.6.4.2）。仅扣减<b>家庭物业币</b>，"
+                    + "生成 source=transfer_to_property 流水。个人物业币不可转赠；无家庭或家庭余额不足时拒绝。需登录，角色：resident")
+    @PostMapping("/transfer-to-property")
+    public ApiResponse<TransferToPropertyCoinResponse> transferToProperty(
+            @Valid @RequestBody TransferToPropertyCoinRequest request) {
+        return ApiResponse.success(propertyCoinService.transferToProperty(request));
     }
 }

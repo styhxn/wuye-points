@@ -29,4 +29,8 @@ public class ActivityGroupMemberItemResponse {
 
     @Schema(description = "加入时间", example = "2024-01-01T00:00:00")
     private String joinedAt;
+
+    @Schema(description = "个人简介（姓名、年龄、擅长领域等，JSON 字符串）",
+            example = "{\"name\":\"张阿姨\",\"age\":40}")
+    private String introduction;
 }

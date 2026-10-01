@@ -8,13 +8,21 @@ import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.order.CancelOrderRequest;
 import com.wuye.points.dto.order.CancelOrderResponse;
+import com.wuye.points.dto.order.ChooseFulfillmentRequest;
 import com.wuye.points.dto.order.ConfirmOrderResponse;
+import com.wuye.points.dto.order.CreateListingOrderRequest;
 import com.wuye.points.dto.order.CreateOrderRequest;
 import com.wuye.points.dto.order.CreateOrderResponse;
 import com.wuye.points.dto.order.OrderDetailResponse;
 import com.wuye.points.dto.order.OrderListItemResponse;
 import com.wuye.points.dto.order.PayOrderRequest;
 import com.wuye.points.dto.order.PayOrderResponse;
+import com.wuye.points.dto.order.PreviewListingOrderRequest;
+import com.wuye.points.dto.order.PreviewOrderRequest;
+import com.wuye.points.dto.order.PreviewOrderResponse;
+import com.wuye.points.dto.order.RefundRequestDTO;
+import com.wuye.points.dto.order.RefundResponse;
+import com.wuye.points.dto.order.SendDeliveryResponse;
 import com.wuye.points.dto.order.UpdateOrderStatusRequest;
 import com.wuye.points.dto.order.UpdateOrderStatusResponse;
 import com.wuye.points.service.OrderService;
@@ -48,6 +56,45 @@ public class OrderController {
     @PostMapping
     public ApiResponse<CreateOrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
         return ApiResponse.success(orderService.createOrder(request));
+    }
+
+    @Operation(summary = "向业主商户下单", description = "购买业主商户从一级经销商拿货后上架的商品，订单记录上架ID，完成后结算差价并自动下架。需登录，角色：resident")
+    @PostMapping("/from-listing")
+    public ApiResponse<CreateOrderResponse> createListingOrder(
+            @Valid @RequestBody CreateListingOrderRequest request) {
+        return ApiResponse.success(orderService.createListingOrder(request));
+    }
+
+    @Operation(summary = "业主上架商品支付试算",
+            description = "对业主商户上架商品（listingId）试算可抵扣金额与现金应付（含配送费、满额减免、食堂定向余额），"
+                    + "口径与下单 /orders/from-listing 一致。上架商品无商城 productId，不可走普通 /orders/preview。"
+                    + "仅试算不落库，支付仍以 POST /orders/from-listing 下单后 POST /orders/{id}/pay 后端校验为准。需登录，角色：resident")
+    @PostMapping("/from-listing/preview")
+    public ApiResponse<PreviewOrderResponse> previewListingOrder(
+            @Valid @RequestBody PreviewListingOrderRequest request) {
+        return ApiResponse.success(orderService.previewListingOrder(request));
+    }
+
+    @Operation(summary = "申请退货",
+            description = "住户对本人订单发起退货申请，订单置为 refunding，等待物业/平台管理员审核（§管理员退货审核）。需登录，角色：resident")
+    @PostMapping("/{id}/refund-request")
+    public ApiResponse<RefundResponse> requestRefund(
+            @Parameter(description = "订单ID", example = "ord_xxx") @PathVariable String id,
+            @Valid @RequestBody RefundRequestDTO request) {
+        return ApiResponse.success(orderService.requestRefund(id, request));
+    }
+
+    /**
+     * 订单支付试算
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "订单支付试算",
+            description = "按物业币商城规则试算可抵扣金额与现金应付（含配送费、满额减免、食堂定向余额）。"
+                    + "仅试算不落库，支付仍以 POST /orders/{id}/pay 后端校验为准。需登录，角色：resident")
+    @PostMapping("/preview")
+    public ApiResponse<PreviewOrderResponse> previewOrder(
+            @Valid @RequestBody PreviewOrderRequest request) {
+        return ApiResponse.success(orderService.previewOrder(request));
     }
 
     /**
@@ -141,6 +188,25 @@ public class OrderController {
      * 更新订单状态
      * Auth: Required | Roles: merchant, courier
      */
+    @Operation(summary = "商家选择履约方式",
+            description = "商家在订单处于 pending_choice 时选择履约方式：merchant_self=商家自配 / courier_hall=平台配送（发布到抢单大厅）。"
+                    + "重复提交同一方式幂等成功；已选其它方式返回 70025。角色: merchant")
+    @PostMapping("/{id}/choose-fulfillment")
+    public ApiResponse<SendDeliveryResponse> chooseFulfillment(
+            @Parameter(description = "订单ID", example = "ord_xxx") @PathVariable String id,
+            @Valid @RequestBody ChooseFulfillmentRequest request) {
+        return ApiResponse.success(orderService.chooseFulfillment(id, request));
+    }
+
+    @Operation(summary = "商家发送配送任务",
+            description = "商家将已支付订单发布到配送抢单大厅（等价于选择 courier_hall）。"
+                    + "支付成功时后端已自动创建配送单，本接口幂等返回 alreadyExists=true。角色: merchant")
+    @PostMapping("/{id}/send-delivery")
+    public ApiResponse<SendDeliveryResponse> sendDelivery(
+            @Parameter(description = "订单ID", example = "ord_xxx") @PathVariable String id) {
+        return ApiResponse.success(orderService.sendDelivery(id));
+    }
+
     @Operation(summary = "更新订单状态", description = "更新订单状态，需登录，角色：merchant, courier")
     @PatchMapping("/{id}/status")
     public ApiResponse<UpdateOrderStatusResponse> updateStatus(

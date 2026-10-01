@@ -115,6 +115,20 @@ public class DeliveryController {
     }
 
     /**
+     * 商家确认自配送达
+     * Auth: Required | Roles: merchant（仅本单商家，且仅 carrier_type = merchant 的配送单）
+     */
+    @Operation(summary = "商家确认自配送达",
+            description = "商家自配单（carrier_type=merchant）送达确认：配送单置 completed，订单同步置 completed。"
+                    + "平台配送单请走 POST /deliveries/{id}/complete。角色：merchant")
+    @PostMapping("/{id}/merchant-confirm")
+    public ApiResponse<CompleteDeliveryResponse> merchantConfirm(
+            @Parameter(description = "配送单ID", example = "dlv_xxx") @PathVariable String id,
+            @Valid @RequestBody(required = false) CompleteDeliveryRequest request) {
+        return ApiResponse.success(deliveryService.merchantConfirm(id, request));
+    }
+
+    /**
      * 物业指派配送
      * Auth: Required | Roles: property_admin, platform_admin
      */

@@ -1,27 +1,85 @@
 spring:
   datasource:
-    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
-    driver-class-name: org.h2.Driver
+    # H2 的内存数据库，开启 MySQL 兼容模式，使表结构/类型尽量贴近生产 MySQL，
+    # 从而能验证 Entity 映射（含 json 列、唯一键），又不依赖 Docker/外部服务。
+    url: jdbc:h2:mem:wuye_points_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     username: sa
-    password:
+    password: ""
+    driver-class-name: org.h2.Driver
   jpa:
     hibernate:
       ddl-auto: create-drop
-    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        dialect: org.hibernate.dialect.H2Dialect
+    open-in-view: false
+  # 测试用 H2 + hibernate create-drop 自行建实体表；
+  # V1 基线脚本为 MySQL 方言，在 H2 上不可用，因此测试环境关闭 Flyway。
+  flyway:
+    enabled: false
+  # 非实体表（如 ShedLock 锁表）由 schema.sql 创建：Hibernate 只负责实体对应的表。
   sql:
     init:
       mode: always
-  h2:
-    console:
-      enabled: false
+  jmx:
+    enabled: false
+  # 测试不暴露 actuator 细节
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health,info
 
+# 与 main application.yml 同名的强制占位符必须提供，否则上下文起不来
 jwt:
   secret: test-secret-key-for-unit-testing-only-32bytes!!
   access-token-expiration: 3600000
   refresh-token-expiration: 604800000
 
+wechat:
+  pay:
+    # 必须为 true：PayChannel 的唯一实现 WechatEcommercePayService 由该属性条件装配，
+    # 置为 false 会导致所有依赖 PayChannel 的 Service（订单/物业币/活动组等）无法装配，
+    # 进而让每一个 @SpringBootTest 在上下文启动阶段就失败 ——
+    # 这正是历史上集成测试大量失败、覆盖率长期停留在 3% 的直接原因。
+    # 真实的外部调用由 isEnabled() 二次把关（缺少私钥时返回 false），因此不会打到真实微信接口。
+    enabled: true
+    mch-id: test_mch_id
+    api-v3-key: test_api_v3_key_0123456789abcdef
+    merchant-serial-number: test_serial
+    app-id: test_pay_app_id
+    notify-url: https://test.example.com/notify
+    # 故意不配置 private-key：使 isEnabled() 返回 false，
+    # 保证调度器与支付链路在测试中不会发起任何外部 HTTP 请求。
+  mp:
+    enabled: false
+    app-id: test_mp_app_id
+    app-secret: test_mp_app_secret
+
+app:
+  wechat:
+    skip-api: true
+  machine-id: 1
+  rate-limit:
+    enabled: true
+    login-limit: 20
+    login-window: 60
+    driver-login-limit: 20
+    driver-login-window: 60
+    global-limit: 1000
+    global-window: 60
+  upload:
+    base-url: https://test.example.com/uploads
+    path: ./data/uploads
+  hsts:
+    enabled: false
+  cors:
+    allowed-origins: "*"
+
 server:
   port: 0
+
+logging:
+  level:
+    root: WARN
+    com.wuye.points: INFO

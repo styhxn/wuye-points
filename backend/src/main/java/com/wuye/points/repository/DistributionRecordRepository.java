@@ -29,6 +29,8 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
 
     List<DistributionRecord> findBySectorLeaderId(String sectorLeaderId);
 
+    List<DistributionRecord> findByIndividualLeaderId(String individualLeaderId);
+
     @Query("""
             SELECT COALESCE(SUM(d.distributableAmount), 0) FROM DistributionRecord d
             WHERE (:propertyCompanyId IS NULL OR d.propertyCompanyId = :propertyCompanyId)
@@ -96,4 +98,35 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
             WHERE d.individualLeaderId = :individualLeaderId
             """)
     BigDecimal sumIndividualLeaderShareByIndividualLeaderId(@Param("individualLeaderId") String individualLeaderId);
+
+    @Query("SELECT COALESCE(SUM(d.totalAmount - " +
+           "(CASE WHEN d.propertyShare IS NULL THEN 0 ELSE d.propertyShare END) - " +
+           "(CASE WHEN d.coordinatorShare IS NULL THEN 0 ELSE d.coordinatorShare END) - " +
+           "(CASE WHEN d.sectorLeaderShare IS NULL THEN 0 ELSE d.sectorLeaderShare END) - " +
+           "(CASE WHEN d.individualLeaderShare IS NULL THEN 0 ELSE d.individualLeaderShare END)), 0) " +
+           "FROM DistributionRecord d WHERE d.merchantId = :merchantId")
+    BigDecimal sumMerchantIncomeForCompletedOrders(@Param("merchantId") String merchantId);
+
+    @Query("SELECT COALESCE(SUM(d.totalAmount), 0) FROM DistributionRecord d WHERE d.merchantId = :merchantId")
+    BigDecimal sumMerchantReceivableForCompletedOrders(@Param("merchantId") String merchantId);
+
+    @Query("SELECT COALESCE(SUM(" +
+           "(CASE WHEN d.propertyShare IS NULL THEN 0 ELSE d.propertyShare END) + " +
+           "(CASE WHEN d.coordinatorShare IS NULL THEN 0 ELSE d.coordinatorShare END) + " +
+           "(CASE WHEN d.sectorLeaderShare IS NULL THEN 0 ELSE d.sectorLeaderShare END) + " +
+           "(CASE WHEN d.individualLeaderShare IS NULL THEN 0 ELSE d.individualLeaderShare END)), 0) " +
+           "FROM DistributionRecord d WHERE d.merchantId = :merchantId")
+    BigDecimal sumCommissionByMerchantIdForCompletedOrders(@Param("merchantId") String merchantId);
+
+    @Query("SELECT COALESCE(SUM(d.platformShare), 0) FROM DistributionRecord d " +
+           "WHERE d.propertyCompanyId = :propertyCompanyId AND d.createdAt >= :start AND d.createdAt < :end")
+    BigDecimal sumPlatformShare(@Param("propertyCompanyId") String propertyCompanyId,
+                                @Param("start") LocalDateTime start,
+                                @Param("end") LocalDateTime end);
+
+    @Query("SELECT COALESCE(SUM(d.platformEarning), 0) FROM DistributionRecord d " +
+           "WHERE d.propertyCompanyId = :propertyCompanyId AND d.createdAt >= :start AND d.createdAt < :end")
+    BigDecimal sumPlatformEarning(@Param("propertyCompanyId") String propertyCompanyId,
+                                  @Param("start") LocalDateTime start,
+                                  @Param("end") LocalDateTime end);
 }

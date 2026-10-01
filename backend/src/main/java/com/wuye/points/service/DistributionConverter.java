@@ -11,6 +11,7 @@ import com.wuye.points.entity.PointPoolRecord;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.SectorCatalog;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -18,15 +19,6 @@ import java.util.Map;
 
 @Component
 public class DistributionConverter {
-
-    private static final Map<String, String> SECTOR_LABELS = Map.of(
-            "elderly", "养老板块",
-            "medical", "医疗板块",
-            "education", "教育板块",
-            "cleaning", "保洁板块",
-            "canteen", "食堂板块",
-            "pet", "宠物板块",
-            "life_service", "生活服务");
 
     public DistributionRecordItemResponse toListItem(
             DistributionRecord record,
@@ -66,7 +58,8 @@ public class DistributionConverter {
         if (sector == null) {
             return null;
         }
-        return SECTOR_LABELS.getOrDefault(sector, sector);
+        // 2026-09-08：板块标签统一由 SectorCatalog 提供（含历史旧编码兼容展示）
+        return SectorCatalog.label(sector);
     }
 
     private String resolveResidentName(String leaderId, Map<String, Resident> leaderResidentMap) {

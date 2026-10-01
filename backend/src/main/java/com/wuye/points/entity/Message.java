@@ -48,4 +48,16 @@ public class Message extends BaseEntity {
 
     @Column(name = "property_company_id", length = 32)
     private String propertyCompanyId;
+
+    /** 关联业务任务ID（如服务工单/广告） */
+    @Column(name = "related_task_id", length = 32)
+    private String relatedTaskId;
+
+    /** 发送方身份标识 */
+    @Column(name = "sender_identity", length = 50)
+    private String senderIdentity;
+
+    /** 官方发送方类型 */
+    @Column(name = "official_sender_type", length = 30)
+    private String officialSenderType;
 }

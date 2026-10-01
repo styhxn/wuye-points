@@ -80,4 +80,19 @@ public class OrderListItemResponse {
 
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;
+
+    @Schema(description = "是否需要配送（团购/社区食堂单为 false）", example = "true")
+    private Boolean requiresDelivery;
+
+    @Schema(description = "履约方式 pending_choice/merchant_self/courier_hall/none", example = "pending_choice")
+    private String fulfillmentMode;
+
+    @Schema(description = "履约方式中文", example = "待选择")
+    private String fulfillmentModeLabel;
+
+    @Schema(description = "履约方式选择截止时间", example = "2026-01-01T00:30:00.000Z")
+    private String fulfillmentDeadline;
+
+    @Schema(description = "履约方式选定时间", example = "2026-01-01T00:05:00.000Z")
+    private String fulfillmentChosenAt;
 }

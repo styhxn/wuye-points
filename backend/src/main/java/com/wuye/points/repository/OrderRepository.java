@@ -10,6 +10,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +28,8 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
     Page<Order> findByResidentId(String residentId, Pageable pageable);
 
     Page<Order> findByMerchantId(String merchantId, Pageable pageable);
+
+    Page<Order> findByMerchantIdAndOrderStatus(String merchantId, String orderStatus, Pageable pageable);
 
     Optional<Order> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 
@@ -49,6 +52,14 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
             """)
     List<String> findDistinctMerchantIdsByResidentId(@Param("residentId") String residentId);
 
+    @Query("""
+            SELECT DISTINCT oi.productId FROM OrderItem oi
+            JOIN Order o ON oi.orderId = o.id
+            WHERE o.residentId = :residentId AND o.orderStatus = 'completed'
+            AND oi.productId IS NOT NULL
+            """)
+    List<String> findDistinctProductIdsByResidentId(@Param("residentId") String residentId);
+
     @Query("SELECT COUNT(o) FROM Order o WHERE o.propertyCompanyId = :propertyCompanyId")
     long countByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
 
@@ -67,4 +78,16 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
             ORDER BY cnt DESC
             """)
     List<Object[]> findTopMerchantsByPropertyCompanyId(@Param("propertyCompanyId") String propertyCompanyId);
+
+    @Query("SELECT COALESCE(SUM(o.totalAmount), 0) FROM Order o WHERE o.merchantId = :merchantId AND o.orderStatus = 'completed'")
+    BigDecimal sumCompletedRevenueByMerchantId(@Param("merchantId") String merchantId);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.merchantId = :merchantId AND o.orderStatus = 'completed'")
+    long countCompletedByMerchantId(@Param("merchantId") String merchantId);
+
+    List<Order> findByOrderStatusAndVerificationDeadlineBefore(String orderStatus, LocalDateTime deadline);
+
+    List<Order> findByOrderStatusAndFreezeEndDateBefore(String orderStatus, LocalDateTime deadline);
+
+    List<Order> findByFulfillmentModeAndFulfillmentDeadlineBefore(String fulfillmentMode, LocalDateTime deadline);
 }

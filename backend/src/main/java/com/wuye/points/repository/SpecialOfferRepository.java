@@ -8,4 +8,6 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface SpecialOfferRepository extends JpaRepository<SpecialOffer, String>,
         JpaSpecificationExecutor<SpecialOffer> {
+
+    long countByPropertyCompanyIdAndStatus(String propertyCompanyId, String status);
 }

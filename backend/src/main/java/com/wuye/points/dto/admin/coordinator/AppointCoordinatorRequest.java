@@ -26,6 +26,9 @@ public class AppointCoordinatorRequest {
     @Schema(description = "备注", example = "新任协调员")
     private String remark;
 
+    @Schema(description = "统筹描述/备注（落库到 coordinators.description）", example = "负责统筹管理")
+    private String description;
+
     @Schema(description = "状态", example = "active")
     private String status;
 }

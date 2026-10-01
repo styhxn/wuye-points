@@ -15,12 +15,16 @@ public final class MerchantSpecifications {
             String category,
             String merchantLevel,
             String auditStatus,
-            boolean publicOnly) {
+            boolean publicOnly,
+            Boolean recommended) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
             if (StringUtils.hasText(propertyCompanyId)) {
                 predicates.add(cb.equal(root.get("propertyCompanyId"), propertyCompanyId));
+            }
+            if (recommended != null) {
+                predicates.add(cb.equal(root.get("isRecommended"), recommended));
             }
             if (StringUtils.hasText(category)) {
                 predicates.add(cb.equal(root.get("category"), category));

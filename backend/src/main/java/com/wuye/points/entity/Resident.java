@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -117,4 +118,20 @@ public class Resident extends BaseEntity {
     /** 是否准时缴费用户 */
     @Column(name = "on_time_payment_badge")
     private Boolean onTimePaymentBadge;
+
+    /** 生日 */
+    @Column(name = "birthday")
+    private LocalDate birthday;
+
+    /** 提现是否被冻结 */
+    @Column(name = "withdrawal_blocked")
+    private Boolean withdrawalBlocked;
+
+    /** 所属快递负责人ID */
+    @Column(name = "courier_manager_id", length = 32)
+    private String courierManagerId;
+
+    /** 物业子角色 */
+    @Column(name = "property_sub_role", length = 30)
+    private String propertySubRole;
 }

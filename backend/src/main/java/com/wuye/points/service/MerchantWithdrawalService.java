@@ -46,7 +46,7 @@ public class MerchantWithdrawalService {
 
     @Transactional
     public WithdrawalItemResponse apply(ApplyWithdrawalRequest request) {
-        Merchant merchant = merchantSupport.requireCurrentMerchant();
+        Merchant merchant = merchantSupport.requireCurrentWithdrawableMerchant();
         PropertyCompany propertyCompany = propertyCompanyRepository.findById(merchant.getPropertyCompanyId())
                 .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
 
@@ -65,7 +65,7 @@ public class MerchantWithdrawalService {
         withdrawal.setAuditStatus("pending");
         merchantWithdrawalRepository.save(withdrawal);
 
-        return toItemResponse(withdrawal);
+        return toItemResponse(withdrawal, merchant.getName());
     }
 
     @Transactional(readOnly = true)
@@ -75,7 +75,7 @@ public class MerchantWithdrawalService {
             String auditStatus,
             String startDate,
             String endDate) {
-        Merchant merchant = merchantSupport.requireCurrentMerchant();
+        Merchant merchant = merchantSupport.requireCurrentWithdrawableMerchant();
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -93,16 +93,19 @@ public class MerchantWithdrawalService {
                 pageable);
 
         return PageResponse.of(
-                withdrawalPage.getContent().stream().map(this::toItemResponse).toList(),
+                withdrawalPage.getContent().stream()
+                        .map(withdrawal -> toItemResponse(withdrawal, merchant.getName()))
+                        .toList(),
                 page,
                 pageSize,
                 withdrawalPage.getTotalElements());
     }
 
-    private WithdrawalItemResponse toItemResponse(MerchantWithdrawal withdrawal) {
+    private WithdrawalItemResponse toItemResponse(MerchantWithdrawal withdrawal, String merchantName) {
         return WithdrawalItemResponse.builder()
                 .id(withdrawal.getId())
                 .merchantId(withdrawal.getMerchantId())
+                .merchantName(merchantName)
                 .amount(withdrawal.getAmount())
                 .feeRate(withdrawal.getFeeRate())
                 .feeAmount(withdrawal.getFeeAmount())

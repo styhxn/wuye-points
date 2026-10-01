@@ -22,6 +22,11 @@
         <jjwt.version>0.12.5</jjwt.version>
         <hutool.version>5.8.27</hutool.version>
         <wechatpay.version>0.2.12</wechatpay.version>
+        <!-- 与 spring-boot-dependencies 3.2.x 内置的 Flyway 版本保持一致，避免运行期不兼容 -->
+        <flyway.version>9.22.3</flyway.version>
+        <shedlock.version>5.10.2</shedlock.version>
+        <checkstyle.version>10.15.0</checkstyle.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
     <dependencies>
@@ -29,6 +34,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- AOP：统一请求日志切面、ShedLock 与 @Retryable 的代理支撑 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -46,6 +56,10 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
 
         <!-- Database -->
         <dependency>
@@ -53,6 +67,32 @@
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- 数据库版本化迁移：DDL 变更纳入版本管理，可回滚、可审计 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <version>${flyway.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+            <version>${flyway.version}</version>
+        </dependency>
+
+        <!-- 分布式任务锁：多实例部署时保证定时任务同一时刻只执行一次 -->
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-spring</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.javacrumbs.shedlock</groupId>
+            <artifactId>shedlock-provider-jdbc-template</artifactId>
+            <version>${shedlock.version}</version>
+        </dependency>
+
+
 
         <!-- JWT -->
         <dependency>
@@ -73,11 +113,13 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- SpringDoc OpenAPI (Swagger UI) -->
+        <!-- SpringDoc OpenAPI (Swagger UI)
+             版本需与 Spring Boot 3.2.x 对齐：2.6.0 面向 Boot 3.3，会引入 spring-boot 3.3.0
+             与 jackson 2.16 的传递依赖，造成依赖收敛失败（由 maven-enforcer 检出）。 -->
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.6.0</version>
+            <version>2.5.0</version>
         </dependency>
 
         <!-- Hutool 工具集 -->
@@ -127,6 +169,172 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!-- 显式声明 Lombok 为注解处理器，确保编译期生成 @Data/@Builder/@Slf4j 等成员 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <!-- 测试覆盖率统计：mvn test 后报告在 target/site/jacoco/index.html -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                        <configuration>
+                            <propertyName>surefireArgLine</propertyName>
+                            <destFile>${java.io.tmpdir}/wuye-jacoco.exec</destFile>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${java.io.tmpdir}/wuye-jacoco.exec</dataFile>
+                            <outputDirectory>${project.build.directory}/site/jacoco</outputDirectory>
+                        </configuration>
+                    </execution>
+                    <!-- 覆盖率门禁：仅在 mvn verify 阶段生效，不影响本地 mvn test。
+                         阈值随重构推进逐步提高，新增代码应同步补测试。 -->
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <dataFile>${java.io.tmpdir}/wuye-jacoco.exec</dataFile>
+                            <rules>
+                                <!-- 规则一：全量基线（防退化）。
+                                     存量 79k 行历史代码的覆盖率很低，短期内不可能整体拉高，
+                                     这里只固化当前实测值作为下限，确保重构过程中不会更低。
+                                     真正的约束由规则二承担。 -->
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.08</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.01</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                                <!-- 规则二：新增基础设施代码高门槛。
+                                     本次治理抽取的支撑层是全局复用的公共代码，
+                                     一旦出错影响面覆盖所有业务模块，因此必须有充分测试。
+                                     后续新增的支撑类也应保持该水平。 -->
+                                <rule>
+                                    <element>CLASS</element>
+                                    <includes>
+                                        <include>com.wuye.points.support.*</include>
+                                        <include>com.wuye.points.util.SensitiveMasker</include>
+                                        <include>com.wuye.points.util.TraceContext</include>
+                                    </includes>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.60</minimum>
+                                        </limit>
+                                        <limit>
+                                            <counter>BRANCH</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.50</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 依赖治理：禁止重复类、强制依赖收敛、统一 JDK 版本 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.4.1</version>
+                <executions>
+                    <execution>
+                        <id>enforce</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[17,)</version>
+                                </requireJavaVersion>
+                                <banDuplicatePomDependencyVersions/>
+                                <!-- 校验依赖收敛：传递依赖声明的版本不得高于实际解析版本。
+                                     Jackson/Guava 由 Spring Boot BOM 统一锁定，第三方库（swagger-core）
+                                     声明的更高版本属 BOM 有意覆盖，故排除。 -->
+                                <requireUpperBoundDeps>
+                                    <excludes>
+                                        <exclude>com.fasterxml.jackson.core:jackson-databind</exclude>
+                                        <exclude>com.fasterxml.jackson.core:jackson-core</exclude>
+                                        <exclude>com.fasterxml.jackson.core:jackson-annotations</exclude>
+                                        <exclude>com.fasterxml.jackson.datatype:jackson-datatype-jsr310</exclude>
+                                        <exclude>com.fasterxml.jackson.module:jackson-module-parameter-names</exclude>
+                                        <exclude>com.fasterxml.jackson.dataformat:jackson-dataformat-yaml</exclude>
+                                        <exclude>org.apache.commons:commons-lang3</exclude>
+                                        <exclude>com.google.guava:guava</exclude>
+                                    </excludes>
+                                </requireUpperBoundDeps>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 代码规范检查：产出报告供 Review，暂不阻断构建（存量违规较多，随重构逐步收紧为 error） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.4.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.puppycrawl.tools</groupId>
+                        <artifactId>checkstyle</artifactId>
+                        <version>${checkstyle.version}</version>
+                    </dependency>
+                </dependencies>
+                <configuration>
+                    <configLocation>checkstyle.xml</configLocation>
+                    <consoleOutput>true</consoleOutput>
+                    <failsOnError>false</failsOnError>
+                    <failOnViolation>false</failOnViolation>
+                    <violationSeverity>warning</violationSeverity>
+                    <includeTestSourceDirectory>false</includeTestSourceDirectory>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{surefireArgLine} -Xmx1024m -XX:MaxMetaspaceSize=512m</argLine>
                 </configuration>
             </plugin>
         </plugins>

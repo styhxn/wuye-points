@@ -67,11 +67,12 @@ public class AdminCoordinatorController {
         return ApiResponse.success(adminCoordinatorService.updateCoordinator(id, request));
     }
 
-    @Operation(summary = "撤销统筹负责人", description = "撤销统筹负责人。角色: property_admin, platform_admin")
+    @Operation(summary = "撤销统筹负责人",
+            description = "撤销统筹负责人；存在启用的下级板块负责人时返回 400 并提示数量。角色: property_admin, platform_admin")
     @DeleteMapping("/{id}")
     public ApiResponse<CoordinatorDetailResponse> revokeCoordinator(
             @Parameter(description = "资源ID") @PathVariable String id,
-            @Parameter(description = "撤销原因") @RequestParam String reason) {
+            @Parameter(description = "撤销原因（可选）") @RequestParam(required = false) String reason) {
         return ApiResponse.success(adminCoordinatorService.revokeCoordinator(id, reason));
     }
 }

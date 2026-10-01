@@ -230,4 +230,9 @@ public class MerchantPointService {
             throw new BizException(ErrorCode.PARAM_INVALID, "日期格式应为YYYY-MM-DD");
         }
     }
+
+    @Transactional
+    public void spendPoints(String merchantId, String propertyCompanyId, BigDecimal pointAmount, String reason) {
+        // TODO: 商家积分扣减（待接入 MerchantPointBalance / PointRecord 写入）
+    }
 }

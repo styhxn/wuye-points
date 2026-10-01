@@ -3,6 +3,7 @@ package com.wuye.points.controller;
 import com.wuye.points.dto.announcement.AnnouncementCollectListResponse;
 import com.wuye.points.dto.announcement.AnnouncementDetailResponse;
 import com.wuye.points.dto.announcement.AnnouncementListItemResponse;
+import com.wuye.points.dto.announcement.ActivityAnnouncementRequest;
 import com.wuye.points.dto.announcement.CreateAnnouncementRequest;
 import com.wuye.points.dto.announcement.DeleteAnnouncementResponse;
 import com.wuye.points.dto.announcement.SubmitCollectRequest;
@@ -42,6 +43,13 @@ public class AnnouncementController {
     public ApiResponse<AnnouncementDetailResponse> createAnnouncement(
             @Valid @RequestBody CreateAnnouncementRequest request) {
         return ApiResponse.success(announcementService.createAnnouncement(request));
+    }
+
+    @Operation(summary = "发布活动公告（移动端活动组长）", description = "发布活动类公告，角色：activity_leader/property_admin/platform_admin；公告类型强制为 activity。无需传 announcementType")
+    @PostMapping("/activity")
+    public ApiResponse<AnnouncementDetailResponse> createActivityAnnouncement(
+            @Valid @RequestBody ActivityAnnouncementRequest request) {
+        return ApiResponse.success(announcementService.createActivityAnnouncement(request));
     }
 
     @Operation(summary = "公告列表", description = "分页查询公告列表")

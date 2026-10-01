@@ -89,6 +89,9 @@ public class AuthService {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "该账号无管理端登录权限");
         }
 
+        // 2026-09-08：物业公司停用后不可再经营（配合 §51.5 PATCH /{id}/status=inactive 的两档删除语义）
+        assertPropertyCompanyActive(resident);
+
         TokenResponse tokens = buildTokenResponse(resident);
         return AuthLoginResponse.builder()
                 .accessToken(tokens.getAccessToken())
@@ -208,6 +211,27 @@ public class AuthService {
                 || ResidentStatus.frozen.name().equals(resident.getStatus())) {
             throw new BizException(ErrorCode.ACCOUNT_DISABLED);
         }
+    }
+
+    /**
+     * 2026-09-08：物业公司停用后不可再经营。
+     * 仅拦截管理端登录（住户端已由 {@code GET /property-companies/current} 拦截），
+     * 且只在状态明确为 inactive 时拒绝，避免历史脏数据误伤。
+     */
+    private void assertPropertyCompanyActive(Resident resident) {
+        // 平台超管不属于任何单一物业，停用某物业不应影响其登录
+        if ("platform_admin".equals(resident.getRole())) {
+            return;
+        }
+        String propertyCompanyId = resident.getPropertyCompanyId();
+        if (propertyCompanyId == null) {
+            return;
+        }
+        propertyCompanyRepository.findById(propertyCompanyId).ifPresent(company -> {
+            if ("inactive".equals(company.getStatus())) {
+                throw new BizException(ErrorCode.ACCOUNT_DISABLED, "物业公司已停用");
+            }
+        });
     }
 
     private TokenResponse buildTokenResponse(Resident resident) {

@@ -20,6 +20,8 @@ import com.wuye.points.dto.point.SpendPointRequest;
 import com.wuye.points.dto.point.SpendPointResponse;
 import com.wuye.points.dto.point.TransferPointRequest;
 import com.wuye.points.dto.point.TransferPointResponse;
+import com.wuye.points.dto.resident.TransferToPropertyPointRequest;
+import com.wuye.points.dto.resident.TransferToPropertyPointResponse;
 import com.wuye.points.service.PointService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -138,5 +140,18 @@ public class PointController {
     @PostMapping("/spend")
     public ApiResponse<SpendPointResponse> spend(@Valid @RequestBody SpendPointRequest request) {
         return ApiResponse.success(pointService.spend(request));
+    }
+
+    /**
+     * 积分转赠物业
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "积分转赠物业（兼容别名）",
+            description = "与 POST /residents/me/points/transfer-to-property 等价（§2.6.4.1）。扣减个人积分，"
+                    + "生成 source=transfer_to_property 流水，不计入家庭池。需登录，角色：resident")
+    @PostMapping("/transfer-to-property")
+    public ApiResponse<TransferToPropertyPointResponse> transferToProperty(
+            @Valid @RequestBody TransferToPropertyPointRequest request) {
+        return ApiResponse.success(pointService.transferToProperty(request));
     }
 }

@@ -60,4 +60,12 @@ public class Product extends BaseEntity {
     /** 软删除时间戳 */
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    /** 是否平台/物业推荐 */
+    @Column(name = "is_recommended")
+    private Boolean isRecommended;
+
+    /** 推荐排序（越大越靠前） */
+    @Column(name = "recommended_sort")
+    private Integer recommendedSort;
 }

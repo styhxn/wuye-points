@@ -1,5 +1,6 @@
 package com.wuye.points.service;
 
+import com.wuye.points.constant.FulfillmentConstants;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.delivery.AssignDeliveryRequest;
@@ -15,19 +16,23 @@ import com.wuye.points.entity.Delivery;
 import com.wuye.points.entity.DeliveryRule;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.Order;
+import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.DeliveryRepository;
+import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.DeliveryRuleRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.DeliverySpecifications;
+import com.wuye.points.payment.WechatSplitService;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -37,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +50,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeliveryService {
@@ -51,36 +58,189 @@ public class DeliveryService {
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "acceptedAt", "deliveredAt");
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final BigDecimal DEFAULT_COURIER_EARNING = new BigDecimal("0.35");
+    /** 平台配送费分成比例默认值（商家自配时按此比例抽成，余下归商家） */
+    private static final BigDecimal DEFAULT_PLATFORM_DELIVERY_SHARE_RATE = new BigDecimal("0.1000");
 
     private final DeliveryRepository deliveryRepository;
     private final DeliveryRuleRepository deliveryRuleRepository;
     private final OrderRepository orderRepository;
     private final MerchantRepository merchantRepository;
     private final ResidentRepository residentRepository;
+    private final PropertyCompanyRepository propertyCompanyRepository;
     private final DeliveryConverter deliveryConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final WechatSplitService wechatSplitService;
 
+    /**
+     * 订单支付成功后创建「平台配送」配送单（幂等）。
+     *
+     * <p>保持既有行为：非团购/非食堂订单支付成功后即生成 {@code pending} 配送单，
+     * 直接出现在骑手待抢大厅（前端当前依赖的「住户支付后自动发布到待抢大厅」逻辑）。
+     */
     @Transactional
     public void createDeliveryForPaidOrder(Order order, Merchant merchant) {
-        if (deliveryRepository.findByOrderId(order.getId()).isPresent()) {
-            return;
+        ensureDelivery(order, merchant, FulfillmentConstants.CARRIER_TYPE_COURIER);
+    }
+
+    /**
+     * 按履约方式确保配送单存在并处于正确状态（幂等）。
+     *
+     * <ul>
+     *   <li>{@code courier_hall}：承运方=平台配送员，状态 {@code pending}，进入待抢大厅；</li>
+     *   <li>{@code merchant_self}：承运方=商家，状态 {@code merchant_self}，骑手不可见/不可抢。</li>
+     * </ul>
+     *
+     * @return 配送单结果（{@code created=true} 表示本次新建，{@code false} 表示复用/改写已有配送单）
+     */
+    @Transactional
+    public FulfillmentDeliveryResult ensureDelivery(Order order, Merchant merchant, String carrierType) {
+        boolean merchantCarrier = FulfillmentConstants.CARRIER_TYPE_MERCHANT.equals(carrierType);
+        DeliveryRule rule = loadDeliveryRule(order.getPropertyCompanyId());
+        BigDecimal courierEarning = merchantCarrier
+                ? BigDecimal.ZERO
+                : resolveCourierEarning(rule);
+
+        return deliveryRepository.findByOrderId(order.getId())
+                .map(existing -> {
+                    boolean created = false;
+                    if (!carrierType.equals(existing.getCarrierType())) {
+                        existing.setCarrierType(carrierType);
+                        created = false;
+                    }
+                    if (merchantCarrier) {
+                        // 商家自配：从待抢大厅撤回，配送员收入清零，配送费转成商家分成
+                        existing.setStatus(FulfillmentConstants.DELIVERY_STATUS_MERCHANT_SELF);
+                        existing.setCourierId(null);
+                        existing.setCourierEarning(BigDecimal.ZERO);
+                        existing.setMerchantDeliveryFeeShare(
+                                resolveMerchantDeliveryFeeShare(existing.getFee(), order.getPropertyCompanyId()));
+                    } else if (FulfillmentConstants.DELIVERY_STATUS_MERCHANT_SELF.equals(existing.getStatus())
+                            || FulfillmentConstants.DELIVERY_STATUS_MERCHANT_DELIVERING.equals(existing.getStatus())) {
+                        // 商家自配 -> 平台配送：重新发布到待抢大厅
+                        existing.setStatus("pending");
+                        existing.setCourierEarning(courierEarning);
+                        existing.setMerchantDeliveryFeeShare(null);
+                    }
+                    deliveryRepository.save(existing);
+                    return new FulfillmentDeliveryResult(existing, created);
+                })
+                .orElseGet(() -> {
+                    Delivery delivery = new Delivery();
+                    delivery.setId(idGenerator.generateId("dlv"));
+                    delivery.setOrderId(order.getId());
+                    delivery.setPropertyCompanyId(order.getPropertyCompanyId());
+                    delivery.setCarrierType(carrierType);
+                    delivery.setStatus(merchantCarrier
+                            ? FulfillmentConstants.DELIVERY_STATUS_MERCHANT_SELF
+                            : "pending");
+                    delivery.setFee(resolveDeliveryFee(order, merchant, rule));
+                    delivery.setCourierEarning(courierEarning);
+                    if (merchantCarrier) {
+                        delivery.setMerchantDeliveryFeeShare(
+                                resolveMerchantDeliveryFeeShare(delivery.getFee(), order.getPropertyCompanyId()));
+                    }
+                    delivery.setPickupAddress(merchant != null ? merchant.getAddress() : null);
+                    delivery.setDeliveryAddress(order.getAddress());
+                    delivery.setContactPhone(order.getContactPhone());
+                    deliveryRepository.save(delivery);
+                    return new FulfillmentDeliveryResult(delivery, true);
+                });
+    }
+
+    /**
+     * 商家确认自配送达：仅 {@code carrier_type = merchant} 的配送单可被本单商家确认。
+     * 完成后配送单置 {@code completed}，订单置 {@code completed}（与骑手送达同口径）。
+     */
+    @Transactional
+    public CompleteDeliveryResponse merchantConfirm(String id, CompleteDeliveryRequest request) {
+        roleGuard.requireAnyRole("merchant");
+        validateDeliveryId(id);
+
+        Delivery delivery = deliveryRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.DELIVERY_NOT_FOUND, "配送不存在"));
+        if (!FulfillmentConstants.CARRIER_TYPE_MERCHANT.equals(delivery.getCarrierType())) {
+            throw new BizException(ErrorCode.DELIVERY_NOT_COURIER_ORDER, "仅商家自配单可由商家确认送达");
         }
 
-        DeliveryRule rule = loadDeliveryRule(order.getPropertyCompanyId());
-        BigDecimal courierEarning = resolveCourierEarning(rule);
+        Order order = orderRepository.findById(delivery.getOrderId()).orElse(null);
+        assertMerchantOwnsOrder(order);
 
-        Delivery delivery = new Delivery();
-        delivery.setId(idGenerator.generateId("dlv"));
-        delivery.setOrderId(order.getId());
-        delivery.setPropertyCompanyId(order.getPropertyCompanyId());
-        delivery.setStatus("pending");
-        delivery.setFee(resolveDeliveryFee(order, merchant, rule));
-        delivery.setCourierEarning(courierEarning);
-        delivery.setPickupAddress(merchant != null ? merchant.getAddress() : null);
-        delivery.setDeliveryAddress(order.getAddress());
-        delivery.setContactPhone(order.getContactPhone());
+        if ("completed".equals(delivery.getStatus())) {
+            throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "该配送单已完成");
+        }
+        if (request != null && request.getProofImageUrls() != null && request.getProofImageUrls().size() > 5) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE, "配送凭证最多5张");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        delivery.setStatus("completed");
+        delivery.setDeliveredAt(now);
+        if (request != null) {
+            delivery.setCompleteRemark(request.getRemark());
+            delivery.setProofImageUrls(toJsonArray(request.getProofImageUrls()));
+        }
         deliveryRepository.save(delivery);
+
+        if (order != null && !"completed".equals(order.getOrderStatus())
+                && !"cancelled".equals(order.getOrderStatus())) {
+            order.setOrderStatus("completed");
+            order.setDeliveredAt(now);
+            order.setCompletedAt(now);
+            orderRepository.save(order);
+        }
+
+        return CompleteDeliveryResponse.builder()
+                .id(delivery.getId())
+                .orderId(delivery.getOrderId())
+                .status(delivery.getStatus())
+                .courierEarning(defaultDecimal(delivery.getCourierEarning()))
+                .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
+                .deliveredAt(DateTimeUtil.toIsoUtc(delivery.getDeliveredAt()))
+                .build();
+    }
+
+    /** 商家自配：配送费扣除平台抽成后的商家分成（平台配送费分成比例默认 10%） */
+    private BigDecimal resolveMerchantDeliveryFeeShare(BigDecimal fee, String propertyCompanyId) {
+        BigDecimal base = defaultDecimal(fee);
+        BigDecimal platformRate = propertyCompanyRepository.findById(propertyCompanyId)
+                .map(PropertyCompany::getPlatformDeliveryShareRate)
+                .orElse(null);
+        if (platformRate == null) {
+            platformRate = DEFAULT_PLATFORM_DELIVERY_SHARE_RATE;
+        }
+        return base.subtract(base.multiply(platformRate)).setScale(2, RoundingMode.HALF_UP).max(BigDecimal.ZERO);
+    }
+
+    private void assertMerchantOwnsOrder(Order order) {
+        if (order == null) {
+            throw new BizException(ErrorCode.ORDER_NOT_FOUND);
+        }
+        String userId = UserContext.currentUserId();
+        Merchant owned = merchantRepository
+                .findFirstByResidentIdAndPropertyCompanyIdOrderByCreatedAtDesc(userId, order.getPropertyCompanyId())
+                .orElse(null);
+        if (owned == null || !owned.getId().equals(order.getMerchantId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其它商家的配送单");
+        }
+    }
+
+    private String toJsonArray(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append('"').append(values.get(i).replace("\"", "\\\"")).append('"');
+        }
+        return sb.append(']').toString();
+    }
+
+    /** 履约配送单处理结果 */
+    public record FulfillmentDeliveryResult(Delivery delivery, boolean created) {
     }
 
     private BigDecimal resolveDeliveryFee(Order order, Merchant merchant, DeliveryRule rule) {
@@ -145,6 +305,7 @@ public class DeliveryService {
 
         Delivery delivery = deliveryRepository.findByIdAndPropertyCompanyId(id, propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.ORDER_NOT_FOUND, "配送不存在"));
+        assertCourierCarrier(delivery);
         if (!"pending".equals(delivery.getStatus()) && !"property_fallback".equals(delivery.getStatus())) {
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "配送状态不允许抢单");
         }
@@ -195,6 +356,7 @@ public class DeliveryService {
 
         String courierId = UserContext.currentUserId();
         Delivery delivery = getDeliveryInScope(id);
+        assertCourierCarrier(delivery);
         assertAssignedCourier(delivery, courierId);
 
         if (!"accepted".equals(delivery.getStatus()) && !"delivering".equals(delivery.getStatus())) {
@@ -204,15 +366,28 @@ public class DeliveryService {
         LocalDateTime now = LocalDateTime.now();
         delivery.setStatus("completed");
         delivery.setDeliveredAt(now);
+        if (request != null) {
+            delivery.setCompleteRemark(request.getRemark());
+            delivery.setProofImageUrls(toJsonArray(request.getProofImageUrls()));
+        }
         deliveryRepository.save(delivery);
 
         syncOrderAfterDeliveryComplete(delivery.getOrderId(), now);
+
+        // 电商收付通：配送完成后把配送费直分给快递员（幂等；内部判断开关/进件/账户校验）
+        try {
+            wechatSplitService.freezeCourierDeliveryEarning(delivery);
+        } catch (Exception e) {
+            log.error("[配送] 配送费直分快递员异常 deliveryId={} orderId={}", delivery.getId(), delivery.getOrderId(), e);
+        }
 
         return CompleteDeliveryResponse.builder()
                 .id(delivery.getId())
                 .orderId(delivery.getOrderId())
                 .status(delivery.getStatus())
                 .courierEarning(defaultDecimal(delivery.getCourierEarning()))
+                .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
+                .carrierType(delivery.getCarrierType())
                 .deliveredAt(DateTimeUtil.toIsoUtc(delivery.getDeliveredAt()))
                 .build();
     }
@@ -225,6 +400,7 @@ public class DeliveryService {
 
         Delivery delivery = getDeliveryInScope(id);
         if (roleGuard.isCourier()) {
+            assertCourierCarrier(delivery);
             assertAssignedCourier(delivery, UserContext.currentUserId());
         }
 
@@ -262,6 +438,7 @@ public class DeliveryService {
         validateResidentId(request.getCourierId());
 
         Delivery delivery = getDeliveryInScope(id);
+        assertCourierCarrier(delivery);
         if (!"pending".equals(delivery.getStatus()) && !"property_fallback".equals(delivery.getStatus())) {
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "配送状态不允许指派");
         }
@@ -426,6 +603,13 @@ public class DeliveryService {
         }
         return deliveryRepository.findByIdAndPropertyCompanyId(id, propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.ORDER_NOT_FOUND, "配送不存在"));
+    }
+
+    /** 商家自配单守卫：{@code carrier_type = merchant} 的配送单不可被骑手抢单/改状态/完成，也不可被指派 */
+    private void assertCourierCarrier(Delivery delivery) {
+        if (FulfillmentConstants.CARRIER_TYPE_MERCHANT.equals(delivery.getCarrierType())) {
+            throw new BizException(ErrorCode.DELIVERY_NOT_COURIER_ORDER, "商家自配单，配送员不可操作");
+        }
     }
 
     private void assertAssignedCourier(Delivery delivery, String courierId) {

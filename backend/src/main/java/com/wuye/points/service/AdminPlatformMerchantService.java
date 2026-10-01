@@ -1,6 +1,7 @@
 package com.wuye.points.service;
 
 import com.wuye.points.dto.admin.merchant.ProfitSpaceResponse;
+import com.wuye.points.dto.admin.merchant.SetOfficialRecommendationRequest;
 import com.wuye.points.dto.admin.platformmerchant.BatchConfigRequest;
 import com.wuye.points.dto.admin.platformmerchant.BatchConfigResponse;
 import com.wuye.points.dto.admin.platformmerchant.CreatePlatformMerchantRequest;
@@ -399,5 +400,17 @@ public class AdminPlatformMerchantService {
                 .propertyCompanyId(propertyCompanyId)
                 .auditStatus(merchant.getAuditStatus())
                 .build();
+    }
+
+    @Transactional
+    public void setRecommendation(String merchantId, SetOfficialRecommendationRequest request) {
+        permissionGuard.requireAdmin();
+        adminSupport.validateIdPrefix(merchantId, "m");
+
+        Merchant merchant = merchantRepository.findById(merchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "商家不存在"));
+        merchant.setIsRecommended(Boolean.TRUE.equals(request.getIsRecommended()));
+        merchant.setRecommendedSort(request.getRecommendedSort());
+        merchantRepository.save(merchant);
     }
 }

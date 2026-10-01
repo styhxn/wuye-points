@@ -96,6 +96,13 @@ public class PermissionInterceptor implements HandlerInterceptor {
             "/admin/property-companies"   // 创建/列表仅 platform_admin
     );
 
+    /**
+     * 2026-09-08 前端问题：统筹写操作 403。
+     * 统筹（coordinator）按文档 §39 总述可管理本人名下板块负责人，此处放行 sector:manage；
+     * 数据范围（本物业 / 本人名下）由 AdminSectorLeaderService 二次收敛。
+     */
+    private static final Set<String> COORDINATOR_WRITABLE_CODES = Set.of("sector:manage");
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         String uri = request.getRequestURI();
@@ -118,7 +125,14 @@ public class PermissionInterceptor implements HandlerInterceptor {
 
         String permissionCode = ADMIN_PATH_PERMISSIONS.get(key);
         if (permissionCode != null) {
-            permissionGuard.requirePermission(permissionCode);
+            // 2026-09-07 前端问题 C：coordinator 持有只读权限码（如 sector:read）时放行 GET 查询；
+            // 2026-09-08 前端问题：sector:manage 等白名单写权限码同样按权限码放行，其余写操作仍走 requireAdmin。
+            if ("coordinator".equals(role)
+                    && (permissionCode.endsWith(":read") || COORDINATOR_WRITABLE_CODES.contains(permissionCode))) {
+                permissionGuard.requirePermissionOrAdminAllowingCoordinator(permissionCode);
+            } else {
+                permissionGuard.requirePermission(permissionCode);
+            }
         }
 
         return true;

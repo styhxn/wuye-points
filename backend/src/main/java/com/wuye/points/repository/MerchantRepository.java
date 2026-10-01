@@ -36,4 +36,18 @@ public interface MerchantRepository extends JpaRepository<Merchant, String>, Jpa
 
     Optional<Merchant> findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
             String contactPhone, String propertyCompanyId);
+
+    List<Merchant> findByPropertyCompanyIdAndStatus(String propertyCompanyId, String status);
+
+    Optional<Merchant> findFirstByContactPhoneOrderByCreatedAtDesc(String contactPhone);
+
+    List<Merchant> findByResidentId(String residentId);
+
+    List<Merchant> findByIndividualLeaderId(String individualLeaderId);
+
+    Optional<Merchant> findFirstByResidentIdAndPropertyCompanyIdOrderByCreatedAtDesc(
+            String residentId, String propertyCompanyId);
+
+    Optional<Merchant> findByContactPhoneAndPropertyCompanyIdAndMerchantSource(
+            String contactPhone, String propertyCompanyId, String merchantSource);
 }

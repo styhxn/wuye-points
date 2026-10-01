@@ -1,0 +1,41 @@
+# 多阶段构建镜像（用于 docker compose / CI 直接构建，无需本地先 mvn package）
+# 运行时仍与原有 backend/Dockerfile 保持一致
+
+# ---------- 构建阶段 ----------
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /workspace
+COPY pom.xml .
+# 预下载依赖以利用层缓存（离线失败不影响后续）
+RUN mvn -B -q dependency:go-offline || true
+COPY src ./src
+# CI 镜像内不重复跑测试：测试由 CI 流水线独立阶段执行并产出覆盖率报告
+RUN mvn -B -q clean package -DskipTests
+
+# ---------- 运行阶段 ----------
+FROM eclipse-temurin:17-jre-alpine
+
+LABEL maintainer="wuye-points"
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
+# 目录创建与授权必须在切换到非 root 用户之前完成（Alpine 的 / 为 root:root 755）
+RUN mkdir -p /data/uploads /opt/wuye-points/cert \
+    && chown -R appuser:appgroup /data /opt/wuye-points
+
+WORKDIR /app
+
+COPY --from=build /workspace/target/wuye-points.jar app.jar
+
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+ENV TZ=Asia/Shanghai
+ENV JAVA_OPTS="-XX:InitialRAMPercentage=50.0 -XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -Duser.timezone=Asia/Shanghai"
+
+EXPOSE 8888
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+    CMD wget -qO- http://localhost:8888/api/v1/actuator/health || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]

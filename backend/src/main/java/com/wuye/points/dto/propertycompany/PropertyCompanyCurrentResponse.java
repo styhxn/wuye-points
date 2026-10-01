@@ -58,10 +58,13 @@ public class PropertyCompanyCurrentResponse {
     @Schema(description = "分成比例配置")
     public static class DistributionRates {
 
-        @Schema(description = "物业公司分成比例", example = "0.30")
+        @Schema(description = "我们公司（平台）分成比例，一级三档之一", example = "0.10")
+        private BigDecimal platformRate;
+
+        @Schema(description = "物业公司分成比例，一级三档之一", example = "0.598")
         private BigDecimal propertyRate;
 
-        @Schema(description = "协调员分成比例", example = "0.20")
+        @Schema(description = "管理盘（统筹）分成比例，一级三档之一", example = "0.302")
         private BigDecimal coordinatorRate;
 
         @Schema(description = "片区负责人分成比例", example = "0.15")

@@ -15,8 +15,12 @@ public class AppointSectorLeaderRequest {
     private String residentId;
 
     @NotBlank(message = "sector不能为空")
-    @Schema(description = "片区编码", example = "SECTOR_A", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "板块编码：cleaning/repair/security/greening/other（亦支持中文「保洁/维修/安保/绿化/其它」）",
+            example = "cleaning", requiredMode = Schema.RequiredMode.REQUIRED)
     private String sector;
+
+    @Schema(description = "板块描述/备注", example = "负责保洁板块管理")
+    private String description;
 
     @Schema(description = "抽佣比例", example = "0.10")
     private BigDecimal commissionRate;

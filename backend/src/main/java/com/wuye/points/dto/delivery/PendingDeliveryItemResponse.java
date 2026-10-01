@@ -47,6 +47,12 @@ public class PendingDeliveryItemResponse {
     @Schema(description = "配送状态", example = "pending", allowableValues = {"pending", "accepted", "delivering", "completed", "failed", "property_fallback"})
     private String status;
 
+    @Schema(description = "承运类型 courier(平台配送员)/merchant(商家自配)", example = "courier")
+    private String carrierType;
+
+    @Schema(description = "商家自配配送费分成（仅 carrierType=merchant 有值）", example = "4.50")
+    private BigDecimal merchantDeliveryFeeShare;
+
     @Schema(description = "超时时间(分钟)", example = "30")
     private Integer timeoutMinutes;
 

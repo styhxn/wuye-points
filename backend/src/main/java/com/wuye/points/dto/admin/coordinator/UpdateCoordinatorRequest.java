@@ -15,9 +15,12 @@ public class UpdateCoordinatorRequest {
     @Schema(description = "生效日期", example = "2025-01-01")
     private String startDate;
     @Schema(description = "到期日期", example = "2025-12-31")
-    private String endDate;
-    @Schema(description = "备注", example = "调整佣金比例")
+    private String endDate;    @Schema(description = "备注", example = "调整佣金比例")
     private String remark;
+
+    @Schema(description = "统筹描述/备注（落库到 coordinators.description）", example = "负责统筹管理")
+    private String description;
+
     @Schema(description = "状态", example = "active")
     private String status;
 }

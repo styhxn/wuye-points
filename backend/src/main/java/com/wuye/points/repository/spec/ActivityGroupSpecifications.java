@@ -18,6 +18,15 @@ public final class ActivityGroupSpecifications {
             String communityId,
             String status,
             String memberResidentId) {
+        return withFilters(propertyCompanyId, communityId, status, memberResidentId, null);
+    }
+
+    public static Specification<ActivityGroup> withFilters(
+            String propertyCompanyId,
+            String communityId,
+            String status,
+            String memberResidentId,
+            String reviewStatus) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
 
@@ -29,6 +38,12 @@ public final class ActivityGroupSpecifications {
             }
             if (StringUtils.hasText(status)) {
                 predicates.add(cb.equal(root.get("status"), status));
+            }
+            if (StringUtils.hasText(reviewStatus)) {
+                // 兼容历史数据：reviewStatus 为空（V8 迁移前已 active）的旧组也视为"已通过"，对业主可见
+                predicates.add(cb.or(
+                        cb.equal(root.get("reviewStatus"), reviewStatus),
+                        cb.isNull(root.get("reviewStatus"))));
             }
             if (StringUtils.hasText(memberResidentId)) {
                 var subquery = query.subquery(String.class);

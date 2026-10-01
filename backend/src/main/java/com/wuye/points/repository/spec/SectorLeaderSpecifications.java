@@ -5,6 +5,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public final class SectorLeaderSpecifications {
@@ -17,6 +18,18 @@ public final class SectorLeaderSpecifications {
             String sector,
             String coordinatorId,
             String status) {
+        return withFilters(propertyCompanyId, sector, coordinatorId, status, null);
+    }
+
+    /**
+     * @param residentIds 非空时按这些住户ID收敛（2026-09-08：列表 keyword 过滤）
+     */
+    public static Specification<SectorLeader> withFilters(
+            String propertyCompanyId,
+            String sector,
+            String coordinatorId,
+            String status,
+            Collection<String> residentIds) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
 
@@ -31,6 +44,14 @@ public final class SectorLeaderSpecifications {
             }
             if (StringUtils.hasText(status)) {
                 predicates.add(cb.equal(root.get("status"), status));
+            }
+            if (residentIds != null) {
+                if (residentIds.isEmpty()) {
+                    // 关键字命中不到任何住户时返回空结果
+                    predicates.add(cb.disjunction());
+                } else {
+                    predicates.add(root.get("residentId").in(residentIds));
+                }
             }
 
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));

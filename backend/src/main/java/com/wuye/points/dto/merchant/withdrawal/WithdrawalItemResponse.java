@@ -32,7 +32,7 @@ public class WithdrawalItemResponse {
     @Schema(description = "实际到账金额", example = "990.00")
     private BigDecimal actualAmount;
 
-    @Schema(description = "审核状态", example = "approved", allowableValues = {"pending_audit", "approved", "rejected", "completed", "failed"})
+    @Schema(description = "审核状态", example = "pending", allowableValues = {"pending", "approved", "rejected", "completed"})
     private String status;
 
     @Schema(description = "审核时间", example = "2024-01-02T00:00:00")

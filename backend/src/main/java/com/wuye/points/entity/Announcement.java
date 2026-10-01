@@ -42,6 +42,9 @@ public class Announcement extends BaseEntity {
     @Column(name = "merchant_id", length = 32)
     private String merchantId;
 
+    @Column(name = "activity_group_id", length = 32)
+    private String activityGroupId;
+
     @Column(name = "publisher_id", length = 32, nullable = false)
     private String publisherId;
 

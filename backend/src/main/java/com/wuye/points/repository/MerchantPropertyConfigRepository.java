@@ -13,4 +13,6 @@ import java.util.Optional;
 public interface MerchantPropertyConfigRepository extends JpaRepository<MerchantPropertyConfig, String> {
 
     Optional<MerchantPropertyConfig> findByMerchantIdAndPropertyCompanyId(String merchantId, String propertyCompanyId);
+
+    Optional<MerchantPropertyConfig> findByMerchantId(String merchantId);
 }

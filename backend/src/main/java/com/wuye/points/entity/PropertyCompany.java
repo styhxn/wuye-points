@@ -98,4 +98,96 @@ public class PropertyCompany extends BaseEntity {
     /** active/inactive */
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 平台提现抽成比率 */
+    @Column(name = "platform_withdrawal_fee_share_rate", precision = 5, scale = 4)
+    private BigDecimal platformWithdrawalFeeShareRate;
+
+    /** 区域负责人分成比例 */
+    @Column(name = "regional_leader_rate", precision = 5, scale = 4)
+    private BigDecimal regionalLeaderRate;
+
+    /** 平台分成比例 */
+    @Column(name = "platform_share_rate", precision = 5, scale = 4)
+    private BigDecimal platformShareRate;
+
+    /** 物业币商城是否开启 */
+    @Column(name = "coin_mall_enabled")
+    private Boolean coinMallEnabled;
+
+    /** 物业币商城起购金额 */
+    @Column(name = "coin_mall_min_amount", precision = 10, scale = 2)
+    private BigDecimal coinMallMinAmount;
+
+    /** 物业币商城最大占比 */
+    @Column(name = "coin_mall_max_ratio", precision = 5, scale = 4)
+    private BigDecimal coinMallMaxRatio;
+
+    /** 物业币使用条件：none/point_threshold/property_fee_paid/manual_issue */
+    @Column(name = "coin_use_condition", length = 30)
+    private String coinUseCondition;
+
+    /** 物业币使用条件积分门槛（coin_use_condition=point_threshold 时生效） */
+    @Column(name = "coin_point_threshold")
+    private Integer coinPointThreshold;
+
+    /** 结算余额 */
+    @Column(name = "settlement_balance", precision = 10, scale = 2)
+    private BigDecimal settlementBalance;
+
+    /** 公司账户余额 */
+    @Column(name = "company_account_balance", precision = 10, scale = 2)
+    private BigDecimal companyAccountBalance;
+
+    /** 积分功能开关 */
+    @Column(name = "point_enabled")
+    private Boolean pointEnabled;
+
+    /** 物业币功能开关 */
+    @Column(name = "coin_enabled")
+    private Boolean coinEnabled;
+
+    /** 积分归属模式 property(到物业公司账号)/resident(业主自己使用，钱到平台) */
+    @Column(name = "points_attribution_mode", length = 20)
+    private String pointsAttributionMode;
+
+    /** 奖励金归属模式 property(到物业公司账号)/resident(业主自己使用，需物业同意) */
+    @Column(name = "reward_attribution_mode", length = 20)
+    private String rewardAttributionMode;
+
+    /** 居民积分分成比例 */
+    @Column(name = "resident_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal residentPointShareRate;
+
+    /** 商家积分分成比例 */
+    @Column(name = "merchant_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal merchantPointShareRate;
+
+    /** 物业币分成比例 */
+    @Column(name = "coin_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal coinPointShareRate;
+
+    /** 共享积分分成比例 */
+    @Column(name = "shared_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal sharedPointShareRate;
+
+    /** 项目（工程）负责人分成比例 */
+    @Column(name = "project_leader_rate", precision = 5, scale = 4)
+    private BigDecimal projectLeaderRate;
+
+    /** 平台配送费分成比例 */
+    @Column(name = "platform_delivery_share_rate", precision = 5, scale = 4)
+    private BigDecimal platformDeliveryShareRate;
+
+    /** 快递员分成比例 */
+    @Column(name = "courier_share_rate", precision = 5, scale = 4)
+    private BigDecimal courierShareRate;
+
+    /** 自动提现周期天数 */
+    @Column(name = "auto_withdrawal_period_days")
+    private Integer autoWithdrawalPeriodDays;
+
+    /** 物业公司自动提现开关（per-company） */
+    @Column(name = "auto_withdrawal_enabled")
+    private Boolean autoWithdrawalEnabled;
 }

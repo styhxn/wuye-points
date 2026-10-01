@@ -2,6 +2,9 @@ package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.propertyfee.ArrearsReminderPreviewResponse;
+import com.wuye.points.dto.propertyfee.ArrearsReminderRequest;
+import com.wuye.points.dto.propertyfee.ArrearsReminderResponse;
 import com.wuye.points.dto.propertyfee.CreatePropertyFeeRequest;
 import com.wuye.points.dto.propertyfee.PayPropertyFeeRequest;
 import com.wuye.points.dto.propertyfee.PayPropertyFeeResponse;
@@ -9,6 +12,8 @@ import com.wuye.points.dto.propertyfee.PropertyFeeDetailResponse;
 import com.wuye.points.dto.propertyfee.PropertyFeeListItemResponse;
 import com.wuye.points.entity.Community;
 import com.wuye.points.entity.Family;
+import com.wuye.points.entity.Message;
+import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PointRecord;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.PropertyFee;
@@ -19,6 +24,7 @@ import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.FamilyRepository;
+import com.wuye.points.repository.MessageRepository;
 import com.wuye.points.repository.PointRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.PropertyFeeRepository;
@@ -29,6 +35,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -43,6 +50,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,12 +58,15 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PropertyFeeService {
 
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "dueDate", "amount", "period");
+    private static final List<String> DEFAULT_REMINDER_CHANNELS = List.of("in_app", "wechat");
+    private static final Set<String> REMINDER_CHANNELS = Set.of("in_app", "wechat");
 
     private final PropertyFeeRepository propertyFeeRepository;
     private final PropertyFeeRuleRepository propertyFeeRuleRepository;
@@ -69,6 +80,8 @@ public class PropertyFeeService {
     private final FamilyRepository familyRepository;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final ArrearsReminderStateStore arrearsReminderStateStore;
+    private final MessageRepository messageRepository;
 
     @Transactional(readOnly = true)
     public PageResponse<PropertyFeeListItemResponse> listPropertyFees(
@@ -263,32 +276,7 @@ public class PropertyFeeService {
         fee.setPaymentStatus(propertyFeeConverter.resolvePaymentStatus(fee));
         if ("paid".equals(fee.getPaymentStatus())) {
             fee.setPaidAt(LocalDateTime.now());
-
-            if (fee.getDueDate() != null && LocalDate.now().isBefore(fee.getDueDate())) {
-                PointRecord rewardRecord = new PointRecord();
-                rewardRecord.setId(idGenerator.generateId("pt"));
-                rewardRecord.setResidentId(fee.getResidentId());
-                rewardRecord.setFamilyId(fee.getFamilyId());
-                rewardRecord.setPropertyCompanyId(fee.getPropertyCompanyId());
-                rewardRecord.setPointType("earn");
-                rewardRecord.setAmount(100);
-                rewardRecord.setBalance(resident.getPointBalance() + 100);
-                rewardRecord.setSource("on_time_payment_reward");
-                rewardRecord.setSourceId(fee.getId());
-                rewardRecord.setDescription("准时缴费奖励");
-                pointRecordRepository.save(rewardRecord);
-
-                resident.setPointBalance(resident.getPointBalance() + 100);
-                resident.setOnTimePaymentBadge(true);
-                residentRepository.save(resident);
-
-                if (fee.getFamilyId() != null) {
-                    familyRepository.findById(fee.getFamilyId()).ifPresent(family -> {
-                        family.setPointBalance(family.getPointBalance() + 100);
-                        familyRepository.save(family);
-                    });
-                }
-            }
+            grantOnTimePaymentReward(resident, fee);
         }
         propertyFeeRepository.save(fee);
 
@@ -307,6 +295,278 @@ public class PropertyFeeService {
                 .cashAmount(breakdown.cashAmount())
                 .paidAt(DateTimeUtil.toIsoUtc(fee.getPaidAt()))
                 .build();
+    }
+
+    /**
+     * 欠费催缴人数预览：按住户去重统计欠费范围与金额，返回 30 分钟有效的快照令牌，
+     * 发送时须原样回传 previewToken 以防范围漂移。
+     * 注意：不能 readOnly —— 预览需把快照写入 arrears_reminder_preview，
+     * readOnly 事务会跳过 INSERT，导致发送时永远报「预览快照已过期」(96033)（2026-09-07 前端问题 I 根因）。
+     */
+    @Transactional
+    public ArrearsReminderPreviewResponse previewArrearsReminder(ArrearsReminderRequest request) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        String propertyCompanyId = roleGuard.resolveListPropertyCompanyId(request.getPropertyCompanyId());
+
+        List<PropertyFee> arrears = propertyFeeRepository.findAll(
+                PropertyFeeSpecifications.withFilters(
+                        propertyCompanyId, null, null,
+                        request.getCommunityId(), request.getFeeType(), "unpaid", null, null));
+
+        // 同一住户多笔欠费只催一次
+        Map<String, List<PropertyFee>> feesByResident = arrears.stream()
+                .collect(Collectors.groupingBy(PropertyFee::getResidentId));
+
+        List<Resident> residents = residentRepository.findAllById(feesByResident.keySet()).stream()
+                .filter(resident -> !StringUtils.hasText(request.getBuilding())
+                        || request.getBuilding().equals(resident.getBuilding()))
+                .toList();
+
+        BigDecimal totalArrears = BigDecimal.ZERO;
+        for (Resident resident : residents) {
+            for (PropertyFee fee : feesByResident.getOrDefault(resident.getId(), List.of())) {
+                totalArrears = totalArrears.add(remainingAmount(fee));
+            }
+        }
+
+        long wechatEligible = residents.stream()
+                .filter(resident -> StringUtils.hasText(resident.getOpenid()))
+                .count();
+
+        List<String> residentIds = residents.stream().map(Resident::getId).toList();
+        ArrearsReminderStateStore.PreviewSnapshot snapshot = arrearsReminderStateStore.savePreview(
+                propertyCompanyId, request.getCommunityId(), request.getBuilding(), request.getFeeType(),
+                residentIds, totalArrears);
+
+        return ArrearsReminderPreviewResponse.builder()
+                .templateCode(resolveTemplateCode(request))
+                .previewToken(snapshot.getToken())
+                .expiresAt(DateTimeUtil.toIsoUtc(snapshot.getExpiresAt()))
+                .recipientCount(residents.size())
+                .totalArrearsAmount(totalArrears)
+                .inAppEligibleCount(residents.size())
+                .wechatEligibleCount((int) wechatEligible)
+                .wechatIneligibleCount(residents.size() - (int) wechatEligible)
+                .duplicateResidentCount(arrears.size() - residents.size())
+                .build();
+    }
+
+    /**
+     * 欠费催缴统一发送：消费预览快照锁定范围，按渠道下发并记录审计；requestId 幂等。
+     * 应用内消息真实落库；微信订阅消息模板 API 尚未接入，该渠道仅统计可触达人数并计入跳过。
+     */
+    @Transactional
+    public ArrearsReminderResponse sendArrearsReminder(ArrearsReminderRequest request) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        String propertyCompanyId = roleGuard.resolveListPropertyCompanyId(request.getPropertyCompanyId());
+        if (StringUtils.hasText(request.getRequestId())
+                && arrearsReminderStateStore.isProcessed(request.getRequestId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "该 requestId 已发送过，请勿重复提交");
+        }
+
+        ArrearsReminderStateStore.PreviewSnapshot snapshot =
+                arrearsReminderStateStore.consumePreview(request.getPreviewToken());
+        if (StringUtils.hasText(propertyCompanyId) && StringUtils.hasText(snapshot.getPropertyCompanyId())
+                && !propertyCompanyId.equals(snapshot.getPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "预览快照与当前物业公司不一致");
+        }
+
+        List<String> channels = resolveReminderChannels(request.getChannels());
+        List<Resident> residents = residentRepository.findAllById(snapshot.getResidentIds());
+        String operator = UserContext.currentUserId();
+
+        int inAppSuccess = 0;
+        int inAppFailed = 0;
+        int wechatSkipped = 0;
+        int notified = 0;
+        int skipped = 0;
+        int failed = 0;
+
+        for (Resident resident : residents) {
+            boolean anySuccess = false;
+            boolean anyFailed = false;
+
+            if (channels.contains("in_app")) {
+                try {
+                    messageRepository.save(buildReminderMessage(resident, request, operator));
+                    inAppSuccess++;
+                    anySuccess = true;
+                } catch (Exception ex) {
+                    inAppFailed++;
+                    anyFailed = true;
+                    log.warn("催缴应用内消息发送失败 residentId={}", resident.getId(), ex);
+                }
+            }
+            if (channels.contains("wechat")) {
+                // TODO 微信订阅消息模板 API 尚未接入，已绑定 openid 的住户也只计入跳过
+                wechatSkipped++;
+            }
+
+            if (anySuccess) {
+                notified++;
+            } else if (anyFailed) {
+                failed++;
+            } else {
+                skipped++;
+            }
+        }
+
+        String batchId = idGenerator.generateId("batch");
+        Map<String, Object> audit = new HashMap<>();
+        audit.put("id", idGenerator.generateId("audit"));
+        audit.put("batchId", batchId);
+        audit.put("requestId", request.getRequestId());
+        audit.put("propertyCompanyId", snapshot.getPropertyCompanyId());
+        audit.put("communityId", snapshot.getCommunityId());
+        audit.put("building", snapshot.getBuilding());
+        audit.put("feeType", snapshot.getFeeType());
+        audit.put("channels", String.join(",", channels));
+        audit.put("recipientCount", residents.size());
+        audit.put("notifiedCount", notified);
+        audit.put("skippedCount", skipped);
+        audit.put("failedCount", failed);
+        audit.put("inAppSuccess", inAppSuccess);
+        audit.put("inAppFailed", inAppFailed);
+        audit.put("wechatSuccess", 0);
+        audit.put("wechatSkipped", wechatSkipped);
+        audit.put("wechatFailed", 0);
+        audit.put("totalArrearsAmount", snapshot.getTotalArrearsAmount());
+        audit.put("operator", operator);
+        arrearsReminderStateStore.recordAudit(audit);
+
+        if (StringUtils.hasText(request.getRequestId())) {
+            arrearsReminderStateStore.markProcessed(request.getRequestId());
+        }
+
+        return ArrearsReminderResponse.builder()
+                .batchId(batchId)
+                .recipientCount(residents.size())
+                .notifiedCount(notified)
+                .skippedCount(skipped)
+                .failedCount(failed)
+                .channels(ArrearsReminderResponse.Channels.builder()
+                        .inApp(ArrearsReminderResponse.ChannelResult.builder()
+                                .successCount(inAppSuccess)
+                                .skippedCount(0)
+                                .failedCount(inAppFailed)
+                                .build())
+                        .wechat(ArrearsReminderResponse.ChannelResult.builder()
+                                .successCount(0)
+                                .skippedCount(wechatSkipped)
+                                .failedCount(0)
+                                .build())
+                        .build())
+                .build();
+    }
+
+    private List<String> resolveReminderChannels(List<String> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return DEFAULT_REMINDER_CHANNELS;
+        }
+        List<String> channels = new ArrayList<>();
+        for (String channel : requested) {
+            if (!REMINDER_CHANNELS.contains(channel)) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "channels值无效: " + channel);
+            }
+            if (!channels.contains(channel)) {
+                channels.add(channel);
+            }
+        }
+        return channels;
+    }
+
+    private Message buildReminderMessage(Resident resident, ArrearsReminderRequest request, String operator) {
+        Message message = new Message();
+        message.setId(idGenerator.generateId("msg"));
+        message.setFromId(operator);
+        message.setToId(resident.getId());
+        message.setToRole("resident");
+        message.setMessageType("property_message");
+        message.setContent(request.getTitle() + "\n" + request.getContent());
+        message.setChatType("private");
+        message.setReadStatus("unread");
+        message.setPropertyCompanyId(resident.getPropertyCompanyId());
+        message.setOfficialSenderType("property");
+        return message;
+    }
+
+    private BigDecimal remainingAmount(PropertyFee fee) {
+        return fee.getAmount().subtract(propertyFeeConverter.defaultPaidAmount(fee)).max(BigDecimal.ZERO);
+    }
+
+    private String resolveTemplateCode(ArrearsReminderRequest request) {
+        return StringUtils.hasText(request.getTemplateCode())
+                ? request.getTemplateCode() : "property_fee_arrears_reminder_v1";
+    }
+
+    /**
+     * 微信支付回调确认后物业费落账（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 积分/物业币抵扣以支付流水快照为准，与 payPropertyFee 保持一致的落账口径。
+     */
+    @Transactional
+    public void completeChannelPayment(PaymentRecord record) {
+        PropertyFee fee = propertyFeeRepository.findById(record.getBizId())
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_FEE_NOT_FOUND));
+        if ("paid".equals(fee.getPaymentStatus())) {
+            return; // 幂等：已结清
+        }
+
+        Resident resident = residentRepository.findById(fee.getResidentId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+
+        int pointUsed = record.getPointUsed() != null ? record.getPointUsed() : 0;
+        BigDecimal coinUsed = record.getCoinUsed() != null ? record.getCoinUsed() : BigDecimal.ZERO;
+        if (pointUsed > 0) {
+            pointService.spendPoints(resident, pointUsed, "fee_deduct", fee.getId(),
+                    "积分抵扣物业费", null, false);
+        }
+        if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.spendCoins(resident, coinUsed, "property_fee", fee.getId(),
+                    "物业币缴纳物业费", null, false);
+        }
+
+        BigDecimal payAmount = record.getAmount() != null ? record.getAmount() : BigDecimal.ZERO;
+        fee.setPointDeducted(propertyFeeConverter.defaultPointDeducted(fee) + pointUsed);
+        fee.setCoinDeducted(propertyFeeConverter.defaultCoinDeducted(fee).add(coinUsed));
+        fee.setPaidAmount(propertyFeeConverter.defaultPaidAmount(fee).add(payAmount));
+        fee.setPaymentStatus(propertyFeeConverter.resolvePaymentStatus(fee));
+        if ("paid".equals(fee.getPaymentStatus())) {
+            fee.setPaidAt(LocalDateTime.now());
+            grantOnTimePaymentReward(resident, fee);
+        }
+        propertyFeeRepository.save(fee);
+    }
+
+    /**
+     * 准时缴费奖励：账单结清且早于截止日时发放 100 积分并点亮徽章（同步累加家庭积分池）。
+     */
+    private void grantOnTimePaymentReward(Resident resident, PropertyFee fee) {
+        if (fee.getDueDate() == null || !LocalDate.now().isBefore(fee.getDueDate())) {
+            return;
+        }
+        PointRecord rewardRecord = new PointRecord();
+        rewardRecord.setId(idGenerator.generateId("pt"));
+        rewardRecord.setResidentId(fee.getResidentId());
+        rewardRecord.setFamilyId(fee.getFamilyId());
+        rewardRecord.setPropertyCompanyId(fee.getPropertyCompanyId());
+        rewardRecord.setPointType("earn");
+        rewardRecord.setAmount(100);
+        rewardRecord.setBalance(resident.getPointBalance() + 100);
+        rewardRecord.setSource("on_time_payment_reward");
+        rewardRecord.setSourceId(fee.getId());
+        rewardRecord.setDescription("准时缴费奖励");
+        pointRecordRepository.save(rewardRecord);
+
+        resident.setPointBalance(resident.getPointBalance() + 100);
+        resident.setOnTimePaymentBadge(true);
+        residentRepository.save(resident);
+
+        if (fee.getFamilyId() != null) {
+            familyRepository.findById(fee.getFamilyId()).ifPresent(family -> {
+                family.setPointBalance(family.getPointBalance() + 100);
+                familyRepository.save(family);
+            });
+        }
     }
 
     private PageResponse<PropertyFeeListItemResponse> buildListPage(Page<PropertyFee> feePage,

@@ -19,4 +19,9 @@ public interface CommunityServiceRepository extends JpaRepository<CommunityServi
     Page<CommunityService> findByPropertyCompanyId(String propertyCompanyId, Pageable pageable);
 
     Optional<CommunityService> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
+
+    Optional<CommunityService> findFirstByPropertyCompanyIdAndProviderIdAndStatus(
+            String propertyCompanyId, String providerId, String status);
+
+    Optional<CommunityService> findFirstByPropertyCompanyIdAndStatus(String propertyCompanyId, String status);
 }

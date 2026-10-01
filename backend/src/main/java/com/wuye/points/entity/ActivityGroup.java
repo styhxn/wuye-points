@@ -53,4 +53,12 @@ public class ActivityGroup extends BaseEntity {
 
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 注册审核状态：pending=待审核, approved=已通过, rejected=已驳回 */
+    @Column(name = "review_status", length = 20)
+    private String reviewStatus;
+
+    /** 审核备注 */
+    @Column(name = "review_remark", length = 500)
+    private String reviewRemark;
 }

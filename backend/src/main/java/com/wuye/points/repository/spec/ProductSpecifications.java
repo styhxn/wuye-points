@@ -24,6 +24,20 @@ public final class ProductSpecifications {
             boolean publicOnly,
             String merchantCategory,
             List<String> consumedMerchantIds) {
+        return withFilters(propertyCompanyId, merchantId, keyword, category, status,
+                publicOnly, merchantCategory, consumedMerchantIds, null);
+    }
+
+    public static Specification<Product> withFilters(
+            String propertyCompanyId,
+            String merchantId,
+            String keyword,
+            String category,
+            String status,
+            boolean publicOnly,
+            String merchantCategory,
+            List<String> consumedMerchantIds,
+            Boolean recommended) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<Predicate>();
 
@@ -60,10 +74,21 @@ public final class ProductSpecifications {
             }
             if (StringUtils.hasText(keyword)) {
                 String like = "%" + keyword.trim() + "%";
-                predicates.add(cb.like(root.get("name"), like));
+                // 关键词同时匹配「商品名称」与「所属商家名称」：
+                // 例如输入"便民"，既返回名称含"便民"的商品，也返回"便民超市"名下商品。
+                Subquery<String> merchantNameSub = query.subquery(String.class);
+                var merchantNameRoot = merchantNameSub.from(Merchant.class);
+                merchantNameSub.select(merchantNameRoot.get("id"));
+                merchantNameSub.where(cb.like(merchantNameRoot.get("name"), like));
+                predicates.add(cb.or(
+                        cb.like(root.get("name"), like),
+                        root.get("merchantId").in(merchantNameSub)));
             }
             if (!CollectionUtils.isEmpty(consumedMerchantIds)) {
                 predicates.add(root.get("merchantId").in(consumedMerchantIds));
+            }
+            if (recommended != null) {
+                predicates.add(cb.equal(root.get("isRecommended"), recommended));
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

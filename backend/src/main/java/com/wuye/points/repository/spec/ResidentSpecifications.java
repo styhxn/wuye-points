@@ -46,4 +46,10 @@ public final class ResidentSpecifications {
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
     }
+
+    public static Specification<Resident> withFilters(
+            String propertyCompanyId, String keyword, String communityId, String building,
+            String status, String role, String merchantId, String courierId) {
+        return withFilters(propertyCompanyId, keyword, communityId, building, status, role);
+    }
 }

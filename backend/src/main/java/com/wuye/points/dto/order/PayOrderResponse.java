@@ -1,5 +1,6 @@
 package com.wuye.points.dto.order;
 
+import com.wuye.points.payment.WechatJsPayParams;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -17,7 +18,7 @@ public class PayOrderResponse {
     @Schema(description = "订单编号", example = "20260101000001")
     private String orderNo;
 
-    @Schema(description = "订单状态", example = "paid")
+    @Schema(description = "订单状态：含现金部分返回 pending（待微信支付），由回调确认后变更为 paid", example = "paid")
     private String orderStatus;
 
     @Schema(description = "支付方式", example = "wechat")
@@ -43,4 +44,10 @@ public class PayOrderResponse {
 
     @Schema(description = "获得物业币", example = "2.00")
     private BigDecimal coinEarned;
+
+    @Schema(description = "支付流水ID（wechat/mixed 含现金部分时返回，用于查询支付状态）", example = "pr_xxx")
+    private String paymentRecordId;
+
+    @Schema(description = "微信小程序调起支付参数（wechat/mixed 含现金部分时返回，前端原样透传 wx.requestPayment）")
+    private WechatJsPayParams payParams;
 }

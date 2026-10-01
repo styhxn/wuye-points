@@ -13,6 +13,7 @@ import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
+import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
@@ -45,6 +46,7 @@ public class AdminCoordinatorService {
     private final SectorLeaderRepository sectorLeaderRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
     private final DistributionRecordRepository distributionRecordRepository;
+    private final MerchantRepository merchantRepository;
     private final ResidentRepository residentRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final PermissionGuard permissionGuard;
@@ -103,6 +105,9 @@ public class AdminCoordinatorService {
         coordinator.setCommissionRate(resolveCommissionRate(request.getCommissionRate(), company));
         coordinator.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : "active");
         validateStatus(coordinator.getStatus());
+        if (StringUtils.hasText(request.getDescription())) {
+            coordinator.setDescription(request.getDescription().trim());
+        }
         coordinatorRepository.save(coordinator);
 
         if (!"platform_admin".equals(resident.getRole())) {
@@ -139,6 +144,9 @@ public class AdminCoordinatorService {
             validateStatus(request.getStatus());
             coordinator.setStatus(request.getStatus());
         }
+        if (request.getDescription() != null) {
+            coordinator.setDescription(request.getDescription().trim());
+        }
 
         coordinatorRepository.save(coordinator);
         Resident resident = residentRepository.findById(coordinator.getResidentId()).orElse(null);
@@ -149,11 +157,18 @@ public class AdminCoordinatorService {
     public CoordinatorDetailResponse revokeCoordinator(String id, String reason) {
         permissionGuard.requirePermissionOrAdmin("coordinator.manage");
         adminSupport.validateIdPrefix(id, "coo_");
-        if (!StringUtils.hasText(reason)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "reason不能为空");
-        }
+        // reason 仅为备注，前端可不传（2026-09-07 前端问题 A）
 
         Coordinator coordinator = getAccessibleCoordinator(id);
+
+        // 层级约束：存在启用的下级板块负责人时不允许撤销，返回明确 400（避免前端拿到 500/级联错误）
+        long activeSectorLeaders = sectorLeaderRepository.countByCoordinatorIdAndStatus(
+                coordinator.getId(), "active");
+        if (activeSectorLeaders > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "该统筹名下仍有 " + activeSectorLeaders + " 名启用中的板块负责人，请先撤销或转移板块负责人后再撤销统筹");
+        }
+
         coordinator.setStatus("inactive");
         coordinatorRepository.save(coordinator);
 
@@ -202,18 +217,33 @@ public class AdminCoordinatorService {
                         sectorLeader.getId(), "active"))
                 .sum();
         BigDecimal totalEarnings = distributionRecordRepository.sumCoordinatorShareByCoordinatorId(coordinator.getId());
+        String propertyCompanyName = propertyCompanyRepository.findById(coordinator.getPropertyCompanyId())
+                .map(PropertyCompany::getName)
+                .orElse(null);
+        // 商家数口径：该物业公司下挂接商家的数量（merchant_property_configs 已配置为口径前置条件，
+        // 未挂接商家无法接单，不计入管辖范围）
+        long merchantCount = merchantRepository.countByPropertyCompanyId(coordinator.getPropertyCompanyId());
+        String phone = resident != null ? resident.getPhone() : null;
+        String createdAtText = DateTimeUtil.toIsoUtc(coordinator.getCreatedAt());
 
         return CoordinatorListItemResponse.builder()
                 .id(coordinator.getId())
                 .residentId(coordinator.getResidentId())
-                .name(resident != null ? resident.getName() : null)
-                .phone(resident != null ? resident.getPhone() : null)
+                .residentName(resident != null ? resident.getName() : null)
+                .residentPhone(phone)
+                .phone(phone)
+                .propertyCompanyId(coordinator.getPropertyCompanyId())
+                .propertyCompanyName(propertyCompanyName)
+                .description(coordinator.getDescription())
                 .commissionRate(coordinator.getCommissionRate())
+                .sectorCount(sectorLeaderCount)
                 .sectorLeaderCount(sectorLeaderCount)
                 .individualLeaderCount(individualLeaderCount)
+                .merchantCount(merchantCount)
                 .totalEarnings(totalEarnings)
                 .status(coordinator.getStatus())
-                .appointedAt(DateTimeUtil.toIsoUtc(coordinator.getCreatedAt()))
+                .createdAt(createdAtText)
+                .appointedAt(createdAtText)
                 .build();
     }
 
@@ -222,16 +252,21 @@ public class AdminCoordinatorService {
         return CoordinatorDetailResponse.builder()
                 .id(listItem.getId())
                 .residentId(listItem.getResidentId())
-                .residentName(listItem.getName())
+                .residentName(listItem.getResidentName())
+                .residentPhone(listItem.getResidentPhone())
                 .phone(listItem.getPhone())
-                .propertyCompanyId(coordinator.getPropertyCompanyId())
+                .propertyCompanyId(listItem.getPropertyCompanyId())
+                .propertyCompanyName(listItem.getPropertyCompanyName())
+                .description(listItem.getDescription())
                 .commissionRate(listItem.getCommissionRate())
+                .sectorCount(listItem.getSectorCount())
                 .sectorLeaderCount(listItem.getSectorLeaderCount())
                 .individualLeaderCount(listItem.getIndividualLeaderCount())
+                .merchantCount(listItem.getMerchantCount())
                 .totalEarnings(listItem.getTotalEarnings())
                 .status(listItem.getStatus())
+                .createdAt(listItem.getCreatedAt())
                 .appointedAt(listItem.getAppointedAt())
-                .createdAt(DateTimeUtil.toIsoUtc(coordinator.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(coordinator.getUpdatedAt()))
                 .build();
     }

@@ -51,6 +51,9 @@ public class MerchantListItemResponse {
     @Schema(description = "联系电话", example = "13800138000")
     private String contactPhone;
 
+    @Schema(description = "关联住户ID（用于联系商家/进聊天）", example = "res_xxx")
+    private String residentId;
+
     @Schema(description = "商家地址", example = "幸福路100号")
     private String address;
 
@@ -59,6 +62,18 @@ public class MerchantListItemResponse {
 
     @Schema(description = "免配送费门槛金额", example = "50.00")
     private BigDecimal freeDeliveryThreshold;
+
+    @Schema(description = "是否启用满额减免", example = "true")
+    private Boolean freeDeliveryEnabled;
+
+    @Schema(description = "满额减免承担方：none/merchant/property/platform", example = "merchant")
+    private String freeDeliverySponsor;
+
+    @Schema(description = "配送范围：in_community/out_community/both", example = "both")
+    private String deliveryScope;
+
+    @Schema(description = "多档配送费配置")
+    private List<DeliveryFeeTier> deliveryFeeTiers;
 
     @Schema(description = "会员优惠价", example = "9.50")
     private BigDecimal memberDiscountPrice;
@@ -77,6 +92,12 @@ public class MerchantListItemResponse {
 
     @Schema(description = "商家状态", example = "active")
     private String status;
+
+    @Schema(description = "是否官方/物业推荐", example = "true")
+    private Boolean isRecommended;
+
+    @Schema(description = "推荐排序（越大越靠前）", example = "100")
+    private Integer recommendedSort;
 
     @Schema(description = "创建时间", example = "2024-01-01T00:00:00")
     private String createdAt;

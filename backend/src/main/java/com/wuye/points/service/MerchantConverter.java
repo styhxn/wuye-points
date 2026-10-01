@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wuye.points.dto.merchant.DeliveryFeeTier;
 import com.wuye.points.dto.merchant.MerchantDetailResponse;
 import com.wuye.points.dto.merchant.MerchantListItemResponse;
 import com.wuye.points.dto.merchant.MerchantProductItemResponse;
@@ -20,6 +21,7 @@ import java.util.List;
 public class MerchantConverter {
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {};
+    private static final TypeReference<List<DeliveryFeeTier>> TIER_LIST = new TypeReference<>() {};
 
     private final ObjectMapper objectMapper;
 
@@ -44,14 +46,21 @@ public class MerchantConverter {
                 .category(merchant.getCategory())
                 .businessHours(merchant.getBusinessHours())
                 .contactPhone(merchant.getContactPhone())
+                .residentId(merchant.getResidentId())
                 .address(merchant.getAddress())
                 .deliveryFee(defaultDecimal(merchant.getDeliveryFee()))
                 .freeDeliveryThreshold(merchant.getFreeDeliveryThreshold())
+                .freeDeliveryEnabled(merchant.getFreeDeliveryEnabled())
+                .freeDeliverySponsor(merchant.getFreeDeliverySponsor())
+                .deliveryScope(merchant.getDeliveryScope())
+                .deliveryFeeTiers(parseDeliveryFeeTiers(merchant.getDeliveryFeeTiers()))
                 .coinRebateRate(BigDecimal.ZERO)
                 .coinRebateEnabled(false)
                 .rankOrder(merchant.getRankOrder())
                 .auditStatus(merchant.getAuditStatus())
                 .status(merchant.getStatus())
+                .isRecommended(Boolean.TRUE.equals(merchant.getIsRecommended()))
+                .recommendedSort(merchant.getRecommendedSort())
                 .createdAt(DateTimeUtil.toIsoUtc(merchant.getCreatedAt()));
 
         if (config != null) {
@@ -88,9 +97,14 @@ public class MerchantConverter {
                 .category(base.getCategory())
                 .businessHours(base.getBusinessHours())
                 .contactPhone(base.getContactPhone())
+                .residentId(base.getResidentId())
                 .address(base.getAddress())
                 .deliveryFee(base.getDeliveryFee())
                 .freeDeliveryThreshold(base.getFreeDeliveryThreshold())
+                .freeDeliveryEnabled(base.getFreeDeliveryEnabled())
+                .freeDeliverySponsor(base.getFreeDeliverySponsor())
+                .deliveryScope(base.getDeliveryScope())
+                .deliveryFeeTiers(base.getDeliveryFeeTiers())
                 .memberDiscountPrice(base.getMemberDiscountPrice())
                 .coinRebateRate(base.getCoinRebateRate())
                 .coinRebateEnabled(base.getCoinRebateEnabled())
@@ -135,6 +149,28 @@ public class MerchantConverter {
         }
         try {
             return objectMapper.readValue(json, STRING_LIST);
+        } catch (JsonProcessingException e) {
+            return Collections.emptyList();
+        }
+    }
+
+    public String serializeDeliveryFeeTiers(List<DeliveryFeeTier> tiers) {
+        if (tiers == null || tiers.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(tiers);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("deliveryFeeTiers格式不正确");
+        }
+    }
+
+    public List<DeliveryFeeTier> parseDeliveryFeeTiers(String json) {
+        if (json == null || json.isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            return objectMapper.readValue(json, TIER_LIST);
         } catch (JsonProcessingException e) {
             return Collections.emptyList();
         }

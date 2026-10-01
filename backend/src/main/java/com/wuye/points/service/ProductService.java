@@ -62,6 +62,7 @@ public class ProductService {
             String status,
             String propertyCompanyId,
             String productType,
+            Boolean recommended,
             String sort) {
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
@@ -84,7 +85,7 @@ public class ProductService {
                 ProductSpecifications.withFilters(
                         scopedPropertyCompanyId, merchantId, keyword, category,
                         publicOnly ? null : status, publicOnly,
-                        merchantCategoryFilter, consumedMerchantIds),
+                        merchantCategoryFilter, consumedMerchantIds, recommended),
                 pageable);
 
         Map<String, Merchant> merchantMap = loadMerchantMap(productPage.getContent());
@@ -94,6 +95,19 @@ public class ProductService {
                 .toList();
 
         return PageResponse.of(list, page, pageSize, productPage.getTotalElements());
+    }
+
+    /**
+     * 平台/物业推荐商品（后台设置与取消）。
+     */
+    @Transactional
+    public void setRecommended(String productId, boolean recommended, Integer recommendedSort) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
+        product.setIsRecommended(recommended);
+        product.setRecommendedSort(recommendedSort == null ? 0 : recommendedSort);
+        productRepository.save(product);
     }
 
     @Transactional(readOnly = true)
@@ -121,7 +135,7 @@ public class ProductService {
 
     @Transactional
     public ProductDetailResponse createProduct(CreateProductRequest request) {
-        roleGuard.requireAnyRole("merchant");
+        roleGuard.requireAnyRole("merchant", "activity_leader");
         validateCreateRequest(request);
 
         Merchant merchant = resolveTargetMerchant(request.getMerchantId());
@@ -255,7 +269,9 @@ public class ProductService {
             }
             return;
         }
-        if (roleGuard.isMerchant() && isOwnMerchant(merchant)) {
+        // 按登录住户手机号+物业匹配自有店（§95.2），不再要求角色必须是 merchant，
+        // 活动组长（activity_leader）等拥有店铺者可管理自有商品。
+        if (isOwnMerchant(merchant)) {
             return;
         }
         throw new BizException(ErrorCode.PERMISSION_DENIED);
@@ -279,14 +295,28 @@ public class ProductService {
             }
             return merchant.getId().equals(product.getMerchantId());
         }
-        if (roleGuard.isMerchant() && isOwnMerchant(merchant)) {
+        if (isOwnMerchant(merchant)) {
             return merchant.getId().equals(product.getMerchantId());
         }
         return false;
     }
 
     private boolean canManageAnyProduct() {
-        return roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin() || roleGuard.isMerchant();
+        if (roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin()) {
+            return true;
+        }
+        // 拥有店铺的账号（商家/活动组长/个体负责人等）可查看自有商品（含未上架）
+        if (UserContext.currentUserId() == null) {
+            return false;
+        }
+        Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
+        if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
+            return false;
+        }
+        return merchantRepository
+                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
+                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
+                .isPresent();
     }
 
     private void assertMerchantCanSell(Merchant merchant) {
@@ -321,16 +351,28 @@ public class ProductService {
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
     }
 
+    /**
+     * 判断当前登录用户是否"拥有"该商家：通过登录住户的手机号 + 物业公司匹配商家登记的联系电话。
+     * 不再限制角色必须为 merchant —— 活动组长（activity_leader）、个体负责人等以本人手机号注册的
+     * 商家同样可管理自己的商品（改价/上下架/删除），避免因角色差异误报 403。
+     */
     private boolean isOwnMerchant(Merchant merchant) {
-        if (!roleGuard.isMerchant()) {
+        if (UserContext.currentUserId() == null) {
             return false;
         }
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
         if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
             return false;
         }
-        return merchantUser.getPhone().equals(merchant.getContactPhone())
-                && merchantUser.getPropertyCompanyId().equals(merchant.getPropertyCompanyId());
+        if (!StringUtils.hasText(merchant.getContactPhone())) {
+            return false;
+        }
+        String userPc = merchantUser.getPropertyCompanyId();
+        String merchantPc = merchant.getPropertyCompanyId();
+        if (userPc == null || merchantPc == null || !userPc.equals(merchantPc)) {
+            return false;
+        }
+        return merchantUser.getPhone().equals(merchant.getContactPhone());
     }
 
     private String resolveBrowsePropertyCompanyId(String propertyCompanyId) {

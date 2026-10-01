@@ -27,7 +27,7 @@ public class AdminPointPoolController {
 
     private final AdminPointPoolService adminPointPoolService;
 
-    @Operation(summary = "积分池余额", description = "获取积分池余额信息。角色: property_admin, platform_admin")
+    @Operation(summary = "积分池余额", description = "获取积分池余额信息；物业尚无积分池时返回 0 值概览（不报 404）。角色: property_admin, platform_admin")
     @GetMapping
     public ApiResponse<PointPoolBalanceResponse> getBalance(
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId) {

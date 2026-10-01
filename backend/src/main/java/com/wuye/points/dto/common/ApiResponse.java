@@ -24,6 +24,9 @@ public class ApiResponse<T> {
     @Schema(description = "响应时间戳")
     private String timestamp;
 
+    @Schema(description = "链路追踪ID（由 ApiResponseAdvice 统一回填）", example = "trace-8f3c1a2b")
+    private String traceId;
+
     @Schema(description = "参数校验错误详情（仅400类错误）")
     private List<FieldError> errors;
 

@@ -5,9 +5,13 @@ import com.wuye.points.dto.admin.merchant.AuditMerchantRegistrationRequest;
 import com.wuye.points.dto.admin.merchant.AuditMerchantRegistrationResponse;
 import com.wuye.points.dto.admin.merchant.KickMerchantRequest;
 import com.wuye.points.dto.admin.merchant.KickMerchantResponse;
+import com.wuye.points.dto.admin.merchant.SetOfficialRecommendationRequest;
+import com.wuye.points.dto.merchant.ApplymentDetailResponse;
 import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.MerchantApplyment;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.MerchantApplymentRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.util.AdminSupport;
 import com.wuye.points.util.DateTimeUtil;
@@ -26,9 +30,11 @@ import java.time.LocalDateTime;
 public class AdminMerchantService {
 
     private final MerchantRepository merchantRepository;
+    private final MerchantApplymentRepository applymentRepository;
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
+    private final EcommerceApplymentService applymentService;
 
     @Transactional
     public KickMerchantResponse kickMerchant(String merchantId, KickMerchantRequest request) {
@@ -122,5 +128,62 @@ public class AdminMerchantService {
                 .operatorName(null)
                 .auditedAt(DateTimeUtil.toIsoUtc(LocalDateTime.now()))
                 .build();
+    }
+
+    // ---------------------------------------------------------------------
+    // 微信进件（电商收付通阶段1）
+    // ---------------------------------------------------------------------
+
+    /** 查看商家进件资料与状态（运营后台）。 */
+    @Transactional(readOnly = true)
+    public ApplymentDetailResponse getApplyment(String merchantId) {
+        requireAnyAdminRole();
+        requireMerchantInScope(merchantId);
+        return applymentService.getApplyment(merchantId);
+    }
+
+    /** 手动触发商家进件提交（运营后台；默认进件触发方式）。 */
+    @Transactional
+    public ApplymentDetailResponse submitApplyment(String merchantId) {
+        requireAnyAdminRole();
+        requireMerchantInScope(merchantId);
+        return applymentService.submitApplyment(merchantId);
+    }
+
+    /** 手动查询微信侧进件状态并推进本地状态机（运营后台）。 */
+    @Transactional
+    public ApplymentDetailResponse refreshApplyment(String merchantId) {
+        requireAnyAdminRole();
+        requireMerchantInScope(merchantId);
+        MerchantApplyment applyment = applymentRepository.findByMerchantId(merchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.APPLYMENT_NOT_FOUND));
+        applymentService.refreshApplymentStatus(applyment);
+        return applymentService.getApplyment(merchantId);
+    }
+
+    /** 设置/取消商家官方推荐（运营后台）。 */
+    @Transactional
+    public void setRecommendation(String merchantId, SetOfficialRecommendationRequest request) {
+        requireAnyAdminRole();
+        Merchant merchant = requireMerchantInScope(merchantId);
+        merchant.setIsRecommended(Boolean.TRUE.equals(request.getIsRecommended()));
+        merchant.setRecommendedSort(request.getRecommendedSort());
+        merchantRepository.save(merchant);
+    }
+
+    private void requireAnyAdminRole() {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+    }
+
+    private Merchant requireMerchantInScope(String merchantId) {
+        Merchant merchant = merchantRepository.findById(merchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        if (!roleGuard.isPlatformAdmin()) {
+            String propertyCompanyId = adminSupport.resolvePropertyCompanyId(null);
+            if (!merchant.getPropertyCompanyId().equals(propertyCompanyId)) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+        }
+        return merchant;
     }
 }

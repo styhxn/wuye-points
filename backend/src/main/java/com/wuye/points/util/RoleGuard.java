@@ -5,6 +5,7 @@ import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import org.springframework.stereotype.Component;
 
+import org.springframework.util.StringUtils;
 import java.util.Arrays;
 import java.util.Set;
 
@@ -14,8 +15,22 @@ import java.util.Set;
 @Component
 public class RoleGuard {
 
+    /**
+     * 历史 JWT 兼容：早期物业子账号把 property_leader / property_operator 直接写进 JWT role，
+     * 现行模型为 property_admin + propertySubRole，此处归一化后按 property_admin 校验。
+     * （RoleGuardTest.requireAnyRole_shouldPass_whenJwtRoleIsPropertyLeader/Operator）
+     */
+    private static final Set<String> LEGACY_PROPERTY_ADMIN_ROLES =
+            Set.of("property_leader", "property_operator");
+
+    /** JWT role 归一化：历史物业子账号角色视为 property_admin */
+    public static String normalizeRole(String role) {
+        return role != null && LEGACY_PROPERTY_ADMIN_ROLES.contains(role)
+                ? "property_admin" : role;
+    }
+
     public void requireAnyRole(String... allowedRoles) {
-        String role = UserContext.currentRole();
+        String role = normalizeRole(UserContext.currentRole());
         if (role == null) {
             throw new BizException(ErrorCode.PERMISSION_DENIED);
         }
@@ -30,7 +45,7 @@ public class RoleGuard {
     }
 
     public boolean isPropertyAdmin() {
-        return "property_admin".equals(UserContext.currentRole());
+        return "property_admin".equals(normalizeRole(UserContext.currentRole()));
     }
 
     public boolean isResident() {
@@ -50,12 +65,18 @@ public class RoleGuard {
     }
 
     /**
-     * 解析列表查询的物业范围：platform_admin 可跨物业，property_admin 限定本物业
+     * 解析列表查询的物业范围：platform_admin 可跨物业，property_admin 限定本物业，
+     * coordinator 为只读下级角色，仅可查看本物业（2026-09-07 前端问题 C）。
      */
     public String resolveListPropertyCompanyId(String requestedPropertyCompanyId) {
-        requireAnyRole("property_admin", "platform_admin");
+        requireAnyRole("property_admin", "platform_admin", "coordinator");
         if (isPlatformAdmin()) {
             return requestedPropertyCompanyId;
+        }
+        if (isCoordinator()
+                && StringUtils.hasText(requestedPropertyCompanyId)
+                && !requestedPropertyCompanyId.equals(UserContext.currentPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "无权查看其他物业公司数据");
         }
         return UserContext.currentPropertyCompanyId();
     }
@@ -94,7 +115,7 @@ public class RoleGuard {
             "earn", "spend", "transfer", "expire", "pool_in");
     public static final Set<String> POINT_SOURCES = Set.of(
             "order", "activity", "sign_in", "manual", "merchant_grant",
-            "fee_deduct", "pool_diff", "transfer");
+            "fee_deduct", "pool_diff", "transfer", "transfer_to_property");
     public static final Set<String> FEE_PAYMENT_STATUS = Set.of(
             "unpaid", "partial", "paid", "overdue");
     public static final Set<String> FEE_TYPES = Set.of(
@@ -102,20 +123,22 @@ public class RoleGuard {
     public static final Set<String> COIN_TYPES = Set.of(
             "earn", "spend", "recharge", "withdraw", "expire", "freeze", "unfreeze");
     public static final Set<String> COIN_SOURCES = Set.of(
-            "order", "property_fee", "manual", "coin_expired");
+            "order", "property_fee", "manual", "coin_expired", "transfer_to_property");
 
     public static final int FAMILY_MEMBER_MAX = 15;
 
     public static final Set<String> MERCHANT_LEVELS = Set.of(
             "official_certified", "property_certified", "normal");
     public static final Set<String> MERCHANT_CATEGORIES = Set.of(
-            "外卖", "周围商家", "自营", "农家", "外卖小吃", "团购");
+            "外卖", "周围商家", "自营", "农家", "外卖小吃", "团购",
+            "美食", "酒店民宿", "洗浴汗蒸", "按摩足疗", "看病买药", "外卖小区");
     public static final Set<String> MERCHANT_AUDIT_STATUS = Set.of(
             "pending_audit", "approved", "rejected");
     public static final Set<String> MERCHANT_OPERATION_STATUS = Set.of("active", "frozen");
     public static final Set<String> PRODUCT_STATUS = Set.of("active", "inactive", "sold_out");
     public static final Set<String> ORDER_STATUS = Set.of(
-            "pending", "paid", "delivering", "completed", "cancelled", "refunding", "refunded");
+            "pending", "paid", "delivering", "completed", "cancelled",
+            "refunding", "refunded", "refund_rejected");
     public static final Set<String> PAYMENT_METHODS = Set.of(
             "property_coin", "point", "wechat", "mixed");
     public static final Set<String> DELIVERY_STATUS = Set.of(
@@ -133,13 +156,14 @@ public class RoleGuard {
     public static final Set<String> SUBSCRIPTION_TYPES = Set.of("monthly", "yearly");
     public static final Set<String> MESSAGE_TYPES = Set.of(
             "property_message", "platform_message", "system_message",
-            "community_message", "resident_message", "technician_message");
-    public static final Set<String> CHAT_TYPES = Set.of("private", "group", "broadcast");
+            "community_message", "resident_message", "technician_message",
+            "official_message", "service_request", "merchant_ad");
+    public static final Set<String> CHAT_TYPES = Set.of("private", "group", "broadcast", "official");
     public static final Set<String> READ_STATUS = Set.of("read", "unread");
     public static final Set<String> BROADCAST_TARGET_ROLES = Set.of(
             "resident", "property_admin", "technician", "courier", "merchant");
     public static final Set<String> FILE_CATEGORIES = Set.of(
-            "avatar", "announcement", "merchant", "service", "activity");
+            "avatar", "announcement", "merchant", "service", "activity", "product");
     public static final Set<String> SERVICE_CATEGORIES = Set.of(
             "cleaning_repair", "canteen", "tutoring", "elderly_care", "medical",
             "pet_medical", "life_service", "dating");
@@ -163,5 +187,30 @@ public class RoleGuard {
 
     public boolean isCommunityAdmin() {
         return "community_admin".equals(UserContext.currentRole());
+    }
+
+    public boolean isActivityLeader() {
+        return "activity_leader".equals(UserContext.currentRole());
+    }
+
+    public boolean isSectorLeader() {
+        return "sector_leader".equals(UserContext.currentRole());
+    }
+
+    public boolean isIndividualLeader() {
+        return "individual_leader".equals(UserContext.currentRole());
+    }
+
+    /**
+     * 是否为"居民衍生的组长类角色"：业主、活动组长、协调员、板块负责人、个体负责人。
+     * 这些角色均以居民账户（res_xxx）存在，可作为活动组负责人，按 leaderId 归属校验。
+     */
+    public boolean isLeaderRole() {
+        String role = UserContext.currentRole();
+        return "resident".equals(role)
+                || "activity_leader".equals(role)
+                || "coordinator".equals(role)
+                || "sector_leader".equals(role)
+                || "individual_leader".equals(role);
     }
 }

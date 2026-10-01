@@ -7,6 +7,7 @@ import com.wuye.points.dto.propertycompany.CommunityItemResponse;
 import com.wuye.points.dto.propertycompany.CommunityListResponse;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyResponse;
+import com.wuye.points.dto.propertycompany.UpdateCoinUseConditionRequest;
 import com.wuye.points.dto.propertycompany.PropertyCompanyCurrentResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyDetailResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyListItemResponse;
@@ -18,14 +19,18 @@ import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.enums.CoinUseCondition;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.DeliveryRuleRepository;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PointPoolRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.PropertyCompanySpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.PasswordUtil;
+import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +60,10 @@ public class PropertyCompanyService {
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
     private static final BigDecimal DEFAULT_DELIVERY_COURIER_SHARE_RATE = new BigDecimal("1.0000");
     private static final BigDecimal DEFAULT_DELIVERY_COURIER_PER_ORDER = new BigDecimal("0.35");
+    /** 分成比例求和容差：校验「三档合计 100%」时允许的浮点误差（2026-09-08 错误码 97006） */
+    private static final BigDecimal RATE_TOLERANCE = new BigDecimal("0.0001");
+    /** 新建物业公司初始管理员密码（与测试种子账号规则一致） */
+    public static final String INITIAL_ADMIN_PASSWORD = "admin123456";
 
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final CommunityRepository communityRepository;
@@ -62,6 +71,7 @@ public class PropertyCompanyService {
     private final MerchantRepository merchantRepository;
     private final PointPoolRepository pointPoolRepository;
     private final DeliveryRuleRepository deliveryRuleRepository;
+    private final OrderRepository orderRepository;
     private final PropertyCompanyConverter propertyCompanyConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
@@ -142,9 +152,21 @@ public class PropertyCompanyService {
     public CreatePropertyCompanyResponse createPropertyCompany(CreatePropertyCompanyRequest request) {
         roleGuard.requireAnyRole("platform_admin");
 
+        // 业务校验前置：重名/重复手机号返回可预期的 400，而非落到唯一约束的 500
+        String companyName = request.getName().trim();
+        if (propertyCompanyRepository.existsByName(companyName)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "物业公司名称已存在");
+        }
+        Set<String> communityNames = new java.util.HashSet<>();
+        for (CreatePropertyCompanyRequest.CreateCommunityRequest item : request.getCommunities()) {
+            if (!communityNames.add(item.getName().trim())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "小区名称重复: " + item.getName().trim());
+            }
+        }
+
         PropertyCompany company = new PropertyCompany();
         company.setId(idGenerator.generateId("pc"));
-        company.setName(request.getName().trim());
+        company.setName(companyName);
         company.setLogoUrl(request.getLogoUrl());
         company.setContactPhone(request.getContactPhone().trim());
         company.setAddress(request.getAddress());
@@ -186,22 +208,75 @@ public class PropertyCompanyService {
         validatePropertyCompanyId(id);
         PropertyCompany company = getManageableCompany(id);
         applyUpdate(company, request);
-        validateDistributionRates(company);
+        // 2026-09-08：仅当本次请求涉及一级分账比例时才做三档合计校验，
+        // 避免历史数据（platform=0 且 property+coordinator=1）阻塞配送费、状态等无关字段的保存
+        validateDistributionRates(company, request);
         propertyCompanyRepository.save(company);
         return buildDetail(company);
+    }
+
+    /**
+     * 设置物业币使用条件（§79.2 PUT /admin/property-companies/{id}/coin-use-condition）。
+     * 角色：property_admin / platform_admin；property_admin 仅可操作本物业公司。
+     */
+    @Transactional
+    public PropertyCompanyDetailResponse updateCoinUseCondition(String id, UpdateCoinUseConditionRequest request) {
+        validatePropertyCompanyId(id);
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        PropertyCompany company = getManageableCompany(id);
+
+        CoinUseCondition condition = CoinUseCondition.fromCode(request.getCondition());
+        if (condition == CoinUseCondition.NONE && !CoinUseCondition.NONE.getCode().equals(request.getCondition())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "condition值无效，应为 none/point_threshold/property_fee_paid/manual_issue");
+        }
+        if (condition == CoinUseCondition.POINT_THRESHOLD && request.getPointThreshold() == null) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "condition=point_threshold 时必须填写 pointThreshold");
+        }
+
+        company.setCoinUseCondition(condition.getCode());
+        company.setCoinPointThreshold(request.getPointThreshold());
+        propertyCompanyRepository.save(company);
+        return buildDetail(company);
+    }
+
+    @Transactional
+    public void deletePropertyCompany(String id) {
+        roleGuard.requireAnyRole("platform_admin");
+        validatePropertyCompanyId(id);
+
+        // 2026-09-08：硬删除拒绝时返回具体关联类型与数量，便于前端直接展示原因
+        long communityCount = communityRepository.countByPropertyCompanyId(id);
+        long residentCount = residentRepository.countByPropertyCompanyId(id);
+        long merchantCount = merchantRepository.countByPropertyCompanyId(id);
+        long orderCount = orderRepository.countByPropertyCompanyId(id);
+        String relatedDetail = buildRelatedDetail(communityCount, residentCount, merchantCount, orderCount);
+        if (!relatedDetail.isEmpty()) {
+            throw new BizException(ErrorCode.PROPERTY_COMPANY_HAS_RELATED_DATA,
+                    "该物业公司存在关联数据，不可删除（" + relatedDetail + "）。"
+                            + "如仅需在列表隐藏，请改用 PATCH /admin/property-companies/{id}/status 置为 inactive");
+        }
+
+        PropertyCompany company = propertyCompanyRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+        deliveryRuleRepository.findByPropertyCompanyId(id).ifPresent(deliveryRuleRepository::delete);
+        pointPoolRepository.findByPropertyCompanyId(id).ifPresent(pointPoolRepository::delete);
+        propertyCompanyRepository.delete(company);
     }
 
     private AdminAccountResponse createAdminAccount(
             String propertyCompanyId,
             CreatePropertyCompanyRequest.CreateAdminAccountRequest accountRequest) {
-        if (residentRepository.findByPhone(accountRequest.getPhone()).isPresent()) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "管理员手机号已被使用");
+        String phone = accountRequest.getPhone().trim();
+        if (residentRepository.findByPhone(phone).isPresent()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "管理员手机号已被使用: " + PhoneUtil.mask(phone));
         }
 
         Resident admin = new Resident();
         admin.setId(idGenerator.generateId("res"));
         admin.setName(accountRequest.getName().trim());
-        admin.setPhone(accountRequest.getPhone().trim());
+        admin.setPhone(phone);
+        // 初始密码与种子账号规则一致（admin123456，BCrypt 加密），管理员可凭此走 /auth/admin-login
+        admin.setPassword(PasswordUtil.hashPassword(INITIAL_ADMIN_PASSWORD));
         admin.setRole("property_admin");
         admin.setUserType("owner");
         admin.setPropertyCompanyId(propertyCompanyId);
@@ -212,7 +287,7 @@ public class PropertyCompanyService {
         admin.setCoinFrozen(false);
         admin.setCoinHidden(false);
         residentRepository.save(admin);
-        return propertyCompanyConverter.toAdminAccount(admin, accountRequest.getEmail());
+        return propertyCompanyConverter.toAdminAccount(admin, accountRequest.getEmail(), INITIAL_ADMIN_PASSWORD);
     }
 
     private void initializeDefaults(PropertyCompany company) {
@@ -248,6 +323,10 @@ public class PropertyCompanyService {
         company.setSectorLeaderRate(DEFAULT_SECTOR_LEADER_RATE);
         company.setIndividualLeaderRate(DEFAULT_INDIVIDUAL_LEADER_RATE);
         company.setCoinDisplayEnabled(true);
+        // point_enabled / coin_enabled 服务器列为 NOT NULL 且 Hibernate 插入显式 NULL 会绕过列默认值，
+        // 必须显式赋值，否则创建物业公司 400「coin_enabled cannot be null」（2026-09-07 前端问题 G 根因）
+        company.setPointEnabled(true);
+        company.setCoinEnabled(true);
         company.setCoinIssueMode("auto");
         company.setCoinExpiryDays(365);
         company.setCoinFreezeDefault(false);
@@ -286,6 +365,13 @@ public class PropertyCompanyService {
             assertCanUpdateConfig(company.getId());
         }
 
+        if (request.getPlatformShareRate() != null) {
+            // 「我们公司」一档为平台级配置，仅平台管理员可写；物业侧请走 /admin/platform-share-rates 只读查看
+            if (!roleGuard.isPlatformAdmin()) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED, "仅平台管理员可修改我们公司（平台）分成比例");
+            }
+            company.setPlatformShareRate(request.getPlatformShareRate());
+        }
         if (request.getPropertyShareRate() != null) {
             company.setPropertyShareRate(request.getPropertyShareRate());
         }
@@ -391,24 +477,82 @@ public class PropertyCompanyService {
         throw new BizException(ErrorCode.PERMISSION_DENIED);
     }
 
-    private void validateDistributionRates(PropertyCompany company) {
-        if (company.getPropertyShareRate() == null || company.getCoordinatorShareRate() == null) {
+    /**
+     * 商品平台盘一级三档分成比例校验（2026-09-08 前端问题：旧规则「物业+统筹=100%」已废弃）。
+     *
+     * <p>现行口径（API v8.1）：
+     * <pre>
+     * platformShareRate + propertyShareRate + coordinatorShareRate = 1.0000
+     * </pre>
+     * 其中 platformShareRate（我们公司）取本次 body 传入值，未传则用已落库值。
+     * 校验失败返回错误码 {@code 97006}。
+     *
+     * <p>sectorLeaderRate / individualLeaderRate 是管理盘内部的级联系数（默认 0.6 / 0.5），
+     * 二者相加并无业务含义，故只做 0~1 区间校验，<b>不再</b>校验二者之和。
+     */
+    private void validateDistributionRates(PropertyCompany company, UpdatePropertyCompanyRequest request) {
+        boolean touched = request.getPlatformShareRate() != null
+                || request.getPropertyShareRate() != null
+                || request.getCoordinatorShareRate() != null;
+        if (!touched) {
             return;
         }
-        BigDecimal sum = company.getPropertyShareRate().add(company.getCoordinatorShareRate());
-        if (sum.compareTo(BigDecimal.ONE) != 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "物业分成比例与统筹分成比例之和须等于1");
+
+        BigDecimal platform = requireRate(company.getPlatformShareRate(), "我们公司（平台）分成比例");
+        BigDecimal property = requireRate(company.getPropertyShareRate(), "物业公司分成比例");
+        BigDecimal coordinator = requireRate(company.getCoordinatorShareRate(), "管理盘分成比例");
+
+        BigDecimal sum = platform.add(property).add(coordinator);
+        if (sum.subtract(BigDecimal.ONE).abs().compareTo(RATE_TOLERANCE) > 0) {
+            throw new BizException(ErrorCode.SHARE_RATE_PRIMARY_TOTAL_INVALID,
+                    "商品平台盘一级分成比例合计必须为100%（我们公司 "
+                            + toPercent(platform) + "% + 物业 " + toPercent(property)
+                            + "% + 管理盘 " + toPercent(coordinator) + "% = "
+                            + toPercent(sum) + "%）");
         }
-        if (company.getSectorLeaderRate() != null && company.getIndividualLeaderRate() != null) {
-            BigDecimal innerSum = company.getSectorLeaderRate().add(company.getIndividualLeaderRate());
-            if (innerSum.compareTo(BigDecimal.ONE) > 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "板块与个体负责人比例之和不能超过1");
-            }
+
+        // 级联系数仅校验区间，不做相加校验
+        if (company.getSectorLeaderRate() != null) {
+            requireRate(company.getSectorLeaderRate(), "板块负责人分成比例");
+        }
+        if (company.getIndividualLeaderRate() != null) {
+            requireRate(company.getIndividualLeaderRate(), "个体负责人分成比例");
         }
     }
 
+    private BigDecimal requireRate(BigDecimal value, String label) {
+        BigDecimal rate = value == null ? BigDecimal.ZERO : value;
+        if (rate.compareTo(BigDecimal.ZERO) < 0 || rate.compareTo(BigDecimal.ONE) > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, label + "必须在0~100%之间");
+        }
+        return rate;
+    }
+
+    private String toPercent(BigDecimal rate) {
+        return rate.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString();
+    }
+
+    private String buildRelatedDetail(long communityCount, long residentCount,
+                                      long merchantCount, long orderCount) {
+        List<String> parts = new ArrayList<>();
+        if (communityCount > 0) {
+            parts.add("小区 " + communityCount + " 个");
+        }
+        if (residentCount > 0) {
+            parts.add("住户 " + residentCount + " 个");
+        }
+        if (merchantCount > 0) {
+            parts.add("商家 " + merchantCount + " 个");
+        }
+        if (orderCount > 0) {
+            parts.add("订单 " + orderCount + " 个");
+        }
+        return String.join("、", parts);
+    }
+
     private boolean hasConfigUpdate(UpdatePropertyCompanyRequest request) {
-        return request.getPropertyShareRate() != null
+        return request.getPlatformShareRate() != null
+                || request.getPropertyShareRate() != null
                 || request.getCoordinatorShareRate() != null
                 || request.getSectorLeaderRate() != null
                 || request.getIndividualLeaderRate() != null

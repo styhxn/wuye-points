@@ -46,12 +46,24 @@ public final class DeliverySpecifications {
         };
     }
 
+    /**
+     * 待抢单（v6.6）：匹配两类订单的 {@code pending} 配送单
+     * <ol>
+     *   <li>{@code order.orderStatus = paid}：已支付，商家尚未选择履约方式；</li>
+     *   <li>{@code order.orderStatus = delivering AND order.fulfillmentMode = courier_hall}：
+     *       商家已选择平台配送，等待骑手抢单。</li>
+     * </ol>
+     * 同时排除商家自配单（{@code carrier_type = merchant}）。
+     */
     public static Specification<Delivery> pendingPaidOrders(String propertyCompanyId, String communityId) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("status"), "pending"));
             predicates.add(cb.equal(root.get("propertyCompanyId"), propertyCompanyId));
-            predicates.add(root.get("orderId").in(paidOrderIds(query, cb)));
+            predicates.add(cb.or(
+                    cb.isNull(root.get("carrierType")),
+                    cb.notEqual(root.get("carrierType"), "merchant")));
+            predicates.add(root.get("orderId").in(grabbableOrderIds(query, cb)));
 
             if (StringUtils.hasText(communityId)) {
                 predicates.add(root.get("orderId").in(orderIdsInCommunity(query, cb, communityId)));
@@ -61,12 +73,16 @@ public final class DeliverySpecifications {
         };
     }
 
-    private static Subquery<String> paidOrderIds(jakarta.persistence.criteria.CriteriaQuery<?> query,
-                                               jakarta.persistence.criteria.CriteriaBuilder cb) {
+    private static Subquery<String> grabbableOrderIds(jakarta.persistence.criteria.CriteriaQuery<?> query,
+                                                      jakarta.persistence.criteria.CriteriaBuilder cb) {
         Subquery<String> subquery = query.subquery(String.class);
         Root<Order> orderRoot = subquery.from(Order.class);
         subquery.select(orderRoot.get("id"));
-        subquery.where(cb.equal(orderRoot.get("orderStatus"), "paid"));
+        subquery.where(cb.or(
+                cb.equal(orderRoot.get("orderStatus"), "paid"),
+                cb.and(
+                        cb.equal(orderRoot.get("orderStatus"), "delivering"),
+                        cb.equal(orderRoot.get("fulfillmentMode"), "courier_hall"))));
         return subquery;
     }
 

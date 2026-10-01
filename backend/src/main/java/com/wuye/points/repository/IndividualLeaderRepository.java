@@ -27,4 +27,7 @@ public interface IndividualLeaderRepository extends JpaRepository<IndividualLead
 
     Optional<IndividualLeader> findByResidentIdAndPropertyCompanyIdAndSectorLeaderId(
             String residentId, String propertyCompanyId, String sectorLeaderId);
+
+    Optional<IndividualLeader> findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+            String residentId, String propertyCompanyId, String status);
 }

@@ -18,6 +18,8 @@ public interface ActivityGroupMemberRepository extends JpaRepository<ActivityGro
 
     List<ActivityGroupMember> findByGroupId(String groupId);
 
+    void deleteByGroupId(String groupId);
+
     List<ActivityGroupMember> findByGroupIdAndStatus(String groupId, String status);
 
     Optional<ActivityGroupMember> findByGroupIdAndResidentId(String groupId, String residentId);

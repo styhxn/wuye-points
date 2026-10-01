@@ -6,6 +6,7 @@ import com.wuye.points.dto.announcement.AnnouncementDetailResponse;
 import com.wuye.points.dto.announcement.AnnouncementListItemResponse;
 import com.wuye.points.dto.announcement.CollectFieldRequest;
 import com.wuye.points.dto.announcement.CollectFieldResponse;
+import com.wuye.points.dto.announcement.ActivityAnnouncementRequest;
 import com.wuye.points.dto.announcement.CreateAnnouncementRequest;
 import com.wuye.points.dto.announcement.DeleteAnnouncementResponse;
 import com.wuye.points.dto.announcement.SubmitCollectRequest;
@@ -67,7 +68,7 @@ public class AnnouncementService {
             String merchantId,
             String readStatus,
             String sort) {
-        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -79,7 +80,7 @@ public class AnnouncementService {
         String residentRole = null;
         String residentBuilding = null;
         String residentId = UserContext.currentUserId();
-        if (roleGuard.isResident()) {
+        if (isResidentLike()) {
             Resident viewer = getViewerResident();
             propertyCompanyId = viewer.getPropertyCompanyId();
             residentRole = viewer.getRole();
@@ -88,7 +89,7 @@ public class AnnouncementService {
             propertyCompanyId = UserContext.currentPropertyCompanyId();
         }
 
-        String statusFilter = roleGuard.isResident() ? "published" : null;
+        String statusFilter = isResidentLike() ? "published" : null;
 
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<Announcement> announcementPage = announcementRepository.findAll(
@@ -107,7 +108,7 @@ public class AnnouncementService {
 
     @Transactional(readOnly = true)
     public AnnouncementDetailResponse getAnnouncement(String id) {
-        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin");
         validateAnnouncementId(id);
 
         Announcement announcement = getReadableAnnouncement(id);
@@ -122,7 +123,47 @@ public class AnnouncementService {
     @Transactional
     public AnnouncementDetailResponse createAnnouncement(CreateAnnouncementRequest request) {
         roleGuard.requireAnyRole("property_admin", "platform_admin");
+        return doCreateAnnouncement(request);
+    }
 
+    /**
+     * 发布活动公告（v7.8）：前端调用 POST /announcements/activity，
+     * 允许活动组长（activity_leader）发布，公告类型强制为 activity。
+     * 使用轻量 DTO（ActivityAnnouncementRequest），<b>无需</b>前端传 announcementType。
+     */
+    @Transactional
+    public AnnouncementDetailResponse createActivityAnnouncement(ActivityAnnouncementRequest request) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
+
+        String propertyCompanyId = resolvePropertyCompanyId(null);
+        validateOptionalId(request.getCommunityId(), "com_");
+
+        LocalDateTime publishedAt = DateTimeUtil.parseLocalDateTime(request.getPublishedAt());
+        if (publishedAt == null) {
+            publishedAt = LocalDateTime.now();
+        }
+
+        Announcement announcement = new Announcement();
+        announcement.setId(idGenerator.generateId("ann"));
+        announcement.setTitle(request.getTitle());
+        announcement.setContent(request.getContent());
+        announcement.setAnnouncementType("activity");
+        announcement.setPropertyCompanyId(propertyCompanyId);
+        announcement.setCommunityId(request.getCommunityId());
+        announcement.setMerchantId(null);
+        announcement.setPublisherId(UserContext.currentUserId());
+        announcement.setPublisherRole(UserContext.currentRole());
+        announcement.setActivityGroupId(request.getActivityGroupId());
+        announcement.setCollectEnabled(false);
+        announcement.setStatus("published");
+        announcement.setPublishedAt(publishedAt);
+        announcementRepository.save(announcement);
+
+        Resident publisher = residentRepository.findById(announcement.getPublisherId()).orElse(null);
+        return announcementConverter.toDetail(announcement, publisher, false);
+    }
+
+    private AnnouncementDetailResponse doCreateAnnouncement(CreateAnnouncementRequest request) {
         String normalizedType = normalizeType(request.getAnnouncementType());
         validateAnnouncementType(normalizedType);
 
@@ -164,7 +205,7 @@ public class AnnouncementService {
 
     @Transactional
     public AnnouncementDetailResponse updateAnnouncement(String id, UpdateAnnouncementRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
         validateAnnouncementId(id);
 
         Announcement announcement = getManageableAnnouncement(id);
@@ -215,7 +256,7 @@ public class AnnouncementService {
 
     @Transactional
     public DeleteAnnouncementResponse deleteAnnouncement(String id) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
         validateAnnouncementId(id);
 
         Announcement announcement = getManageableAnnouncement(id);
@@ -347,7 +388,7 @@ public class AnnouncementService {
         Announcement announcement = announcementRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ANNOUNCEMENT_NOT_FOUND));
 
-        if (roleGuard.isResident()) {
+        if (isResidentLike()) {
             if (!"published".equals(announcement.getStatus())) {
                 throw new BizException(ErrorCode.ANNOUNCEMENT_NOT_FOUND);
             }
@@ -370,6 +411,13 @@ public class AnnouncementService {
             return announcement;
         }
 
+        // 活动组长可管理自己发布的公告（包括草稿等非 published 状态）
+        if (roleGuard.isActivityLeader()
+                && UserContext.currentUserId() != null
+                && UserContext.currentUserId().equals(announcement.getPublisherId())) {
+            return announcement;
+        }
+
         String propertyCompanyId = UserContext.currentPropertyCompanyId();
         if (propertyCompanyId == null
                 || announcement.getPropertyCompanyId() == null
@@ -382,6 +430,11 @@ public class AnnouncementService {
     private Resident getViewerResident() {
         return residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+    }
+
+    /** 看公告列表/详情时按"业主视角"处理的角色：业主或活动组长 */
+    private boolean isResidentLike() {
+        return roleGuard.isResident() || roleGuard.isActivityLeader();
     }
 
     private String resolvePropertyCompanyId(String propertyCompanyId) {

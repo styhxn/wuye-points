@@ -32,6 +32,8 @@ public class DeliveryConverter {
                 .fee(defaultDecimal(delivery.getFee()))
                 .courierEarning(defaultDecimal(delivery.getCourierEarning()))
                 .status(delivery.getStatus())
+                .carrierType(delivery.getCarrierType())
+                .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
                 .timeoutMinutes(timeoutMinutes)
                 .createdAt(DateTimeUtil.toIsoUtc(delivery.getCreatedAt()))
                 .build();
@@ -58,6 +60,8 @@ public class DeliveryConverter {
                 .fee(defaultDecimal(delivery.getFee()))
                 .courierEarning(defaultDecimal(delivery.getCourierEarning()))
                 .status(delivery.getStatus())
+                .carrierType(delivery.getCarrierType())
+                .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
                 .acceptedAt(DateTimeUtil.toIsoUtc(delivery.getAcceptedAt()))
                 .pickedAt(DateTimeUtil.toIsoUtc(delivery.getPickedAt()))
                 .deliveredAt(DateTimeUtil.toIsoUtc(delivery.getDeliveredAt()))

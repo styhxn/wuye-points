@@ -8,6 +8,7 @@ import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
@@ -61,4 +62,20 @@ public class SpecialOffer extends BaseEntity {
 
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 最低消费门槛（不设则无门槛） */
+    @Column(name = "min_consumption", precision = 10, scale = 2)
+    private BigDecimal minConsumption;
+
+    /** 总配额（不设则不限） */
+    @Column(name = "total_quota")
+    private Integer totalQuota;
+
+    /** 每人限领数量（不设则不限） */
+    @Column(name = "per_user_quota")
+    private Integer perUserQuota;
+
+    /** 已领取数量（预留，当前无领取动作，默认 0） */
+    @Column(name = "used_quota")
+    private Integer usedQuota;
 }

@@ -71,4 +71,14 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
 
     List<Delivery> findByPropertyCompanyIdAndCreatedAtBetween(
             String propertyCompanyId, LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d " +
+           "WHERE d.courierId IN :courierIds AND d.status = 'delivered'")
+    BigDecimal sumDeliveredEarningByCourierIds(@Param("courierIds") List<String> courierIds);
+
+    @Query("SELECT COALESCE(SUM(d.platformEarning), 0) FROM Delivery d " +
+           "WHERE d.propertyCompanyId = :propertyCompanyId AND d.createdAt >= :start AND d.createdAt < :end")
+    BigDecimal sumPlatformEarning(@Param("propertyCompanyId") String propertyCompanyId,
+                                  @Param("start") LocalDateTime start,
+                                  @Param("end") LocalDateTime end);
 }

@@ -33,6 +33,10 @@ public class Coordinator extends BaseEntity {
     @Column(name = "commission_rate", precision = 5, scale = 4)
     private BigDecimal commissionRate;
 
+    /** 统筹描述/备注 */
+    @Column(name = "description", length = 200)
+    private String description;
+
     @Column(name = "status", length = 20)
     private String status;
 }

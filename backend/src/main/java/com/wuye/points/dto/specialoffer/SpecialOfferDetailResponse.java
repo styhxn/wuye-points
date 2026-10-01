@@ -53,14 +53,30 @@ public class SpecialOfferDetailResponse {
     @Schema(description = "优惠信息", example = "满100减20")
     private String discountInfo;
 
+    @Schema(description = "最低消费门槛（null 表示无门槛）", example = "50.00")
+    private java.math.BigDecimal minConsumption;
+
+    @Schema(description = "总配额（null 表示不限）", example = "100")
+    private Integer totalQuota;
+
+    @Schema(description = "每人限领数量（null 表示不限）", example = "1")
+    private Integer perUserQuota;
+
+    @Schema(description = "已领取数量", example = "0")
+    private Integer usedQuota;
+
     @Schema(description = "开始时间", example = "2026-01-01T00:00:00.000Z")
     private String startTime;
 
     @Schema(description = "结束时间", example = "2026-01-31T23:59:59.000Z")
     private String endTime;
 
-    @Schema(description = "活动状态", example = "已发布")
+    @Schema(description = "活动状态（英文码）", example = "published",
+            allowableValues = {"draft", "published", "ended", "archived"})
     private String status;
+
+    @Schema(description = "活动状态中文展示", example = "已发布")
+    private String statusLabel;
 
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;

@@ -5,6 +5,7 @@ import com.wuye.points.dto.activity.ActivityGroupListItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupMemberListResponse;
 import com.wuye.points.dto.activity.ActivityGroupSubscriptionItemResponse;
 import com.wuye.points.dto.activity.CreateActivityGroupRequest;
+import com.wuye.points.dto.activity.DisbandActivityGroupResponse;
 import com.wuye.points.dto.activity.JoinActivityGroupResponse;
 import com.wuye.points.dto.activity.LeaveActivityGroupResponse;
 import com.wuye.points.dto.activity.MyJoinedGroupItemResponse;
@@ -13,6 +14,8 @@ import com.wuye.points.dto.activity.SubscribeActivityGroupRequest;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
 import com.wuye.points.dto.activity.SubscriptionStatusResponse;
 import com.wuye.points.dto.activity.UpdateActivityGroupRequest;
+import com.wuye.points.dto.activity.UpdateMemberProfileRequest;
+import com.wuye.points.dto.activity.UpdateMemberProfileResponse;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.service.ActivityGroupService;
@@ -107,12 +110,23 @@ public class ActivityGroupController {
         return ApiResponse.success(activityGroupService.leaveActivityGroup(id));
     }
 
-    @Operation(summary = "移除活动组成员", description = "移除指定活动组中的成员")
+    @Operation(summary = "移除活动组成员",
+            description = "移除指定活动组中的成员（仅本组组长/物业/平台管理员）")
     @DeleteMapping("/{id}/members/{memberId}")
     public ApiResponse<RemoveActivityGroupMemberResponse> removeMember(
             @Parameter(description = "活动组ID") @PathVariable String id,
             @Parameter(description = "成员ID") @PathVariable String memberId) {
         return ApiResponse.success(activityGroupService.removeMember(id, memberId));
+    }
+
+    @Operation(summary = "更新组员个人简介",
+            description = "更新组员个人简介（本人或组长可改，§68.1）。角色：resident/activity_leader 等组长类角色/物业/平台管理员")
+    @PutMapping("/{id}/members/{memberId}/profile")
+    public ApiResponse<UpdateMemberProfileResponse> updateMemberProfile(
+            @Parameter(description = "活动组ID") @PathVariable String id,
+            @Parameter(description = "成员ID（居民ID res_）") @PathVariable String memberId,
+            @Valid @RequestBody UpdateMemberProfileRequest request) {
+        return ApiResponse.success(activityGroupService.updateMemberProfile(id, memberId, request));
     }
 
     @Operation(summary = "更新活动组", description = "更新活动组信息")
@@ -121,6 +135,13 @@ public class ActivityGroupController {
             @Parameter(description = "活动组ID") @PathVariable String id,
             @Valid @RequestBody UpdateActivityGroupRequest request) {
         return ApiResponse.success(activityGroupService.updateActivityGroup(id, request));
+    }
+
+    @Operation(summary = "解散活动组（硬删除）", description = "永久解散活动组，不可恢复。角色：activity_leader（须为本组组长）/ property_admin / platform_admin")
+    @DeleteMapping("/{id}")
+    public ApiResponse<DisbandActivityGroupResponse> disbandActivityGroup(
+            @Parameter(description = "活动组ID") @PathVariable String id) {
+        return ApiResponse.success(activityGroupService.disbandActivityGroup(id));
     }
 
     @Operation(summary = "活动组详情", description = "获取活动组详细信息")

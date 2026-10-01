@@ -38,4 +38,8 @@ public class ActivityGroupMember extends BaseEntity {
 
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 组员个人简介（姓名、年龄、擅长领域等，JSON 字符串） */
+    @Column(name = "introduction", columnDefinition = "text")
+    private String introduction;
 }

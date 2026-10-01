@@ -50,6 +50,9 @@ public class MerchantDetailResponse {
     @Schema(description = "联系电话", example = "13800138000")
     private String contactPhone;
 
+    @Schema(description = "关联住户ID（用于联系商家/进聊天）", example = "res_xxx")
+    private String residentId;
+
     @Schema(description = "商家地址", example = "幸福路100号")
     private String address;
 
@@ -58,6 +61,18 @@ public class MerchantDetailResponse {
 
     @Schema(description = "免配送费门槛金额", example = "50.00")
     private java.math.BigDecimal freeDeliveryThreshold;
+
+    @Schema(description = "是否启用满额减免", example = "true")
+    private Boolean freeDeliveryEnabled;
+
+    @Schema(description = "满额减免承担方：none/merchant/property/platform", example = "merchant")
+    private String freeDeliverySponsor;
+
+    @Schema(description = "配送范围：in_community/out_community/both", example = "both")
+    private String deliveryScope;
+
+    @Schema(description = "多档配送费配置")
+    private List<DeliveryFeeTier> deliveryFeeTiers;
 
     @Schema(description = "会员优惠价", example = "9.50")
     private java.math.BigDecimal memberDiscountPrice;

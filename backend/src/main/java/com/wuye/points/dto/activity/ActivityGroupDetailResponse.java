@@ -53,6 +53,12 @@ public class ActivityGroupDetailResponse {
     @Schema(description = "小组状态", example = "active")
     private String status;
 
+    @Schema(description = "注册审核状态：pending/approved/rejected", example = "pending")
+    private String reviewStatus;
+
+    @Schema(description = "审核备注")
+    private String reviewRemark;
+
     @Schema(description = "当前用户是否已加入", example = "true")
     private Boolean hasJoined;
 

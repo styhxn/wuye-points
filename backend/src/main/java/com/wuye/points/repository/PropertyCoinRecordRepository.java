@@ -26,6 +26,9 @@ public interface PropertyCoinRecordRepository extends JpaRepository<PropertyCoin
 
     Page<PropertyCoinRecord> findByResidentId(String residentId, Pageable pageable);
 
+    /** 是否存在指定来源的物业币流水（manual_issue 使用条件判定：仅物业配发的物业币可用） */
+    boolean existsByResidentIdAndSourceAndCoinType(String residentId, String source, String coinType);
+
     @Query("""
             SELECT COALESCE(SUM(r.amount), 0) FROM PropertyCoinRecord r
             WHERE r.residentId = :residentId AND r.coinType = 'earn'

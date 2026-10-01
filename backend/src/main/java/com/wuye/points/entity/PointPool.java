@@ -9,9 +9,8 @@ import java.math.BigDecimal;
 
 /**
  * 积分池表 pp_xxxxxxxx
- * 注：point_pools 表仅含 updated_at，无 created_at，
- *     继承 BaseEntity 后 createdAt 字段对应数据库列不存在，
- *     建表/查询时如遇问题需在子类覆盖或调整 BaseEntity。
+ * 注：服务器库 point_pools 实际含 created_at / updated_at 两列（与 BaseEntity 对齐），
+ *     此前“无 created_at”的注释与库结构不符，已更正（2026-09-07）。
  */
 @Data
 @Entity

@@ -43,6 +43,18 @@ public class UpdateMerchantRequest {
     @Schema(description = "免配送费门槛金额", example = "50.00")
     private BigDecimal freeDeliveryThreshold;
 
+    @Schema(description = "是否启用满额减免", example = "true")
+    private Boolean freeDeliveryEnabled;
+
+    @Schema(description = "满额减免承担方：none/merchant/property/platform", example = "merchant")
+    private String freeDeliverySponsor;
+
+    @Schema(description = "配送范围：in_community/out_community/both", example = "both")
+    private String deliveryScope;
+
+    @Schema(description = "多档配送费配置（与 PUT /merchants/my/delivery-fees 同一结构）")
+    private List<DeliveryFeeTier> deliveryFeeTiers;
+
     @Schema(description = "商家等级（仅platform_admin可设置）", example = "gold")
     private String merchantLevel;
 

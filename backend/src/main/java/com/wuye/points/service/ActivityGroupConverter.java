@@ -79,6 +79,7 @@ public class ActivityGroupConverter {
                 .role(member.getRole())
                 .status(member.getStatus())
                 .joinedAt(DateTimeUtil.toIsoUtc(member.getJoinedAt()))
+                .introduction(member.getIntroduction())
                 .build();
     }
 

@@ -33,6 +33,9 @@ public class PermissionGuard {
             "property_company.create", "property_company.update", "property_company.manage",
             "merchant.create", "merchant.read", "merchant.update");
 
+    private static final Set<String> PROPERTY_LEADER_ONLY_CODES = Set.of(
+            "config.set", "permission.manage", "permission.read", "property_operator.manage");
+
     private final RoleGuard roleGuard;
     private final PermissionRepository permissionRepository;
     private final UserPermissionRepository userPermissionRepository;
@@ -95,8 +98,43 @@ public class PermissionGuard {
         requirePermission(permissionCode);
     }
 
+    /**
+     * 只读权限校验（2026-09-07 前端问题 C）：
+     * coordinator 为只读下级角色，只要其角色预设/用户覆盖中持有该权限码即放行；
+     * 其余角色仍走 requirePermissionOrAdmin（platform_admin 全通，property_admin 按权限池）。
+     */
+    public void requireReadPermissionOrAdmin(String permissionCode) {
+        requirePermissionOrAdminAllowingCoordinator(permissionCode);
+    }
+
+    /**
+     * 权限码校验并放行持有该权限码的 coordinator（2026-09-08 前端问题：统筹写操作 403）。
+     *
+     * <p>coordinator 是物业下属的半写角色（统筹/管理盘负责人），按文档 §25 / §39 可创建特惠、
+     * 管理本人名下的板块负责人。此处不再用 requireAdmin 一刀切，改为校验其角色预设/用户覆盖中
+     * 是否持有该权限码（如 {@code sector.manage}、{@code promotion.push}）；
+     * 数据范围（本物业 / 本人名下）由各 Service 自行收敛，避免越权。
+     *
+     * <p>非 coordinator 角色保持原逻辑：platform_admin 全通，property_admin 按权限池校验。
+     */
+    public void requirePermissionOrAdminAllowingCoordinator(String permissionCode) {
+        if (roleGuard.isCoordinator()) {
+            String normalized = normalizeCode(permissionCode);
+            if (permissionRepository.findByCode(normalized).isEmpty()
+                    || !hasPermission(UserContext.currentUserId(), normalized)) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+            return;
+        }
+        requirePermissionOrAdmin(permissionCode);
+    }
+
     public boolean isPlatformOnlyPermission(String permissionCode) {
         return PLATFORM_ONLY_CODES.contains(normalizeCode(permissionCode));
+    }
+
+    public boolean isPropertyLeaderOnlyPermission(String permissionCode) {
+        return PROPERTY_LEADER_ONLY_CODES.contains(normalizeCode(permissionCode));
     }
 
     public boolean hasPermission(String userId, String permissionCode) {
@@ -170,5 +208,9 @@ public class PermissionGuard {
             return code;
         }
         return code.replace(':', '.');
+    }
+
+    public boolean isCurrentPropertyLeader() {
+        return "property_leader".equals(UserContext.currentRole());
     }
 }

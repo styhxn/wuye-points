@@ -6,6 +6,7 @@ import com.wuye.points.dto.product.CreateProductRequest;
 import com.wuye.points.dto.product.DeleteProductResponse;
 import com.wuye.points.dto.product.ProductDetailResponse;
 import com.wuye.points.dto.product.ProductListItemResponse;
+import com.wuye.points.dto.product.UpdateProductRecommendRequest;
 import com.wuye.points.dto.product.UpdateProductRequest;
 import com.wuye.points.service.ProductService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,9 +46,10 @@ public class ProductController {
             @Parameter(description = "商品状态") @RequestParam(required = false) String status,
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId,
             @Parameter(description = "商品类型") @RequestParam(required = false) String productType,
+            @Parameter(description = "仅看推荐商品") @RequestParam(required = false) Boolean recommended,
             @Parameter(description = "排序字段（-降序，+升序）", example = "-createdAt") @RequestParam(defaultValue = "-createdAt") String sort) {
         return ApiResponse.success(productService.listProducts(
-                page, pageSize, keyword, merchantId, category, status, propertyCompanyId, productType, sort));
+                page, pageSize, keyword, merchantId, category, status, propertyCompanyId, productType, recommended, sort));
     }
 
     @Operation(summary = "商品详情", description = "商品详情。Auth: Optional | Roles: any")
@@ -77,5 +79,14 @@ public class ProductController {
     public ApiResponse<DeleteProductResponse> deleteProduct(
             @Parameter(description = "商品ID") @PathVariable String id) {
         return ApiResponse.success(productService.deleteProduct(id));
+    }
+
+    @Operation(summary = "推荐/取消推荐商品", description = "后台设置推荐商品。Roles: property_admin, platform_admin")
+    @PutMapping("/{id}/recommend")
+    public ApiResponse<Void> setRecommended(
+            @Parameter(description = "商品ID") @PathVariable String id,
+            @Valid @RequestBody UpdateProductRecommendRequest request) {
+        productService.setRecommended(id, Boolean.TRUE.equals(request.getRecommended()), request.getRecommendedSort());
+        return ApiResponse.success(null);
     }
 }

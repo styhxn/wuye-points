@@ -13,6 +13,7 @@ import com.wuye.points.dto.service.SubscribeServiceRequest;
 import com.wuye.points.dto.service.SubscribeServiceResponse;
 import com.wuye.points.dto.service.UpdateCommunityServiceRequest;
 import com.wuye.points.entity.CommunityService;
+import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.ServiceOrder;
@@ -66,6 +67,7 @@ public class CommunityServiceService {
     private final CommunityServiceConverter communityServiceConverter;
     private final PointService pointService;
     private final PropertyCoinService propertyCoinService;
+    private final MerchantBindingService merchantBindingService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -122,11 +124,16 @@ public class CommunityServiceService {
 
     @Transactional
     public CommunityServiceDetailResponse createService(CreateCommunityServiceRequest request) {
-        roleGuard.requireAnyRole("merchant", "individual_leader", "resident");
+        roleGuard.requireAnyRole("merchant", "individual_leader", "resident", "technician");
         validateCategory(request.getCategory());
 
         Resident provider = getActiveResident(UserContext.currentUserId());
         assertCanPublishService(provider);
+
+        // 技工首次创建服务时自动绑定技工店铺（merchant_source=technician）
+        if ("technician".equals(provider.getRole())) {
+            merchantBindingService.ensureTechnicianMerchant(provider.getId());
+        }
 
         CommunityService service = new CommunityService();
         service.setId(idGenerator.generateId("svc"));
@@ -265,6 +272,38 @@ public class CommunityServiceService {
                 .status(subscription.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 微信支付回调确认后服务预约单转为已确认（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 预约单在 bookService 时保持 pending（积分/物业币部分已当场抵扣），微信回调后才置为 confirmed。
+     */
+    @Transactional
+    public void completeBookChannelPayment(PaymentRecord record) {
+        ServiceOrder order = serviceOrderRepository.findById(record.getBizId())
+                .orElseThrow(() -> new BizException(ErrorCode.SERVICE_ORDER_NOT_FOUND));
+        if (!"pending".equals(order.getOrderStatus())) {
+            return; // 幂等：已确认/已取消/已完成
+        }
+        order.setOrderStatus("confirmed");
+        serviceOrderRepository.save(order);
+    }
+
+    /**
+     * 微信支付回调确认后服务订阅生效（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 订阅在 subscribe 时已落 active，回调仅作最终态兜底确认。
+     */
+    @Transactional
+    public void completeSubscribeChannelPayment(PaymentRecord record) {
+        ServiceSubscription subscription = serviceSubscriptionRepository.findById(record.getBizId())
+                .orElseThrow(() -> new BizException(ErrorCode.SERVICE_NOT_FOUND));
+        if ("cancelled".equals(subscription.getStatus())) {
+            return;
+        }
+        if (!"active".equals(subscription.getStatus())) {
+            subscription.setStatus("active");
+            serviceSubscriptionRepository.save(subscription);
+        }
     }
 
     @Transactional
@@ -484,6 +523,9 @@ public class CommunityServiceService {
         if ("individual_leader".equals(provider.getRole())) {
             return;
         }
+        if ("technician".equals(provider.getRole())) {
+            return;
+        }
         throw new BizException(ErrorCode.PERMISSION_DENIED);
     }
 
@@ -502,6 +544,9 @@ public class CommunityServiceService {
         }
         if ("individual_leader".equals(role)) {
             return "individual_leader";
+        }
+        if ("technician".equals(role)) {
+            return "technician";
         }
         return "resident";
     }

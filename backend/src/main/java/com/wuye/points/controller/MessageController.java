@@ -3,6 +3,7 @@ package com.wuye.points.controller;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.message.BroadcastMessageRequest;
+import com.wuye.points.dto.message.ConversationItemResponse;
 import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
 import com.wuye.points.dto.message.MessageDetailResponse;
@@ -118,6 +119,29 @@ public class MessageController {
     public ApiResponse<NeighborBlockResponse> unblockNeighbor(
             @Valid @RequestBody NeighborBlockRequest request) {
         return ApiResponse.success(messageService.unblockNeighbor(request));
+    }
+
+    @Operation(summary = "会话列表",
+            description = "当前用户聊天会话列表，按对方聚合（邻居/官方/服务需求/商家广告），显示最后一条消息与未读数。"
+                    + "支持 resident/activity_leader/merchant 等角色")
+    @GetMapping("/conversations")
+    public ApiResponse<PageResponse<ConversationItemResponse>> listConversations(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "会话类型：neighbor/official/service_request/merchant_ad")
+            @RequestParam(required = false) String conversationType) {
+        return ApiResponse.success(messageService.listMyConversations(page, pageSize, conversationType));
+    }
+
+    @Operation(summary = "会话聊天记录",
+            description = "与指定对方的完整会话记录（分页，按时间倒序）。"
+                    + "peerId 支持住户 res_ 或官方会话键 official_；打开会话自动把对方发来的未读标记为已读")
+    @GetMapping("/conversations/{peerId}")
+    public ApiResponse<PageResponse<MessageListItemResponse>> getConversationMessages(
+            @Parameter(description = "对方会话ID（res_ 或 official_）") @PathVariable String peerId,
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(messageService.getConversationMessages(peerId, page, pageSize));
     }
 
     @Operation(summary = "获取未读消息数", description = "获取当前用户未读消息总数及分类统计")

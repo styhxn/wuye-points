@@ -6,11 +6,14 @@ import com.wuye.points.dto.activity.ActivityGroupListItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupMemberListResponse;
 import com.wuye.points.dto.activity.ActivityGroupSubscriptionItemResponse;
 import com.wuye.points.dto.activity.CreateActivityGroupRequest;
+import com.wuye.points.dto.activity.DisbandActivityGroupResponse;
 import com.wuye.points.dto.activity.JoinActivityGroupResponse;
 import com.wuye.points.dto.activity.LeaveActivityGroupResponse;
 import com.wuye.points.dto.activity.MyJoinedGroupItemResponse;
 import com.wuye.points.dto.activity.RemoveActivityGroupMemberResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupRequest;
+import com.wuye.points.dto.activity.UpdateMemberProfileRequest;
+import com.wuye.points.dto.activity.UpdateMemberProfileResponse;
 import com.wuye.points.dto.activity.SubscribeActivityGroupResponse;
 import com.wuye.points.dto.activity.SubscriptionStatusResponse;
 import com.wuye.points.dto.activity.UpdateActivityGroupRequest;
@@ -19,12 +22,14 @@ import com.wuye.points.entity.ActivityGroup;
 import com.wuye.points.entity.ActivityGroupMember;
 import com.wuye.points.entity.ActivityGroupSubscription;
 import com.wuye.points.entity.Community;
+import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.ActivityGroupMemberRepository;
+import com.wuye.points.repository.ActivityGroupPricingTierRepository;
 import com.wuye.points.repository.ActivityGroupRepository;
 import com.wuye.points.repository.ActivityGroupSubscriptionRepository;
 import com.wuye.points.repository.CommunityRepository;
@@ -66,6 +71,7 @@ public class ActivityGroupService {
     private final ActivityGroupRepository activityGroupRepository;
     private final ActivityGroupMemberRepository activityGroupMemberRepository;
     private final ActivityGroupSubscriptionRepository activityGroupSubscriptionRepository;
+    private final ActivityGroupPricingTierRepository activityGroupPricingTierRepository;
     private final ResidentRepository residentRepository;
     private final CommunityRepository communityRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
@@ -82,21 +88,35 @@ public class ActivityGroupService {
             String communityId,
             Boolean mine,
             String sort) {
-        roleGuard.requireAnyRole("resident");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
         validateOptionalId(communityId, "com_");
 
         Resident resident = getActiveResident(UserContext.currentUserId());
-        String memberResidentId = Boolean.TRUE.equals(mine) ? resident.getId() : null;
+        boolean isMine = Boolean.TRUE.equals(mine);
+
+        // 组长查看"我管理的活动组"：按 leaderId 查，不过滤 status/reviewStatus
+        if (isMine && roleGuard.isActivityLeader()) {
+            Pageable pageable = buildPageable(page, pageSize, sort);
+            Specification<ActivityGroup> spec = (root, query, cb) -> cb.and(
+                    cb.equal(root.get("propertyCompanyId"), resident.getPropertyCompanyId()),
+                    cb.equal(root.get("leaderId"), resident.getId()));
+            Page<ActivityGroup> groupPage = activityGroupRepository.findAll(spec, pageable);
+            return buildListPage(groupPage, page, pageSize, resident);
+        }
+
+        String memberResidentId = isMine ? resident.getId() : null;
 
         Pageable pageable = buildPageable(page, pageSize, sort);
         Specification<ActivityGroup> spec = ActivityGroupSpecifications.withFilters(
                 resident.getPropertyCompanyId(),
                 communityId,
                 "active",
-                memberResidentId);
+                memberResidentId,
+                isMine ? null : "approved");
 
         Page<ActivityGroup> groupPage = activityGroupRepository.findAll(spec, pageable);
         return buildListPage(groupPage, page, pageSize, resident);
@@ -104,7 +124,8 @@ public class ActivityGroupService {
 
     @Transactional(readOnly = true)
     public ActivityGroupDetailResponse getActivityGroup(String id) {
-        roleGuard.requireAnyRole("resident");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
         validateActivityGroupId(id);
 
         Resident resident = getActiveResident(UserContext.currentUserId());
@@ -114,7 +135,8 @@ public class ActivityGroupService {
 
     @Transactional(readOnly = true)
     public ActivityGroupMemberListResponse listMembers(String id) {
-        roleGuard.requireAnyRole("resident");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
         validateActivityGroupId(id);
 
         Resident resident = getActiveResident(UserContext.currentUserId());
@@ -254,7 +276,8 @@ public class ActivityGroupService {
 
     @Transactional
     public ActivityGroupDetailResponse createActivityGroup(CreateActivityGroupRequest request) {
-        roleGuard.requireAnyRole("resident");
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
 
         Resident leader = getActiveResident(UserContext.currentUserId());
         validateOptionalId(request.getCommunityId(), "com_");
@@ -278,7 +301,10 @@ public class ActivityGroupService {
         group.setMemberCount(1);
         group.setMonthlyFee(request.getMonthlyFee() != null ? request.getMonthlyFee() : BigDecimal.ZERO);
         group.setYearlyFee(request.getYearlyFee() != null ? request.getYearlyFee() : BigDecimal.ZERO);
+        // 2026-09-07 前端问题 F（产品确认）：住户端创建活动组即刻生效（active），管理端审核仅为事后兜底：
+        // approve 无影响；reject 永久删除该活动组。
         group.setStatus("active");
+        group.setReviewStatus("approved");
         activityGroupRepository.save(group);
 
         addMember(group, leader.getId(), "leader");
@@ -291,7 +317,8 @@ public class ActivityGroupService {
         ActivityGroup group = activityGroupRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
 
-        if (roleGuard.isResident()) {
+        // 组长类角色（业主/活动组长/协调员/板块负责人/个体负责人）仅可更新本人担任组长的活动组
+        if (roleGuard.isLeaderRole()) {
             Resident resident = getActiveResident(UserContext.currentUserId());
             assertSameProperty(resident.getPropertyCompanyId(), group.getPropertyCompanyId());
             if (!resident.getId().equals(group.getLeaderId())) {
@@ -348,6 +375,41 @@ public class ActivityGroupService {
                     .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
         }
         return toDetail(group, viewer);
+    }
+
+    /**
+     * 解散（硬删除）活动组。仅本组组长、物业管理员、平台管理员可操作，不可恢复。
+     * 由于 activity_group_subscriptions 未配置 ON DELETE CASCADE，需先显式删除订阅，
+     * 再删除成员与价格档位（二者配置了 ON DELETE CASCADE，但显式删除更稳妥），最后删除组本身。
+     */
+    @Transactional
+    public DisbandActivityGroupResponse disbandActivityGroup(String id) {
+        validateActivityGroupId(id);
+        ActivityGroup group = activityGroupRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
+
+        // 组长类角色：仅本组组长可解散
+        if (roleGuard.isLeaderRole()) {
+            Resident operator = getActiveResident(UserContext.currentUserId());
+            assertSameProperty(operator.getPropertyCompanyId(), group.getPropertyCompanyId());
+            if (!operator.getId().equals(group.getLeaderId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+        } else if (roleGuard.isPropertyAdmin() || roleGuard.isPlatformAdmin()) {
+            roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
+        } else {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+
+        activityGroupSubscriptionRepository.deleteByGroupId(id);
+        activityGroupMemberRepository.deleteByGroupId(id);
+        activityGroupPricingTierRepository.deleteByActivityGroupId(id);
+        activityGroupRepository.delete(group);
+
+        return DisbandActivityGroupResponse.builder()
+                .groupId(id)
+                .status("deleted")
+                .build();
     }
 
     @Transactional
@@ -418,7 +480,8 @@ public class ActivityGroupService {
 
     @Transactional
     public RemoveActivityGroupMemberResponse removeMember(String id, String memberId) {
-        roleGuard.requireAnyRole("resident");
+        roleGuard.requireAnyRole("resident", "activity_leader", "coordinator",
+                "sector_leader", "individual_leader", "property_admin", "platform_admin");
         validateActivityGroupId(id);
         if (!StringUtils.hasText(memberId) || !memberId.startsWith("res_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "memberId格式不正确");
@@ -426,7 +489,9 @@ public class ActivityGroupService {
 
         Resident operator = getActiveResident(UserContext.currentUserId());
         ActivityGroup group = getReadableGroup(id, operator);
-        if (!operator.getId().equals(group.getLeaderId())) {
+        if (roleGuard.isPropertyAdmin() || roleGuard.isPlatformAdmin()) {
+            roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
+        } else if (!operator.getId().equals(group.getLeaderId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED);
         }
         if (group.getLeaderId().equals(memberId)) {
@@ -449,6 +514,52 @@ public class ActivityGroupService {
                 .residentId(memberId)
                 .memberCount(group.getMemberCount())
                 .removedAt(DateTimeUtil.nowIsoUtc())
+                .build();
+    }
+
+    /**
+     * 更新组员个人简介（§68.1 PUT /activity-groups/{id}/members/{memberId}/profile）。
+     * 校验：调用者为活动组组长（leaderId === 当前用户）或成员本人。
+     * Roles：resident / activity_leader（及组长类角色）/ property_admin / platform_admin。
+     */
+    @Transactional
+    public UpdateMemberProfileResponse updateMemberProfile(
+            String id, String memberId, UpdateMemberProfileRequest request) {
+        roleGuard.requireAnyRole("resident", "activity_leader", "coordinator",
+                "sector_leader", "individual_leader", "property_admin", "platform_admin");
+        validateActivityGroupId(id);
+        if (!StringUtils.hasText(memberId) || !memberId.startsWith("res_")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "memberId格式不正确");
+        }
+
+        String operatorId = UserContext.currentUserId();
+        Resident operator = getActiveResident(operatorId);
+        ActivityGroup group = activityGroupRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
+        assertSameProperty(operator.getPropertyCompanyId(), group.getPropertyCompanyId());
+
+        ActivityGroupMember member = activityGroupMemberRepository
+                .findByGroupIdAndResidentId(group.getId(), memberId)
+                .filter(item -> "active".equals(item.getStatus()))
+                .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_NOT_MEMBER));
+
+        boolean isSelf = operatorId.equals(member.getResidentId());
+        boolean isLeader = operatorId.equals(group.getLeaderId());
+        boolean isAdmin = roleGuard.isPropertyAdmin() || roleGuard.isPlatformAdmin();
+        if (!isSelf && !isLeader && !isAdmin) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+
+        String introduction = request.getIntroduction();
+        member.setIntroduction(introduction);
+        activityGroupMemberRepository.save(member);
+
+        return UpdateMemberProfileResponse.builder()
+                .groupId(group.getId())
+                .memberId(member.getId())
+                .residentId(member.getResidentId())
+                .introduction(introduction)
+                .updatedAt(DateTimeUtil.nowIsoUtc())
                 .build();
     }
 
@@ -501,6 +612,24 @@ public class ActivityGroupService {
         return activityGroupConverter.toSubscribeResponse(subscription, group, request.getAutoRenew());
     }
 
+    /**
+     * 微信支付回调确认后活动组订阅生效（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 订阅在 subscribe 时已落 active，回调仅作最终态兜底确认。
+     */
+    @Transactional
+    public void completeChannelPayment(PaymentRecord record) {
+        ActivityGroupSubscription subscription = activityGroupSubscriptionRepository
+                .findById(record.getBizId())
+                .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
+        if ("cancelled".equals(subscription.getStatus())) {
+            return;
+        }
+        if (!"active".equals(subscription.getStatus())) {
+            subscription.setStatus("active");
+            activityGroupSubscriptionRepository.save(subscription);
+        }
+    }
+
     private PageResponse<ActivityGroupListItemResponse> buildListPage(Page<ActivityGroup> groupPage,
                                                                       int page,
                                                                       int pageSize,
@@ -536,7 +665,10 @@ public class ActivityGroupService {
                 .findByGroupIdAndResidentId(group.getId(), viewer.getId())
                 .filter(item -> "active".equals(item.getStatus()))
                 .orElse(null);
-        return activityGroupConverter.toDetail(group, leader, community, membership);
+        ActivityGroupDetailResponse detail = activityGroupConverter.toDetail(group, leader, community, membership);
+        detail.setReviewStatus(group.getReviewStatus());
+        detail.setReviewRemark(group.getReviewRemark());
+        return detail;
     }
 
     private ActivityGroupMember addMember(ActivityGroup group, String residentId, String role) {
@@ -633,6 +765,11 @@ public class ActivityGroupService {
         ActivityGroup group = activityGroupRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
         assertSameProperty(resident.getPropertyCompanyId(), group.getPropertyCompanyId());
+        boolean isLeader = resident.getId().equals(group.getLeaderId());
+        boolean isAdmin = roleGuard.isPropertyAdmin() || roleGuard.isPlatformAdmin();
+        if (!"approved".equals(group.getReviewStatus()) && !isLeader && !isAdmin) {
+            throw new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND);
+        }
         return group;
     }
 
@@ -749,5 +886,65 @@ public class ActivityGroupService {
             direction = Sort.Direction.DESC;
         }
         return Sort.by(direction, field);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<ActivityGroupListItemResponse> listReviewRequests(
+            int page, int pageSize, String status) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        String scoped = roleGuard.resolveListPropertyCompanyId(null);
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 1) - 1, Math.min(Math.max(pageSize, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<ActivityGroup> groupPage = activityGroupRepository.findAll(
+                ActivityGroupSpecifications.withFilters(scoped, null, null, null, status), pageable);
+
+        List<ActivityGroupListItemResponse> list = groupPage.getContent().stream()
+                .map(group -> {
+                    Resident leader = residentRepository.findById(group.getLeaderId()).orElse(null);
+                    Community community = StringUtils.hasText(group.getCommunityId())
+                            ? communityRepository.findById(group.getCommunityId()).orElse(null)
+                            : null;
+                    return activityGroupConverter.toListItem(group, leader, community, null);
+                })
+                .toList();
+        return PageResponse.of(list, page, pageSize, groupPage.getTotalElements());
+    }
+
+    /**
+     * 活动组审核（2026-09-07 前端问题 F 与产品对齐）：
+     * - 创建即刻生效（active/approved），审核列表仅展示；
+     * - approve：无业务影响（幂等，不改变组状态）；
+     * - reject：永久删除该活动组（硬删除，含订阅/成员/价格档位），并回填审核备注后再删。
+     */
+    @Transactional
+    public void reviewActivityGroup(String id, String action, String remark) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        validateActivityGroupId(id);
+        ActivityGroup group = activityGroupRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
+        roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
+        if (!"approve".equals(action) && !"reject".equals(action)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "action 仅支持 approve/reject");
+        }
+        if ("approve".equals(action)) {
+            // 通过：无影响（组创建即生效），仅补记备注，供审计查询
+            if (StringUtils.hasText(remark)) {
+                group.setReviewRemark(remark);
+                activityGroupRepository.save(group);
+            }
+            return;
+        }
+        // reject：硬删除（与组长解散同套清理逻辑），先删订阅/成员/价格档位再删组
+        group.setReviewRemark(remark);
+        activityGroupRepository.save(group);
+
+        activityGroupSubscriptionRepository.deleteByGroupId(id);
+        activityGroupMemberRepository.deleteByGroupId(id);
+        activityGroupPricingTierRepository.deleteByActivityGroupId(id);
+        activityGroupRepository.delete(group);
     }
 }

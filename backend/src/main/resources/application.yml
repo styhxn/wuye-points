@@ -7,9 +7,9 @@ spring:
   profiles:
     active: dev
   datasource:
-    url: jdbc:mysql://${DB_HOST:8.147.60.8}:${DB_PORT:3306}/${DB_NAME:wuye_points}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: ${DB_USER:root}
-    password: ${DB_PASSWORD:123456}
+    url: jdbc:mysql://${DB_HOST:?DB_HOST must be set}:${DB_PORT:3306}/${DB_NAME:wuye_points}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DB_USER:?DB_USER must be set}
+    password: ${DB_PASSWORD:?DB_PASSWORD must be set}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
@@ -19,7 +19,8 @@ spring:
       max-lifetime: 1800000
   jpa:
     hibernate:
-      ddl-auto: validate
+      # 生产库结构已通过 manual_upgrade_gaps SQL 补齐，关闭自动建表，避免启动期 ALTER 失败导致崩溃。
+      ddl-auto: none
     show-sql: false
     open-in-view: false
     properties:
@@ -28,6 +29,18 @@ spring:
         default_batch_fetch_size: 100
         jdbc:
           time_zone: Asia/Shanghai
+  # 数据库版本化迁移
+  # baseline-on-migrate：存量库首次接入时被标记为 V1，不会重复执行 V1 建表脚本，
+  # 因此该配置对已有生产库是零风险的；全新库则由 V1 完成建表。
+  flyway:
+    enabled: false
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
+    baseline-description: "baseline from wuye_points_latest.sql"
+    validate-on-migrate: true
+    out-of-order: false
+    clean-disabled: true
   sql:
     init:
       mode: never
@@ -41,34 +54,122 @@ spring:
     default-property-inclusion: non_null
 
 jwt:
-  secret: ${JWT_SECRET:wuye-points-secret-key-2026-must-be-at-least-256-bits-long}
+  secret: ${JWT_SECRET:?JWT_SECRET must be set}
   access-token-expiration: 3600000
   refresh-token-expiration: 604800000
 
 wechat:
   mp:
-    app-id: ${WECHAT_MP_APP_ID:wxf7230afd38275659}
-    app-secret: ${WECHAT_MP_APP_SECRET:929b71c51808a9cd830bd270e1f01539}
+    app-id: ${WECHAT_MP_APP_ID:?WECHAT_MP_APP_ID must be set}
+    app-secret: ${WECHAT_MP_APP_SECRET:?WECHAT_MP_APP_SECRET must be set}
+    # 欠费催缴微信订阅消息模板ID；留空则跳过微信推送，统一回退应用内消息
+    template:
+      # 微信催缴订阅消息模板 ID（小程序后台获取，非密钥）
+      arrears-reminder: ${WECHAT_ARREARS_TEMPLATE_ID:}
+      # 住户点击微信催缴消息后进入的小程序页面路径
+      arrears-reminder-page: ${WECHAT_ARREARS_PAGE_PATH:}
+      # 语义字段 -> 微信模板字段 映射（以实际申请的模板字段名为准）
+      arrears-reminder-fields: '{"communityHouse":"thing1","arrearsPeriod":"thing2","arrearsAmount":"amount1","paymentDeadline":"date1","reminderText":"thing3"}'
   pay:
+    # 微信支付（平台微信支付分账）总开关。接入真实商户信息后置 true。
     enabled: ${WECHAT_PAY_ENABLED:true}
-    mch-id: ${WECHAT_PAY_MCH_ID:1665249236}
-    api-v3-key: ${WECHAT_PAY_API_V3_KEY:panjinhuadiwangluokeji91211103MA0XR88D3F}
-    private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:/opt/wuye-points/cert/apiclient_key.pem}
-    merchant-serial-number: ${WECHAT_PAY_MERCHANT_SERIAL_NUMBER:7824E2C7DE9B1BD8070146F2EFA1432A3DBA4070}
+    mch-id: ${WECHAT_PAY_MCH_ID:}
+    api-v3-key: ${WECHAT_PAY_API_V3_KEY:}
+    private-key-path: ${WECHAT_PAY_PRIVATE_KEY_PATH:}
+    private-key-base64: ${WECHAT_PAY_PRIVATE_KEY_BASE64:}
+    merchant-serial-number: ${WECHAT_PAY_MERCHANT_SERIAL_NUMBER:}
     app-id: ${WECHAT_PAY_APP_ID:wxf7230afd38275659}
-    notify-url: ${WECHAT_PAY_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/wechat/notify}
+    notify-url: ${WECHAT_PAY_NOTIFY_URL:}
+    refund-notify-url: ${WECHAT_PAY_REFUND_NOTIFY_URL:}
+    platform-sub-mch-id: ${WECHAT_PAY_PLATFORM_SUB_MCH_ID:}
+    sub-mch-ids: ${WECHAT_PAY_SUB_MCH_IDS:}
+    profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:true}
+    # 二级商户余额提现的出款账户类型（电商微信支付分账 withdraw 接口 account_type）：BASIC/FEES/OPERATION
+    account-type: ${WECHAT_PAY_ACCOUNT_TYPE:BASIC}
+    # 提现结果异步通知地址（提现成功/失败/退票/关单回调，须 HTTPS）
+    withdraw-notify-url: ${WECHAT_PAY_WITHDRAW_NOTIFY_URL:}
+    # 普通分账：添加分账接收方时的关系类型（必须与实际业务关系一致），枚举见微信文档
+    receiver-relation-type: ${WECHAT_PAY_RECEIVER_RELATION_TYPE:SERVICE_PROVIDER}
+    receiver-custom-relation: ${WECHAT_PAY_RECEIVER_CUSTOM_RELATION:}
+
+# 微信支付分账（普通分账 / profit sharing）配置，前缀 wechat-split。
+# 资金分账已走微信官方支付分账（WechatSplitApiService），以下为分账业务参数（不含第三方聚合支付配置）。
+wechat-split:
+  # 是否启用微信分账（默认 true）
+  enabled: ${WECHAT_SPLIT_ENABLED:true}
+  # 配送员是否改走微信冻结腿（送达触发冻结，不再入平台内部钱包），默认 true
+  courier-split-enabled: ${WECHAT_SPLIT_COURIER_SPLIT_ENABLED:true}
+  # 是否允许用户主动发起订单退款，默认 false
+  user-refund-enabled: ${WECHAT_SPLIT_USER_REFUND_ENABLED:false}
+  # Path B 自动提现（普通分账下收款方在自身微信商户平台提现，此处仅作开关占位），默认 true
+  auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:true}
+  # 归集户余额监控阈值(元)，留空=不监控
+  collect-balance-alert-threshold: ${WECHAT_SPLIT_COLLECT_ALERT_THRESHOLD:}
+  # 灰度白名单(物业公司ID列表)，空=全部启用(受全局 enabled 约束)；非空=仅名单内启用分账
+  enabled-property-companies: []
+  # 分账异步回调地址（对应 /api/v1/payment/wechat-split/split/notify）
+  notify-url: ${WECHAT_SPLIT_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/wechat-split/split/notify}
+  # 提现异步回调地址（普通分账无平台代提，占位）
+  notify-url-withdraw: ${WECHAT_SPLIT_NOTIFY_URL_WITHDRAW:https://test.yuanxusoftware.top/api/v1/payment/wechat-split/withdraw/notify}
+
+# 微信电商收付通（平台收付通）配置，前缀 wechat-ecommerce。
+# 用户付款直进「订单商家二级商户号」，平台通过 /v3/ecommerce/profitsharing/* 主动分账
+# （佣金→平台商户号、配送费→快递员 openid），售后窗口到期完结后剩余货款解冻给商家——
+# 资金不经平台归集，规避二清。资质/进件就绪后 enabled 置 true（与 wechat-split 互斥，以本开关为准）。
+wechat-ecommerce:
+  # 电商收付通分账总开关（资质与进件就绪后置 true）
+  enabled: ${WECHAT_ECOMMERCE_ENABLED:false}
+  # 平台收款商户号（分账给平台/物业时使用）；留空默认取 wechat.pay.mch-id
+  platform-receiver-mch-id: ${WECHAT_ECOMMERCE_PLATFORM_RECEIVER_MCH_ID:}
+  # 平台自身二级商户号（平台进件为二级商户时填写，否则留空）
+  platform-sub-mch-id: ${WECHAT_ECOMMERCE_PLATFORM_SUB_MCH_ID:}
+  # 添加分账接收方时的关系类型（PERSONAL_OPENID 收款方需在微信侧授权）
+  receiver-relation-type: ${WECHAT_ECOMMERCE_RECEIVER_RELATION_TYPE:SERVICE_PROVIDER}
+  # 分账结果异步通知地址（对应 /api/v1/payment/ecommerce-split/notify）
+  notify-url: ${WECHAT_ECOMMERCE_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-split/notify}
+  # 商家平台审核通过后是否自动提交微信进件（默认 false：运营后台手动提交）
+  applyment-auto-submit: ${WECHAT_ECOMMERCE_APPLYMENT_AUTO_SUBMIT:false}
+  # 进件结果异步通知地址（进件无真实回调，预留占位）
+  applyment-notify-url: ${WECHAT_ECOMMERCE_APPLYMENT_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-applyment/notify}
+  # 内部结算转账默认渠道：zero(微信零钱)/bank(银行卡)
+  transfer-channel: ${WECHAT_ECOMMERCE_TRANSFER_CHANNEL:zero}
+  # 商家转账结果异步通知地址（对应 /api/v1/payment/ecommerce-transfer/notify）
+  transfer-notify-url: ${WECHAT_ECOMMERCE_TRANSFER_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-transfer/notify}
 
 app:
   payment:
-    skip-sdk: ${APP_PAYMENT_SKIP_SDK:false}
+    # 模拟支付开关（保证金/食堂额度等场景直接到账）。
+    # 生产必须为 false：开启后任何人可零成本拿到业主商户资格、食堂额度。默认跟随环境，prod 显式置 false。
+    mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:true}
   wechat:
     skip-api: ${APP_WECHAT_SKIP_API:true}
   upload:
     path: ${UPLOAD_PATH:/data/uploads}
     base-url: ${UPLOAD_BASE_URL:https://test.yuanxusoftware.top/api/v1/static}
   cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:*,http://test.yuanxusoftware.top:*}
+    # 逗号分隔，支持通配符（allowedOriginPatterns 语义），如 https://*.example.com
+    # 默认 * 以兼容 App/WebView（Origin 可能为 http://localhost、capacitor://localhost 或 null）
+    allowed-origins: ${CORS_ORIGINS:*}
   machine-id: ${MACHINE_ID:1}
+  rate-limit:
+    max-attempts: ${RATE_LIMIT_MAX_ATTEMPTS:10}
+    window-ms: ${RATE_LIMIT_WINDOW_MS:300000}
+  security:
+    hsts-enabled: ${HSTS_ENABLED:false}
+
+wuye:
+  distribution:
+    # 快递员分成是否改由配送费核算（B 方案）：true=配送员走配送费、平台盘仅三档(平台/物业/管理)；false=A 方案四档含快递
+    courier-share-from-delivery-fee: ${WUYE_DIST_COURIER_DELIVERY:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
 
 logging:
   level:

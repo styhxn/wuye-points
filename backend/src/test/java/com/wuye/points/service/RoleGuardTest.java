@@ -61,6 +61,22 @@ class RoleGuardTest {
     }
 
     @Test
+    @DisplayName("requireAnyRole - JWT 误存 property_leader 时按 property_admin 通过")
+    void requireAnyRole_shouldPass_whenJwtRoleIsPropertyLeader() {
+        setUserContext("property_leader", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("property_admin", "platform_admin"));
+        assertTrue(roleGuard.isPropertyAdmin());
+    }
+
+    @Test
+    @DisplayName("requireAnyRole - JWT 误存 property_operator 时按 property_admin 通过")
+    void requireAnyRole_shouldPass_whenJwtRoleIsPropertyOperator() {
+        setUserContext("property_operator", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("property_admin", "platform_admin"));
+        assertTrue(roleGuard.isPropertyAdmin());
+    }
+
+    @Test
     @DisplayName("resolveListPropertyCompanyId - platform_admin 可跨物业")
     void resolveListPropertyCompanyId_platformAdmin_shouldReturnRequested() {
         setUserContext("platform_admin", "pc_001");

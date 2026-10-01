@@ -1,6 +1,7 @@
 package com.wuye.points.controller;
 
 import com.wuye.points.dto.admin.merchant.ProfitSpaceResponse;
+import com.wuye.points.dto.admin.merchant.SetOfficialRecommendationRequest;
 import com.wuye.points.dto.admin.platformmerchant.BatchConfigRequest;
 import com.wuye.points.dto.admin.platformmerchant.BatchConfigResponse;
 import com.wuye.points.dto.admin.platformmerchant.CreatePlatformMerchantRequest;
@@ -92,5 +93,14 @@ public class AdminPlatformMerchantController {
             @Parameter(description = "资源ID") @PathVariable String id,
             @Valid @RequestBody LinkMerchantRequest request) {
         return ApiResponse.success(adminPlatformMerchantService.linkToProperty(id, request));
+    }
+
+    @Operation(summary = "设置/取消官方推荐商家", description = "将商家设为官方推荐或取消推荐，并指定推荐排序。角色: property_admin, platform_admin")
+    @PostMapping("/{id}/recommend")
+    public ApiResponse<Void> setRecommendation(
+            @Parameter(description = "商家ID(m_)") @PathVariable String id,
+            @Valid @RequestBody SetOfficialRecommendationRequest request) {
+        adminPlatformMerchantService.setRecommendation(id, request);
+        return ApiResponse.success(null);
     }
 }

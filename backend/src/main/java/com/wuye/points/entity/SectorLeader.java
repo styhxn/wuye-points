@@ -33,6 +33,10 @@ public class SectorLeader extends BaseEntity {
     @Column(name = "sector", length = 50, nullable = false)
     private String sector;
 
+    /** 板块描述/备注（2026-09-08 前端问题：§39.2 / §39.4 的 description 字段） */
+    @Column(name = "description", length = 200)
+    private String description;
+
     @Column(name = "commission_rate", precision = 5, scale = 4)
     private BigDecimal commissionRate;
 
@@ -41,4 +45,8 @@ public class SectorLeader extends BaseEntity {
 
     @Column(name = "status", length = 20)
     private String status;
+
+    /** 是否可管理个体负责人 */
+    @Column(name = "can_manage_individual_leaders")
+    private Boolean canManageIndividualLeaders;
 }

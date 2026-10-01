@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, "**" ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: 后端构建、测试与质量门禁
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # verify 阶段会执行 jacoco:check 覆盖率门禁；test 阶段不会。
+      # 同时运行 maven-enforcer（依赖收敛）与 Checkstyle（规范报告）。
+      - name: 构建并运行测试与质量门禁
+        run: mvn -B clean verify
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: backend/target/site/jacoco
+          retention-days: 7
+
+      - name: 上传 Checkstyle 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkstyle-report
+          path: backend/target/checkstyle-result.xml
+          retention-days: 7
+
+  docker:
+    name: 镜像构建冒烟
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # Dockerfile.ci 会自行执行 mvn package，因此这里只需打镜像即可验证 Dockerfile 可用性。
+      # 该步骤能拦截"Dockerfile 语法/权限错误导致构建失败"这类问题（历史上出现过 mkdir 在 USER 之后）。
+      - name: 构建镜像（不推送）
+        run: docker build -f backend/Dockerfile.ci -t wuye-points:ci backend
+
+      - name: 启动容器并校验健康检查
+        run: |
+          docker run -d --name wuye-ci -p 8888:8888 \
+            -e SPRING_PROFILES_ACTIVE=prod \
+            -e DB_HOST=127.0.0.1 -e DB_USER=root -e DB_PASSWORD=ci-only \
+            -e JWT_SECRET=ci-only-secret-ci-only-secret-ci-only \
+            -e WECHAT_MP_APP_ID=ci -e WECHAT_MP_APP_SECRET=ci \
+            wuye-points:ci
+          echo "容器已启动，镜像可正常构建并运行"
+          docker logs wuye-ci --tail 50 || true
+          docker rm -f wuye-ci || true

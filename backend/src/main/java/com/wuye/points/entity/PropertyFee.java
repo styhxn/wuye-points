@@ -66,4 +66,12 @@ public class PropertyFee extends BaseEntity {
 
     @Column(name = "auto_deduct")
     private Boolean autoDeduct;
+
+    /** 计费周期开始 */
+    @Column(name = "period_start")
+    private LocalDate periodStart;
+
+    /** 计费周期结束 */
+    @Column(name = "period_end")
+    private LocalDate periodEnd;
 }

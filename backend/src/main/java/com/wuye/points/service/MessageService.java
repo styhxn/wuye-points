@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.message.BroadcastMessageRequest;
+import com.wuye.points.dto.message.ConversationItemResponse;
 import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
 import com.wuye.points.dto.message.MessageDetailResponse;
@@ -37,13 +38,17 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -55,6 +60,8 @@ public class MessageService {
     private static final ZoneId ZONE_SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final int DEFAULT_NEIGHBOR_DAILY_LIMIT = 2;
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
+    private static final Set<String> CONVERSATION_TYPES = Set.of(
+            "neighbor", "official", "service_request", "merchant_ad");
 
     private final MessageRepository messageRepository;
     private final NeighborBlockRepository neighborBlockRepository;
@@ -74,7 +81,10 @@ public class MessageService {
             String readStatus,
             String fromId,
             String sort) {
-        roleGuard.requireAnyRole("resident", "property_admin", "platform_admin");
+        roleGuard.requireAnyRole(
+                "resident", "property_admin", "platform_admin", "coordinator",
+                "sector_leader", "individual_leader", "technician", "courier",
+                "merchant", "activity_leader");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -90,7 +100,7 @@ public class MessageService {
 
         if (roleGuard.isPlatformAdmin()) {
             propertyCompanyId = null;
-        } else if (roleGuard.isResident()) {
+        } else if (roleGuard.isResident() || roleGuard.isActivityLeader()) {
             Resident resident = getActiveResident(currentUserId);
             propertyCompanyId = resident.getPropertyCompanyId();
             currentRole = resident.getRole();
@@ -449,6 +459,313 @@ public class MessageService {
                 .build();
     }
 
+    /**
+     * 当前用户会话列表（§30.2 GET /messages/conversations）。
+     * 按对端聚合本人参与的私聊（含官方会话），显示最后一条消息与未读数。
+     * 支持 resident / activity_leader / merchant 等以居民账号存在的角色。
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ConversationItemResponse> listMyConversations(
+            int page, int pageSize, String conversationType) {
+        roleGuard.requireAnyRole(
+                "resident", "activity_leader", "merchant", "technician", "courier",
+                "coordinator", "sector_leader", "individual_leader",
+                "property_admin", "platform_admin");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        if (StringUtils.hasText(conversationType)
+                && !CONVERSATION_TYPES.contains(conversationType)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "conversationType值无效");
+        }
+
+        String currentUserId = UserContext.currentUserId();
+        Resident viewer = getActiveResident(currentUserId);
+        String propertyCompanyId = viewer.getPropertyCompanyId();
+        String officialName = StringUtils.hasText(propertyCompanyId)
+                ? propertyCompanyRepository.findById(propertyCompanyId)
+                        .map(PropertyCompany::getName).orElse(null)
+                : null;
+
+        List<Message> messages = messageRepository.findMyConversationMessages(propertyCompanyId, currentUserId);
+
+        Map<String, Message> latestByPeer = new LinkedHashMap<>();
+        for (Message m : messages) {
+            String peerId = resolvePeerId(m, currentUserId);
+            if (peerId == null) {
+                continue;
+            }
+            if (StringUtils.hasText(conversationType)
+                    && !conversationType.equals(resolveConversationType(m))) {
+                continue;
+            }
+            latestByPeer.putIfAbsent(peerId, m);
+        }
+
+        Map<String, Long> unreadByPeer = messages.stream()
+                .filter(m -> currentUserId.equals(m.getToId()) && "unread".equals(m.getReadStatus()))
+                .collect(Collectors.groupingBy(Message::getFromId, Collectors.counting()));
+
+        Map<String, Resident> residentMap = residentRepository.findAllById(latestByPeer.keySet()).stream()
+                .collect(Collectors.toMap(Resident::getId, Function.identity(), (a, b) -> a));
+
+        List<ConversationItemResponse> all = latestByPeer.entrySet().stream()
+                .map(entry -> {
+                    String peerId = entry.getKey();
+                    Message m = entry.getValue();
+                    String conversationTypeResolved = resolveConversationType(m);
+                    Resident peer = peerId.startsWith("res_") ? residentMap.get(peerId) : null;
+                    String name = peer != null ? maskName(peer.getName()) : null;
+                    boolean fromMe = currentUserId.equals(m.getFromId());
+                    return ConversationItemResponse.builder()
+                            .peerId(peerId)
+                            .peerName(name)
+                            .peerAvatarUrl(peer != null ? peer.getAvatarUrl() : null)
+                            .conversationType(conversationTypeResolved)
+                            .officialSenderType("official".equals(conversationTypeResolved)
+                                    ? m.getOfficialSenderType() : null)
+                            .officialDisplayName("official".equals(conversationTypeResolved)
+                                    ? resolveOfficialDisplayName(m.getOfficialSenderType(), officialName) : null)
+                            .lastMessage(m.getContent())
+                            .lastMessageTime(DateTimeUtil.toIsoUtc(m.getCreatedAt()))
+                            .lastMessageFromMe(fromMe)
+                            .unreadCount(unreadByPeer.getOrDefault(peerId, 0L).intValue())
+                            .build();
+                })
+                .filter(Objects::nonNull)
+                .toList();
+
+        int total = all.size();
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(pageSize, 1), 100);
+        int from = (safePage - 1) * safeSize;
+        int to = Math.min(from + safeSize, total);
+        List<ConversationItemResponse> paged = from < total ? all.subList(from, to) : List.of();
+        return PageResponse.of(paged, safePage, safeSize, total);
+    }
+
+    /**
+     * 会话聊天记录（§30.3 GET /messages/conversations/{peerId}）。
+     * peerId 支持住户 res_ 或官方会话键 official_；打开会话自动将对方发来的未读标记为已读。
+     */
+    @Transactional
+    public PageResponse<MessageListItemResponse> getConversationMessages(
+            String peerId, int page, int pageSize) {
+        roleGuard.requireAnyRole(
+                "resident", "activity_leader", "merchant", "technician", "courier",
+                "coordinator", "sector_leader", "individual_leader",
+                "property_admin", "platform_admin");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        validatePeerId(peerId);
+
+        String currentUserId = UserContext.currentUserId();
+        Resident viewer = getActiveResident(currentUserId);
+        String propertyCompanyId = viewer.getPropertyCompanyId();
+
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 1) - 1, Math.min(Math.max(pageSize, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<Message> messagePage = messageRepository.findConversationBetween(
+                currentUserId, peerId, propertyCompanyId, pageable);
+
+        // 打开会话：把对方发给我的未读标记为已读
+        List<Message> unreadInPage = messagePage.getContent().stream()
+                .filter(m -> currentUserId.equals(m.getToId()) && "unread".equals(m.getReadStatus()))
+                .toList();
+        if (!unreadInPage.isEmpty()) {
+            unreadInPage.forEach(m -> m.setReadStatus("read"));
+            messageRepository.saveAll(unreadInPage);
+        }
+
+        return buildListPage(messagePage, page, pageSize);
+    }
+
+    private String resolveOfficialDisplayName(String officialSenderType, String propertyCompanyName) {
+        if ("property".equals(officialSenderType)) {
+            return StringUtils.hasText(propertyCompanyName) ? propertyCompanyName : "物业通知";
+        }
+        if ("platform".equals(officialSenderType)) {
+            return "平台通知";
+        }
+        if ("system".equals(officialSenderType)) {
+            return "系统通知";
+        }
+        return null;
+    }
+
+    private String resolveConversationType(Message message) {
+        return switch (message.getMessageType()) {
+            case "official_message" -> "official";
+            case "service_request" -> "service_request";
+            case "merchant_ad" -> "merchant_ad";
+            default -> "neighbor";
+        };
+    }
+
+    /** 姓名脱敏：李四 → 李*；李华明 → 李*明 */
+    private String maskName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return null;
+        }
+        if (name.length() == 1) {
+            return name;
+        }
+        if (name.length() == 2) {
+            return name.charAt(0) + "*";
+        }
+        return name.charAt(0) + "*".repeat(name.length() - 2) + name.charAt(name.length() - 1);
+    }
+
+    private void validatePeerId(String peerId) {
+        if (!StringUtils.hasText(peerId)
+                || (!peerId.startsWith("res_") && !peerId.startsWith("official_"))) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "peerId格式不正确");
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<ConversationItemResponse> listAdminConversations(int page, int pageSize, String keyword) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        String currentUserId = UserContext.currentUserId();
+        String propertyCompanyId = resolveAdminPropertyCompanyId();
+
+        List<Message> messages = messageRepository.findConversationMessages(
+                propertyCompanyId, List.of("private", "broadcast"));
+
+        // 按对端住户聚合，保留最新一条（查询已按 createdAt 倒序）
+        Map<String, Message> latestByPeer = new LinkedHashMap<>();
+        for (Message m : messages) {
+            String peerId = resolvePeerId(m, currentUserId);
+            if (peerId == null) {
+                continue;
+            }
+            latestByPeer.putIfAbsent(peerId, m);
+        }
+
+        // 来自各住户的未读（发给当前管理员）计数
+        Map<String, Long> unreadByPeer = messages.stream()
+                .filter(m -> currentUserId.equals(m.getToId()) && "unread".equals(m.getReadStatus()))
+                .collect(Collectors.groupingBy(Message::getFromId, Collectors.counting()));
+
+        Map<String, Resident> residentMap = residentRepository.findAllById(latestByPeer.keySet()).stream()
+                .collect(Collectors.toMap(Resident::getId, Function.identity(), (a, b) -> a));
+
+        String officialName = propertyCompanyId != null
+                ? propertyCompanyRepository.findById(propertyCompanyId).map(PropertyCompany::getName).orElse(null)
+                : null;
+
+        List<ConversationItemResponse> all = latestByPeer.entrySet().stream()
+                .map(entry -> {
+                    String peerId = entry.getKey();
+                    Message m = entry.getValue();
+                    Resident peer = residentMap.get(peerId);
+                    String name = peer != null ? peer.getName() : null;
+                    if (StringUtils.hasText(keyword)) {
+                        String kw = keyword.toLowerCase();
+                        boolean hit = (name != null && name.toLowerCase().contains(kw))
+                                || peerId.toLowerCase().contains(kw);
+                        if (!hit) {
+                            return null;
+                        }
+                    }
+                    boolean fromMe = currentUserId.equals(m.getFromId());
+                    return ConversationItemResponse.builder()
+                            .peerId(peerId)
+                            .peerName(name)
+                            .peerAvatarUrl(peer != null ? peer.getAvatarUrl() : null)
+                            .conversationType("official")
+                            .officialSenderType("property")
+                            .officialDisplayName(officialName)
+                            .lastMessage(m.getContent())
+                            .lastMessageTime(DateTimeUtil.toIsoUtc(m.getCreatedAt()))
+                            .lastMessageFromMe(fromMe)
+                            .unreadCount(unreadByPeer.getOrDefault(peerId, 0L).intValue())
+                            .build();
+                })
+                .filter(Objects::nonNull)
+                .toList();
+
+        int total = all.size();
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(pageSize, 1), 100);
+        int from = (safePage - 1) * safeSize;
+        int to = Math.min(from + safeSize, total);
+        List<ConversationItemResponse> paged = from < total ? all.subList(from, to) : List.of();
+        return PageResponse.of(paged, safePage, safeSize, total);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MessageListItemResponse> getAdminConversationMessages(
+            String residentId, int page, int pageSize) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        validateResidentId(residentId);
+        String currentUserId = UserContext.currentUserId();
+        String propertyCompanyId = resolveAdminPropertyCompanyId();
+
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 1) - 1, Math.min(Math.max(pageSize, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<Message> messagePage = messageRepository.findConversationBetween(
+                currentUserId, residentId, propertyCompanyId, pageable);
+        return buildListPage(messagePage, page, pageSize);
+    }
+
+    @Transactional
+    public MessageDetailResponse sendAdminMessage(String residentId, String content) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        validateResidentId(residentId);
+        if (!StringUtils.hasText(content)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "消息内容不能为空");
+        }
+
+        Resident sender = getActiveResident(UserContext.currentUserId());
+        Resident receiver = getActiveResident(residentId);
+        String propertyCompanyId = roleGuard.isPropertyAdmin()
+                ? UserContext.currentPropertyCompanyId()
+                : sender.getPropertyCompanyId();
+        if (!roleGuard.isPlatformAdmin()) {
+            assertSameProperty(propertyCompanyId, receiver.getPropertyCompanyId());
+        }
+
+        Message message = buildMessage(
+                sender.getId(),
+                receiver.getId(),
+                null,
+                "property_message",
+                content,
+                "private",
+                null,
+                propertyCompanyId);
+        message.setOfficialSenderType("property");
+        messageRepository.save(message);
+        return messageConverter.toDetail(message, sender, receiver);
+    }
+
+    private String resolveAdminPropertyCompanyId() {
+        if (roleGuard.isPlatformAdmin()) {
+            return null;
+        }
+        return UserContext.currentPropertyCompanyId();
+    }
+
+    private String resolvePeerId(Message message, String currentUserId) {
+        if (currentUserId.equals(message.getFromId())) {
+            return message.getToId();
+        }
+        if (currentUserId.equals(message.getToId())) {
+            return message.getFromId();
+        }
+        return null;
+    }
+
     private PageResponse<MessageListItemResponse> buildListPage(Page<Message> messagePage, int page, int pageSize) {
         List<String> senderIds = messagePage.getContent().stream()
                 .map(Message::getFromId)
@@ -715,5 +1032,12 @@ public class MessageService {
 
     private int defaultCount(Integer value) {
         return value != null ? value : 0;
+    }
+
+    /** 异步发送消息（独立事务失败不影响主流程，由调用方捕获） */
+    @Async
+    @Transactional
+    public void sendMessageAsync(CreateMessageRequest request) {
+        sendMessage(request);
     }
 }

@@ -23,6 +23,12 @@ public class CompleteDeliveryResponse {
     @Schema(description = "配送员收入", example = "5.00")
     private BigDecimal courierEarning;
 
+    @Schema(description = "商家自配配送费分成（仅 carrierType=merchant 的配送单有值）", example = "4.50")
+    private BigDecimal merchantDeliveryFeeShare;
+
+    @Schema(description = "承运类型 courier/merchant", example = "courier")
+    private String carrierType;
+
     @Schema(description = "送达时间", example = "2024-01-01T11:00:00")
     private String deliveredAt;
 }

@@ -16,6 +16,10 @@ import java.util.Optional;
 @Repository
 public interface ActivityGroupSubscriptionRepository extends JpaRepository<ActivityGroupSubscription, String> {
 
+    List<ActivityGroupSubscription> findByGroupId(String groupId);
+
+    void deleteByGroupId(String groupId);
+
     Page<ActivityGroupSubscription> findByResidentId(String residentId, Pageable pageable);
 
     Page<ActivityGroupSubscription> findByResidentIdAndStatus(
