@@ -87,6 +87,7 @@
   - [二期 — 咨询板块](#58-二期--咨询板块-consultations)
   - [二期 — 商家广告推送](#59-二期--商家广告推送-merchant-ads)
   - [二期 — 业主商户体系](#60-二期--业主商户体系-resident-merchants)
+  - [优惠券模块](#98-优惠券模块)
 - [三期 — 模块负责人体系](#61-三期--模块负责人体系-sector-leaders)
   - [三期 — 快递负责人体系](#62-三期--快递负责人体系-courier-managers)
   - [三期 — 商家端口改造](#63-三期--商家端口改造-merchant-port)
@@ -2708,7 +2709,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/products?page=1&pageSize=10&
 | `merchantId`        | `String` | ❌   |              | 商家ID                           |
 | `category`          | `String` | ❌   |              | 分类                             |
 | `status`            | `String` | ❌   |              | `active`/`inactive`/`sold_out` |
-| `propertyCompanyId` | `String` | ❌   |              | 物业公司ID                         |
+| `propertyCompanyId` | `String` | 条件   |              | 物业公司ID。平台管理员跨物业查询时必填；已登录用户不传则自动取当前用户所属物业；**未登录时不传则按 `merchantId` 自动推导（须同时传 `merchantId`）**；两者都缺省时返回 `10001 参数缺失` |
 | `sort`              | `String` | ❌   | `-createdAt` | 排序                             |
 
 
@@ -2730,7 +2731,6 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/products?page=1&pageSize=10&
         "price": 3.50,
         "memberPrice": 3.00,
         "pointPrice": 350,
-        "distanceKm": 1.2,
         "stock": 100,
         "category": "饮料",
         "status": "active",
@@ -2747,6 +2747,13 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/products?page=1&pageSize=10&
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
+
+> **字段说明（前端必读）**：
+> - `name`（商品名称）、`price`（原价）**始终返回**，不会缺失。
+> - `memberPrice`（业主价）**仅在携带登录态 `Authorization` 时返回**；未登录时该字段**整个不出现**（不是 null）——这是全局 Jackson 配置 `default-property-inclusion=non_null` 所致，前端取值请用 `item.memberPrice != null` 判断，不要依赖字段存在。
+> - `pointPrice`、`category`、`description`、`coverUrl` 可能为空，同样会不出现字段。
+> - `merchantName` 需商家记录存在才返回。
+> - 跨物业隔离：已登录用户只能看到**自己所属物业公司**下的商品；商家归属其他物业时结果为空。
 
 ---
 
@@ -3300,11 +3307,45 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/my/delivery-fees \
     "receivableAmount": 0.00,
     "totalWithdrawn": 3000.00,
     "withdrawalBlocked": false,
-    "createdAt": "2026-03-15 10:00:00"
+    "createdAt": "2026-03-15 10:00:00",
+    "updatedAt": "2026-03-15 10:05:00",
+    "products": [
+      {
+        "id": "prd_demo001",
+        "name": "可口可乐330ml",
+        "description": "经典碳酸饮料",
+        "coverUrl": "https://cdn.example.com/product/prd_demo001.jpg",
+        "price": 3.50,
+        "memberPrice": 3.00,
+        "pointPrice": 350,
+        "stock": 100,
+        "category": "饮料",
+        "status": "active"
+      }
+    ]
   },
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
+
+> **商家详情页商品列表 `products`（前端必读）**：
+> `GET /merchants/{id}` 会**内联返回该商家的商品列表**，商家详情页可直接用它渲染，**无需再单独请求 `GET /products`**。
+> 取数为该商家 `status=active`、未软删除的商品，按 `createdAt` 倒序，**最多 20 条**；无商品时返回空数组 `[]`。
+>
+> | 字段 | 类型 | 说明 |
+> | ---- | ---- | ---- |
+> | `id` | `String` | 商品ID（`prd_` 前缀） |
+> | `name` | `String` | 商品名称 |
+> | `description` | `String` | 商品描述，可为空（字段可能不出现） |
+> | `coverUrl` | `String` | 封面图，可为空（字段可能不出现） |
+> | `price` | `Number` | 原价（元） |
+> | `memberPrice` | `Number` | 业主价，**仅携带登录态时返回**，否则字段不出现 |
+> | `pointPrice` | `Integer` | 积分兑换价，可为空 |
+> | `stock` | `Integer` | 库存 |
+> | `category` | `String` | 商品分类，可为空 |
+> | `status` | `String` | `active`/`inactive`/`sold_out` |
+>
+> 说明：`GET /merchants/{id}` 与 `GET /merchants/my` 共用同一响应体，字段一致。
 
 > **补充**：当 `MerchantPropertyConfig` 记录不存在时（新建商家），`commissionRate`/`pointExchangeRate` 不再返回 null，统一返回 `0`。`deliveryScope`、`commissionRate`、`pointExchangeRate`、`totalOrders`、`totalRevenue`、`withdrawableAmount`、`totalWithdrawn`、`withdrawalBlocked` 等字段已定义。
 
@@ -3522,6 +3563,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/mch_demo001 \
 | `coinUsed` | `BigDecimal` | ❌ | 期望抵扣的物业币金额 |
 | `pointUsed` | `Integer` | ❌ | 期望使用的积分 |
 | `familyId` | `String` | ❌ | 使用家庭物业币池时传入 |
+| `userCouponId` | `String` | ❌ | 期望使用的用户优惠券 ID（`ucp_` 前缀，取自 `GET /coupons/available`，见 §61） |
 
 **请求示例**：
 
@@ -3557,8 +3599,10 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/preview \
 | `waiverReason` | `String` | 减免原因 `threshold`/`campaign`/`manual`/`none` |
 | `maxCoinAllowed` | `BigDecimal` | 当前规则下最大可抵扣物业币 |
 | `coinUsed` | `BigDecimal` | 实际可采用的物业币抵扣金额 |
+| `couponId` | `String` | 本次试算采用的用户优惠券 ID（未使用优惠券时为 null） |
+| `couponAmount` | `BigDecimal` | 优惠券抵扣金额（作用于商品金额，不抵扣配送费；未使用时为 0.00） |
 | `pointUsed` | `Integer` | 使用积分 |
-| `cashAmount` | `BigDecimal` | 现金应付金额 |
+| `cashAmount` | `BigDecimal` | 现金应付金额（= `totalAmount` − `couponAmount` − `coinUsed` − `pointUsed` 折算值，最低 0） |
 | `reasonIfCapped` | `String` | 若被封顶/限制时的原因说明（可为 null） |
 | `directedBalances` | `Array` | 社区食堂可用定向余额列表（**余额>0才返回**；元素：`mainMerchantId`、`mainMerchantName`、`balance`）。空数组表示本单商家不在任何主商家体系内或用户无可用定向余额 |
 
@@ -3595,6 +3639,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/preview \
 | `coinUsed` | `BigDecimal` | ❌ | 期望抵扣的物业币金额 |
 | `pointUsed` | `Integer` | ❌ | 期望使用的积分 |
 | `familyId` | `String` | ❌ | 使用家庭物业币池时传入 |
+| `userCouponId` | `String` | ❌ | 期望使用的用户优惠券 ID（`ucp_` 前缀，见 §61） |
 
 **请求示例**：
 
@@ -3610,7 +3655,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/from-listing/preview 
   }'
 ```
 
-**响应**：字段与 `POST /orders/preview`（§8.0）完全一致（`PreviewOrderResponse`：`totalAmount`/`subtotal`/`productAmount`/`deliveryFee`/`originalDeliveryFee`/`deliveryWaiverAmount`/`deliverySubsidySponsor`/`deliverySubsidyAmount`/`deliverySettlementBase`/`freeDeliveryEligible`/`waiverReason`/`maxCoinAllowed`/`coinUsed`/`pointUsed`/`cashAmount`/`reasonIfCapped`/`directedBalances`）。
+**响应**：字段与 `POST /orders/preview`（§8.0）完全一致（`PreviewOrderResponse`：`totalAmount`/`subtotal`/`productAmount`/`deliveryFee`/`originalDeliveryFee`/`deliveryWaiverAmount`/`deliverySubsidySponsor`/`deliverySubsidyAmount`/`deliverySettlementBase`/`freeDeliveryEligible`/`waiverReason`/`maxCoinAllowed`/`coinUsed`/`couponId`/`couponAmount`/`pointUsed`/`cashAmount`/`reasonIfCapped`/`directedBalances`）。
 
 **错误响应**：
 
@@ -3823,6 +3868,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 | `directedBalanceUsed` | `BigDecimal` | ❌ | `@Min(0)` | 社区食堂**定向余额抵扣金额**（`mixed` 且使用定向余额时必传，须 ≤ 该体系余额；与 `mainMerchantId` 成对传入，否则返回 `10002`） |
 | `wechatPayCode` | `String`     | ❌   |             | 微信支付code                                 |
 | `familyId`      | `String`     | ❌   |             | 使用家庭余额                                   |
+| `userCouponId`  | `String`     | ❌   |             | 使用的用户优惠券 ID（`ucp_` 前缀，须为本人持有且 `unused`、满足商家范围/门槛/有效期，见 §61）。支付成功核销；订单取消/超时未支付自动释放 |
 | `openid`        | `String`     | ❌   |             | 用户openid（`wechat`/`mixed` 含现金部分时使用；不传则取用户绑定openid） |
 
 
@@ -3841,6 +3887,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
     "pointUsed": 100,
     "coinUsed": 5.00,
     "directedBalanceUsed": 20.00,
+    "couponAmount": 10.00,
     "cashAmount": 0.00,
     "paidAt": "2026-07-01 15:24:00",
     "pointEarned": 10,
@@ -3866,6 +3913,12 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 | `80026` | 400  | 所选主商家体系与订单商家不匹配（定向余额越权抵扣） |
 | `80025` | 400  | 定向余额不足          |
 | `80027` | 400  | 使用了定向余额但未选主商家体系 |
+| `60041` | 404  | 优惠券不存在（`userCouponId` 无效或非本人持有） |
+| `60042` | 400  | 优惠券不可用（已使用/已锁定/已过期） |
+| `60043` | 400  | 优惠券已过期 |
+| `60044` | 400  | 优惠券已使用 |
+| `60045` | 400  | 未达优惠券使用门槛 |
+| `60046` | 400  | 优惠券适用范围不匹配（商家券与订单商家不一致） |
 
 
 > **说明**：`60001` 表示商家 ID 本身不存在；`60006` 表示商家存在，但在当前物业公司下缺少 `merchant_property_configs` 挂接记录（抽佣比例、积分兑换比等）。下单与支付均会校验挂接配置。
@@ -21984,3 +22037,309 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 5. 分账比例：单笔分账累计金额 ≤ 实付金额 30%（需确认佣金 + 配送费 ≤ 30% 实付）。
 6. 未进件商家：前端回退「积分 / 物业币」支付；不展示微信支付入口或提示 `99004`。
 7. 交付件：本 API 章节 + `docs/电商收付通改造_前端交付_2026-09-13.html` + 合并 SQL 脚本。
+
+---
+
+## 98. 优惠券模块 (Coupons)
+
+<a id="98-优惠券模块"></a>
+
+> 优惠券**不是商品**，而是独立的功能模块。下单时作为抵扣项作用于**商品金额**，不参与配送费抵扣。
+> 数据库变更见 `backend/src/main/resources/db/migration/V17__coupon.sql`（生产禁用 Flyway，需手动执行）。
+
+### 98.0 业务口径
+
+| 维度 | 取值 | 说明 |
+| --- | --- | --- |
+| 券类型 `type` | `full_reduction` 满减 / `discount` 折扣 / `instant_reduction` 立减 | 满减、立减用 `valueAmount`；折扣用 `discountRate`（8.5 = 8.5 折），可选 `maxDiscountAmount` 封顶 |
+| 适用范围 `scope` | `platform` 平台券 / `merchant` 商家券 | 平台券全平台通用；商家券限指定商家 |
+| 到账方式 `source` | `claim` 领券中心自助领取 / `grant` 商家或平台定向发放 | 领取受"发放总量 + 每人限领"约束；发放为管理员/商家主动派发到账户 |
+| 有效期 `validType` | `fixed` 固定起止 / `relative` 领取后 N 天 | `fixed` 用 `validStartAt`/`validEndAt`；`relative` 用 `validDays`，实际过期时间在到账时计算 |
+| 使用门槛 `minSpendAmount` | 订单**商品金额**（不含配送费）需 ≥ 该值 | 不满足则不可用（`usable=false`） |
+
+**抵扣计算规则**（`productAmount` = 订单商品金额，不含配送费）：
+
+| 券类型 | 抵扣额 |
+| --- | --- |
+| `full_reduction` / `instant_reduction` | `min(valueAmount, productAmount)` |
+| `discount` | `min(productAmount × (10 − discountRate) / 10, maxDiscountAmount, productAmount)`，先判断 `productAmount ≥ minSpendAmount` |
+| 未达门槛 | `0`（不可用） |
+
+**分账口径**：优惠金额**由商家承担**；平台佣金、快递配送费均按**实付商品金额**（`totalAmount − couponAmount`）计算。订单 `totalAmount` 仍保存原始商品金额，另存 `couponId`/`couponAmount` 作为审计与分账基数依据；**微信电商分账链路逻辑不变**。
+
+**券状态机**：`unused`（可用）→ `locked`（下单支付中锁定）→ `used`（支付成功核销）；订单取消或超时未支付自动 `release` 回 `unused`；过期由查询时惰性置 `expired`。
+
+### 98.0.1 数据表
+
+| 表 | 说明 |
+| --- | --- |
+| `coupon_template` | 券模板（名称/类型/范围/面额/门槛/有效期/总量/已领量/每人限领/状态） |
+| `user_coupon` | 用户券（模板快照 + `status` + `source` + `expireAt`/`claimedAt`/`usedAt`/`orderId`） |
+| `orders.coupon_id` | 新增列：本单使用的用户券 ID |
+| `orders.coupon_amount` | 新增列：优惠券抵扣金额（`NOT NULL DEFAULT 0.00`） |
+
+---
+
+### 98.1 GET `/coupons/center` — 领券中心
+
+**Auth**: Required  
+**Roles**: `resident`
+
+返回当前用户**可领取**的券模板列表（平台券全局 + 本物业商家券，`status=active` 且未领完）。
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `merchantId` | `String` | ❌ | 仅查看某商家的商家券 |
+
+**响应**：`Array<CouponTemplateResponse>`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String` | 模板 ID（`cpt_` 前缀） |
+| `name` | `String` | 券名称 |
+| `description` | `String` | 使用说明 |
+| `type` | `String` | `full_reduction`/`discount`/`instant_reduction` |
+| `scope` | `String` | `platform`/`merchant` |
+| `merchantId` / `merchantName` | `String` | 商家券的商家信息（平台券为 null） |
+| `valueAmount` | `BigDecimal` | 面额（满减/立减） |
+| `discountRate` | `BigDecimal` | 折扣率（折扣券，8.50 表示 8.5 折） |
+| `maxDiscountAmount` | `BigDecimal` | 折扣封顶金额（折扣券，可空） |
+| `minSpendAmount` | `BigDecimal` | 使用门槛 |
+| `validType` | `String` | `fixed`/`relative` |
+| `validStartAt` / `validEndAt` | `String` | 固定有效期起止（`fixed`） |
+| `validDays` | `Integer` | 领取后有效天数（`relative`） |
+| `totalQuantity` | `Integer` | 发放总量（null = 不限量） |
+| `claimedQuantity` | `Integer` | 已领取数量 |
+| `remainingQuantity` | `Integer` | 剩余数量（null = 不限量） |
+| `perUserLimit` | `Integer` | 每人限领张数 |
+| `status` | `String` | `active`/`inactive` |
+| `claimedByMe` | `Boolean` | 当前用户是否已达领取上限 |
+| `createdAt` | `String` | 创建时间 |
+
+**错误响应**：无特殊错误码（未登录返回 `10001`/`TOKEN_MISSING` 等通用鉴权错误）。
+
+---
+
+### 98.2 POST `/coupons/{templateId}/claim` — 领取优惠券
+
+**Auth**: Required  
+**Roles**: `resident`
+
+自助领取。校验：模板 `active`、范围可见（平台券或本物业商家券）、未领完、未达每人限领。领取后按 `validType` 计算 `expireAt` 落库，模板 `claimedQuantity` +1。
+
+**Path 参数**：`templateId` 券模板 ID（`cpt_` 前缀）
+
+**响应**：`UserCouponResponse`（结构见 §98.3）
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `60040` | 404 | 券模板不存在 |
+| `60047` | 400 | 优惠券已被领完 |
+| `60048` | 400 | 已达到每人限领上限 |
+| `60049` | 400 | 该优惠券不可领取（非 active 或范围不可见） |
+
+---
+
+### 98.3 GET `/coupons/my` — 我的优惠券
+
+**Auth**: Required  
+**Roles**: `resident`
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `status` | `String` | ❌ | `unused`/`locked`/`used`/`expired`，不传 = 全部 |
+
+**响应**：`Array<UserCouponResponse>`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String` | 用户券 ID（`ucp_` 前缀，下单选券时回传该值） |
+| `templateId` | `String` | 券模板 ID |
+| `name` | `String` | 券名称（模板快照） |
+| `type` | `String` | 券类型 |
+| `scope` | `String` | 券范围（按是否有 `merchantId` 推导） |
+| `merchantId` / `merchantName` | `String` | 限定商家（平台券为 null） |
+| `valueAmount` / `discountRate` / `maxDiscountAmount` / `minSpendAmount` | `BigDecimal` | 面额快照（同模板） |
+| `status` | `String` | `unused`/`locked`/`used`/`expired` |
+| `source` | `String` | `claim`/`grant` |
+| `expireAt` | `String` | 过期时间 |
+| `claimedAt` | `String` | 到账时间 |
+| `usedAt` | `String` | 核销时间 |
+| `orderId` | `String` | 核销订单 ID |
+| `expired` | `Boolean` | 按当前时间计算的过期标记 |
+
+> 查询 `unused` 券时会顺带把已过期的券惰性更新为 `expired`。
+
+---
+
+### 98.4 GET `/coupons/available` — 下单可用券
+
+**Auth**: Required  
+**Roles**: `resident`
+
+按商家与订单**商品金额**试算当前用户可用券及抵扣额，供下单页选择。
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `merchantId` | `String` | ✅ | 订单商家 ID |
+| `productAmount` | `BigDecimal` | ❌ | 订单商品金额（不含配送费），不传按 0 计算 |
+
+**响应**：`Array<AvailableCouponResponse>`（按 `discountAmount` 倒序）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String` | 用户券 ID（下单回传） |
+| `templateId` | `String` | 券模板 ID |
+| `name` | `String` | 券名称 |
+| `type` / `scope` | `String` | 券类型 / 范围 |
+| `merchantId` | `String` | 限定商家 |
+| `valueAmount` / `discountRate` / `maxDiscountAmount` / `minSpendAmount` | `BigDecimal` | 面额快照 |
+| `expireAt` | `String` | 过期时间 |
+| `discountAmount` | `BigDecimal` | 本单可抵扣金额 |
+| `usable` | `Boolean` | 是否满足使用门槛（未达门槛时 `discountAmount=0`、`usable=false`） |
+
+---
+
+### 98.5 管理端 — 券模板管理
+
+**Roles**: `platform_admin`、`property_admin`
+
+> 权限：平台券仅 `platform_admin` 可创建/管理；`property_admin` 仅能管理**本物业**的商家券。
+
+#### 98.5.1 GET `/admin/coupons` — 券模板列表
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `Integer` | ❌ | 默认 1 |
+| `pageSize` | `Integer` | ❌ | 默认 20，最大 100 |
+| `scope` | `String` | ❌ | `platform`/`merchant` |
+| `status` | `String` | ❌ | `active`/`inactive` |
+| `merchantId` | `String` | ❌ | 按商家过滤 |
+| `propertyCompanyId` | `String` | ❌ | 仅 `platform_admin` 可用 |
+
+**响应**：`PageResponse<CouponTemplateResponse>`（`list` + `pagination`，元素结构同 §98.1）
+
+#### 98.5.2 GET `/admin/coupons/{id}` — 券模板详情
+
+**响应**：`CouponTemplateResponse`
+
+#### 98.5.3 POST `/admin/coupons` — 创建券模板
+
+**请求体**（`CreateCouponTemplateRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `name` | `String` | ✅ | 券名称，≤100 字 |
+| `description` | `String` | ❌ | 使用说明，≤500 字 |
+| `type` | `String` | ✅ | `full_reduction`/`discount`/`instant_reduction` |
+| `scope` | `String` | ✅ | `platform`/`merchant` |
+| `merchantId` | `String` | 条件 | `scope=merchant` 时必填 |
+| `valueAmount` | `BigDecimal` | 条件 | 满减/立减必填，>0 |
+| `discountRate` | `BigDecimal` | 条件 | 折扣券必填，0~10（8.5 = 8.5 折） |
+| `maxDiscountAmount` | `BigDecimal` | ❌ | 折扣券封顶金额 |
+| `minSpendAmount` | `BigDecimal` | ❌ | 使用门槛，默认 0 |
+| `validType` | `String` | ✅ | `fixed`/`relative` |
+| `validStartAt` | `String` | 条件 | `fixed` 必填，格式 `yyyy-MM-dd HH:mm:ss` |
+| `validEndAt` | `String` | 条件 | `fixed` 必填，需晚于开始时间 |
+| `validDays` | `Integer` | 条件 | `relative` 必填，≥1 |
+| `totalQuantity` | `Integer` | ❌ | 发放总量，不传 = 不限量 |
+| `perUserLimit` | `Integer` | ✅ | 每人限领，≥1 |
+| `status` | `String` | ❌ | `active`（默认）/`inactive` |
+
+**响应**：`CouponTemplateResponse`
+
+#### 98.5.4 PUT `/admin/coupons/{id}` — 更新券模板
+
+**请求体**（`UpdateCouponTemplateRequest`，字段全可选）：`name`/`description`/`valueAmount`/`discountRate`/`maxDiscountAmount`/`minSpendAmount`/`validStartAt`/`validEndAt`/`validDays`/`totalQuantity`/`perUserLimit`/`status`。
+
+> **约束**：券模板**已发放**（`claimedQuantity > 0`）后，**禁止**再修改 `valueAmount`/`discountRate`/`maxDiscountAmount`/`minSpendAmount`（返回 `60050`）。
+
+**响应**：`CouponTemplateResponse`
+
+#### 98.5.5 PUT `/admin/coupons/{id}/status` — 启用/停用
+
+**请求体**：`{ "status": "active" | "inactive" }`
+
+**响应**：`CouponTemplateResponse`
+
+#### 98.5.6 POST `/admin/coupons/grant` — 定向发放
+
+**请求体**（`GrantCouponRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `templateId` | `String` | ✅ | 券模板 ID |
+| `residentIds` | `Array<String>` | ✅ | 发放对象（业主/居民 ID 列表） |
+| `quantity` | `Integer` | ❌ | 每人发放张数，默认 1（受每人限领与剩余总量约束，自动截断） |
+
+**响应**：`{ "grantedCount": 5 }`（实际成功发放张数）
+
+---
+
+### 98.6 商家端 — 本商家优惠券
+
+**Roles**: `merchant`（商家身份由登录态解析）
+
+#### 98.6.1 GET `/merchant/coupons` — 本商家券模板列表
+
+**响应**：`Array<CouponTemplateResponse>`（仅返回 `scope=merchant` 且属于本商家的券，最多 100 条）
+
+#### 98.6.2 POST `/merchant/coupons/grant` — 定向发放本商家券
+
+**请求体**：同 §98.5.6 `GrantCouponRequest`
+
+> 商家只能发放**自己的商家券**；发放平台券或他人商家券返回 `PERMISSION_DENIED`。
+
+**响应**：`{ "grantedCount": n }`
+
+---
+
+### 98.7 订单集成说明
+
+| 接口 | 新增字段 | 说明 |
+| --- | --- | --- |
+| `POST /orders/preview`（§8.0） | 请求 `userCouponId`；响应 `couponId`、`couponAmount` | 试算不改变券状态，券无效/不适用时 `couponAmount=0` |
+| `POST /orders/from-listing/preview`（§8.0.0） | 同上 | 同上 |
+| `POST /orders/{id}/pay`（§8.2） | 请求 `userCouponId`；响应 `couponAmount` | 支付时锁定券；即时支付成功后核销，微信支付在回调确认后核销 |
+| `GET /orders/my`、`GET /orders/{id}` | 响应新增 `couponId`、`couponAmount` | 订单详情展示优惠明细 |
+
+**典型下单流程**：
+
+1. 进入下单页 → `GET /coupons/available?merchantId=xxx&productAmount=100` 获取可用券及抵扣额
+2. 用户选券 → `POST /orders/preview` 带 `userCouponId` 确认 `cashAmount`
+3. 支付 → `POST /orders/{id}/pay` 带 `userCouponId`（后端再次校验并锁定）
+4. 支付成功 → 券置 `used`；若订单取消/超时未支付 → 券自动释放回 `unused`
+
+---
+
+### 98.8 错误码（优惠券）
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `60040` | 404 | 优惠券模板不存在 |
+| `60041` | 404 | 优惠券不存在 |
+| `60042` | 400 | 优惠券不可用（已使用/已锁定/已过期） |
+| `60043` | 400 | 优惠券已过期 |
+| `60044` | 400 | 优惠券已使用 |
+| `60045` | 400 | 订单金额未达到优惠券使用门槛 |
+| `60046` | 400 | 该优惠券不适用于当前商家 |
+| `60047` | 400 | 优惠券已被领完 |
+| `60048` | 400 | 已达到每人限领上限 |
+| `60049` | 400 | 该优惠券不可领取 |
+| `60050` | 400 | 优惠券模板已发放，不可修改关键字段 |
+
+---
+
+### 98.9 存量数据处理
+
+商品 `prd_357991e8e01000`「优惠券10元」（`category=团购`，商家 `mch_demo002`）已被订单/询价引用，**不物理删除**，由 `V17__coupon.sql` 将其 `status` 置为 `inactive`（下架）。同表兜底：`category='团购'` 且名称包含「优惠券」的未删除商品一并下架。

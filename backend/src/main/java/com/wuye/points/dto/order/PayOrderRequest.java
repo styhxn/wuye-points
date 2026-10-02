@@ -32,4 +32,7 @@ public class PayOrderRequest {
 
     @Schema(description = "用户openid（wechat/mixed 含现金部分时使用；不传则取用户绑定openid）", example = "oGX3Z5Xx...")
     private String openid;
+
+    @Schema(description = "使用的用户优惠券ID（user_coupon.id）", example = "ucp_1a2b3c")
+    private String userCouponId;
 }

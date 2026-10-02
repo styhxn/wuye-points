@@ -49,6 +49,8 @@ public class OrderConverter {
                 .pointUsed(defaultPoint(order.getPointUsed()))
                 .coinUsed(defaultDecimal(order.getCoinUsed()))
                 .cashAmount(defaultDecimal(order.getCashAmount()))
+                .couponId(order.getCouponId())
+                .couponAmount(defaultDecimal(order.getCouponAmount()))
                 .itemCount(sumQuantity(items))
                 .items(displayItems.stream().map(this::toItemSnapshot).toList())
                 .familyId(order.getFamilyId())

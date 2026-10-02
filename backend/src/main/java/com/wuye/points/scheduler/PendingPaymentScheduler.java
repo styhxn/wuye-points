@@ -9,6 +9,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.ServiceOrderRepository;
 import com.wuye.points.repository.ServiceSubscriptionRepository;
+import com.wuye.points.service.CouponService;
 import com.wuye.points.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class PendingPaymentScheduler {
     private final ServiceOrderRepository serviceOrderRepository;
     private final ServiceSubscriptionRepository serviceSubscriptionRepository;
     private final ProductStockService productStockService;
+    private final CouponService couponService;
     private final PayChannel wechatPayService;
 
     @Scheduled(cron = "0 */10 * * * ?")
@@ -100,6 +102,8 @@ public class PendingPaymentScheduler {
                     orderRepository.save(order);
                     // 预支付时已锁定库存，超时取消需恢复（行锁下操作，避免与并发下单冲突）
                     productStockService.restoreByOrderId(order.getId());
+                    // 预支付时已锁定的优惠券一并释放回用户账户
+                    couponService.releaseByOrder(order.getId());
                     log.info("订单支付超时自动取消 orderId={}", order.getId());
                 }
             });

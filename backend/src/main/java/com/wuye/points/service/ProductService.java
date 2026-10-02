@@ -69,7 +69,7 @@ public class ProductService {
         }
         validateListFilters(merchantId, status);
 
-        String scopedPropertyCompanyId = resolveBrowsePropertyCompanyId(propertyCompanyId);
+        String scopedPropertyCompanyId = resolveBrowsePropertyCompanyId(propertyCompanyId, merchantId);
         boolean includeMemberPrice = UserContext.currentUserId() != null;
         boolean publicOnly = !canManageAnyProduct();
 
@@ -375,7 +375,7 @@ public class ProductService {
         return merchantUser.getPhone().equals(merchant.getContactPhone());
     }
 
-    private String resolveBrowsePropertyCompanyId(String propertyCompanyId) {
+    private String resolveBrowsePropertyCompanyId(String propertyCompanyId, String merchantId) {
         String contextPropertyCompanyId = UserContext.currentPropertyCompanyId();
         if (StringUtils.hasText(contextPropertyCompanyId)) {
             if (roleGuard.isPlatformAdmin() && StringUtils.hasText(propertyCompanyId)) {
@@ -384,11 +384,18 @@ public class ProductService {
             }
             return contextPropertyCompanyId;
         }
-        if (!StringUtils.hasText(propertyCompanyId)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "propertyCompanyId不能为空");
+        if (StringUtils.hasText(propertyCompanyId)) {
+            validatePropertyCompanyId(propertyCompanyId);
+            return propertyCompanyId;
         }
-        validatePropertyCompanyId(propertyCompanyId);
-        return propertyCompanyId;
+        // 未登录（无物业上下文）且未显式传 propertyCompanyId 时，按 merchantId 从商家推导，
+        // 使商家详情页可直接按店铺查商品（merchant_id 已隐含唯一 propertyCompanyId）。
+        if (StringUtils.hasText(merchantId)) {
+            return merchantRepository.findById(merchantId)
+                    .map(Merchant::getPropertyCompanyId)
+                    .orElseThrow(() -> new BizException(ErrorCode.PARAM_INVALID, "商家不存在"));
+        }
+        throw new BizException(ErrorCode.PARAM_MISSING, "propertyCompanyId不能为空");
     }
 
     private void validatePropertyCompanyId(String propertyCompanyId) {

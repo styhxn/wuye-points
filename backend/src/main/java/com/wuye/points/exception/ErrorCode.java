@@ -226,6 +226,20 @@ public enum ErrorCode {
     TRANSFER_NOT_FOUND(99011, "转账单不存在", 404),
     TRANSFER_AMOUNT_INVALID(99012, "转账金额不合法", 400),
     RECOVERY_NOT_FOUND(99013, "待追回台账记录不存在", 404),
+
+    // 优惠券 60xxx
+    COUPON_TEMPLATE_NOT_FOUND(60040, "优惠券模板不存在", 404),
+    COUPON_NOT_FOUND(60041, "优惠券不存在", 404),
+    COUPON_UNAVAILABLE(60042, "优惠券不可用", 400),
+    COUPON_EXPIRED(60043, "优惠券已过期", 400),
+    COUPON_ALREADY_USED(60044, "优惠券已使用", 400),
+    COUPON_MIN_SPEND_NOT_MET(60045, "订单金额未达到优惠券使用门槛", 400),
+    COUPON_SCOPE_MISMATCH(60046, "该优惠券不适用于当前商家", 400),
+    COUPON_STOCK_EXHAUSTED(60047, "优惠券已被领完", 400),
+    COUPON_CLAIM_LIMIT_EXCEEDED(60048, "已达到每人限领上限", 400),
+    COUPON_NOT_CLAIMABLE(60049, "该优惠券不可领取", 400),
+    COUPON_TEMPLATE_IN_USE(60050, "优惠券模板已发放，不可修改关键字段", 400),
+
     SYSTEM_ERROR(99001, "内部服务异常", 500);
 
     private final int code;

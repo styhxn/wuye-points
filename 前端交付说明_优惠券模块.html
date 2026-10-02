@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前端交付说明 — 优惠券模块</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1f2328; --muted:#656d76; --line:#d8dee4;
+    --brand:#2563eb; --ok:#1a7f37; --warn:#9a6700; --warn-bg:#fff8c5; --err:#cf222e;
+    --code-bg:#f6f8fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 80px}
+  header{background:linear-gradient(120deg,#1e3a8a,#2563eb);color:#fff;border-radius:14px;padding:28px 28px;margin-bottom:24px}
+  header h1{margin:0 0 8px;font-size:24px;letter-spacing:.3px}
+  header p{margin:0;opacity:.9;font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:4px solid var(--brand)}
+  h3{font-size:16px;margin:22px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;font-weight:600;vertical-align:middle}
+  .tag-ok{background:#dafbe1;color:var(--ok)}
+  .tag-err{background:#ffebe9;color:var(--err)}
+  .tag-warn{background:var(--warn-bg);color:var(--warn)}
+  .tag-api{background:#ddf4ff;color:#0969da}
+  code{background:var(--code-bg);padding:2px 6px;border-radius:5px;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:13px;line-height:1.55}
+  pre code{background:none;padding:0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f0f3f6;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  .req{color:var(--err);font-weight:700}
+  .opt{color:var(--muted)}
+  .note{border-left:4px solid var(--warn);background:var(--warn-bg);padding:12px 16px;border-radius:8px;margin:14px 0}
+  .good{border-left:4px solid var(--ok);background:#dafbe1;padding:12px 16px;border-radius:8px;margin:14px 0}
+  .bad{border-left:4px solid var(--err);background:#ffebe9;padding:12px 16px;border-radius:8px;margin:14px 0}
+  ul{margin:8px 0;padding-left:22px}
+  li{margin:5px 0}
+  .muted{color:var(--muted);font-size:13px}
+  .ep{font-family:ui-monospace,Consolas,monospace;font-weight:600;color:#0969da}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>优惠券模块 — 前端对接说明</h1>
+  <p>交付对象：前端 · 版本：2026-10-02 · 对应后端分支 <code style="background:rgba(255,255,255,.18);color:#fff">2026-10-02</code> · 接口文档同步至 v8.8 §98</p>
+</header>
+
+<h2>一、先看结论</h2>
+<div class="card">
+  <ul>
+    <li>优惠券<strong>不再是商品</strong>，改成独立功能模块；原商品「优惠券10元」已下架（<code>status=inactive</code>），前端<strong>不要在商品列表里再展示优惠券商品</strong>。</li>
+    <li>用户端新增 4 个接口：<span class="ep">GET /coupons/center</span>（领券中心）、<span class="ep">POST /coupons/{templateId}/claim</span>（领取）、<span class="ep">GET /coupons/my</span>（我的券）、<span class="ep">GET /coupons/available</span>（下单可用券）。</li>
+    <li>下单链路接入：<strong>试算</strong>和<strong>支付</strong>两个接口新增 <code>userCouponId</code> 入参；响应新增 <code>couponId</code> / <code>couponAmount</code> 出参。</li>
+    <li>抵扣只作用于<strong>商品金额</strong>，<strong>不抵扣配送费</strong>。</li>
+  </ul>
+</div>
+
+<h2>二、业务口径</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:22%">维度</th><th>取值与说明</th></tr>
+    <tr><td>券类型 <code>type</code></td>
+      <td><code>full_reduction</code> 满减 · <code>discount</code> 折扣 · <code>instant_reduction</code> 立减</td></tr>
+    <tr><td>适用范围 <code>scope</code></td>
+      <td><code>platform</code> 平台券（全平台通用） · <code>merchant</code> 商家券（限指定商家，字段 <code>merchantId</code>）</td></tr>
+    <tr><td>到账方式 <code>source</code></td>
+      <td><code>claim</code> 领券中心自助领取 · <code>grant</code> 商家/平台定向发放</td></tr>
+    <tr><td>有效期 <code>validType</code></td>
+      <td><code>fixed</code> 固定起止（<code>validStartAt</code>/<code>validEndAt</code>） · <code>relative</code> 领取后 N 天（<code>validDays</code>）</td></tr>
+    <tr><td>使用门槛 <code>minSpendAmount</code></td>
+      <td>订单<strong>商品金额</strong>（不含配送费）需 ≥ 该值，否则不可用</td></tr>
+  </table>
+  <h3>抵扣计算规则</h3>
+  <table>
+    <tr><th>券类型</th><th>抵扣额</th></tr>
+    <tr><td>满减 / 立减</td><td><code>min(valueAmount, 商品金额)</code></td></tr>
+    <tr><td>折扣</td><td><code>min(商品金额 × (10 − discountRate) / 10, maxDiscountAmount, 商品金额)</code></td></tr>
+    <tr><td>未达门槛</td><td><code>0</code>（不可用）</td></tr>
+  </table>
+  <p class="muted">折扣率写法：<code>8.5</code> 表示 8.5 折（即抵扣 15%）。</p>
+</div>
+
+<h2>三、券状态机（前端展示用）</h2>
+<div class="card">
+  <table>
+    <tr><th style="width:18%">状态</th><th>含义</th><th>前端建议文案</th></tr>
+    <tr><td><code>unused</code></td><td>可用</td><td>立即使用</td></tr>
+    <tr><td><code>locked</code></td><td>已锁定（下单支付中）</td><td>支付中</td></tr>
+    <tr><td><code>used</code></td><td>已核销</td><td>已使用</td></tr>
+    <tr><td><code>expired</code></td><td>已过期</td><td>已过期</td></tr>
+  </table>
+  <div class="note">订单取消或超时未支付，券会<strong>自动释放</strong>回 <code>unused</code>，前端刷新「我的券」即可看到。</div>
+</div>
+
+<h2>四、用户端接口</h2>
+
+<h3>4.1 领券中心 <span class="tag tag-api">GET</span> <span class="ep">/coupons/center</span></h3>
+<pre><code>GET /api/v1/coupons/center?merchantId=mch_xxx
+Auth: Required   Roles: resident
+merchantId 可选：只看某商家的商家券</code></pre>
+<p>返回可领取的券模板数组。关键字段：<code>id</code>(cpt_)、<code>name</code>、<code>type</code>、<code>scope</code>、<code>merchantName</code>、<code>valueAmount</code>、<code>discountRate</code>、<code>maxDiscountAmount</code>、<code>minSpendAmount</code>、<code>validType</code>、<code>validStartAt</code>、<code>validEndAt</code>、<code>validDays</code>、<code>totalQuantity</code>、<code>claimedQuantity</code>、<code>remainingQuantity</code>、<code>perUserLimit</code>、<code>claimedByMe</code>。</p>
+<div class="good"><code>claimedByMe=true</code> 表示当前用户已达领取上限，前端应把「领取」按钮置灰。</div>
+
+<h3>4.2 领取 <span class="tag tag-api">POST</span> <span class="ep">/coupons/{templateId}/claim</span></h3>
+<pre><code>POST /api/v1/coupons/cpt_xxx/claim
+Auth: Required   Roles: resident
+Body: 无</code></pre>
+<p>返回 <code>UserCouponResponse</code>（结构见 4.3）。领取失败错误码：<code>60047</code> 已领完 / <code>60048</code> 超每人限领 / <code>60049</code> 不可领取（非 active 或范围不可见）。</p>
+
+<h3>4.3 我的优惠券 <span class="tag tag-api">GET</span> <span class="ep">/coupons/my</span></h3>
+<pre><code>GET /api/v1/coupons/my?status=unused
+Auth: Required   Roles: resident
+status 可选：unused / locked / used / expired，不传=全部</code></pre>
+<p>返回用户券数组：</p>
+<table>
+  <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+  <tr><td><code>id</code></td><td>String</td><td>用户券 ID（<code>ucp_</code> 前缀，下单选券时回传此值）</td></tr>
+  <tr><td><code>templateId</code></td><td>String</td><td>券模板 ID</td></tr>
+  <tr><td><code>name</code></td><td>String</td><td>券名称</td></tr>
+  <tr><td><code>type</code> / <code>scope</code></td><td>String</td><td>券类型 / 券范围</td></tr>
+  <tr><td><code>merchantId</code> / <code>merchantName</code></td><td>String</td><td>限定商家（平台券为 null，字段会整个不返回）</td></tr>
+  <tr><td><code>valueAmount</code> / <code>discountRate</code> / <code>maxDiscountAmount</code> / <code>minSpendAmount</code></td><td>BigDecimal</td><td>面额快照（同模板）</td></tr>
+  <tr><td><code>status</code></td><td>String</td><td>券状态</td></tr>
+  <tr><td><code>source</code></td><td>String</td><td><code>claim</code> 领取 / <code>grant</code> 发放</td></tr>
+  <tr><td><code>expireAt</code></td><td>String</td><td>过期时间</td></tr>
+  <tr><td><code>claimedAt</code> / <code>usedAt</code></td><td>String</td><td>到账时间 / 核销时间</td></tr>
+  <tr><td><code>orderId</code></td><td>String</td><td>核销订单 ID</td></tr>
+  <tr><td><code>expired</code></td><td>Boolean</td><td>按当前时间计算的过期标记</td></tr>
+</table>
+
+<h3>4.4 下单可用券 <span class="tag tag-api">GET</span> <span class="ep">/coupons/available</span></h3>
+<pre><code>GET /api/v1/coupons/available?merchantId=mch_xxx&productAmount=100.00
+Auth: Required   Roles: resident
+merchantId 必填；productAmount 为订单商品金额（不含配送费）</code></pre>
+<p>返回可用券数组（按可抵扣金额倒序），元素含 <code>id</code>(ucp_)、<code>name</code>、<code>type</code>、<code>scope</code>、<code>merchantId</code>、面额快照、<code>expireAt</code>、<code>discountAmount</code>（本单可抵扣金额）、<code>usable</code>（是否满足门槛）。</p>
+<div class="note">未达门槛的券也会返回，但 <code>discountAmount=0</code>、<code>usable=false</code>，前端应置灰并提示"未达使用门槛"。</div>
+
+<h2>五、下单流程接线（重点）</h2>
+<div class="card">
+  <pre><code>1. 进入下单页
+   GET /coupons/available?merchantId=xxx&productAmount=商品金额
+   → 渲染可用券列表
+
+2. 用户选券
+   POST /orders/preview   （或 POST /orders/from-listing/preview）
+   body 增加 "userCouponId": "ucp_xxx"
+   → 响应返回 couponId / couponAmount / cashAmount（最终应付现金）
+
+3. 支付
+   POST /orders/{id}/pay
+   body 增加 "userCouponId": "ucp_xxx"
+   → 响应返回 couponAmount
+
+4. 订单查询
+   GET /orders/my 或 GET /orders/{id}
+   → 响应含 couponId / couponAmount（订单详情展示优惠明细）</code></pre>
+</div>
+
+<h3>5.1 试算接口新增字段</h3>
+<table>
+  <tr><th>接口</th><th>入参新增</th><th>出参新增</th></tr>
+  <tr><td><span class="ep">POST /orders/preview</span>（§8.0）</td><td><code>userCouponId</code>（选填）</td><td><code>couponId</code>、<code>couponAmount</code></td></tr>
+  <tr><td><span class="ep">POST /orders/from-listing/preview</span>（§8.0.0）</td><td><code>userCouponId</code>（选填）</td><td><code>couponId</code>、<code>couponAmount</code></td></tr>
+  <tr><td><span class="ep">POST /orders/{id}/pay</span>（§8.2）</td><td><code>userCouponId</code>（选填）</td><td><code>couponAmount</code></td></tr>
+</table>
+<div class="good">试算只是"预览"，<strong>不会锁定券</strong>；真正锁定发生在 <code>pay</code>。券无效/不适用时 <code>couponAmount=0</code>，不报错。</div>
+<div class="note"><code>cashAmount</code> 计算口径：<code>totalAmount − couponAmount − coinUsed − pointUsed折算值</code>，最低 0。</div>
+
+<h2>六、券模板展示字段速查（<code>CouponTemplateResponse</code>）</h2>
+<table>
+  <tr><th>字段</th><th>类型</th><th>说明</th></tr>
+  <tr><td><code>id</code></td><td>String</td><td>模板 ID（cpt_）</td></tr>
+  <tr><td><code>name</code> / <code>description</code></td><td>String</td><td>券名称 / 使用说明</td></tr>
+  <tr><td><code>type</code></td><td>String</td><td>券类型</td></tr>
+  <tr><td><code>scope</code></td><td>String</td><td>platform / merchant</td></tr>
+  <tr><td><code>merchantId</code> / <code>merchantName</code></td><td>String</td><td>商家券的商家（平台券为 null）</td></tr>
+  <tr><td><code>valueAmount</code></td><td>BigDecimal</td><td>面额（满减/立减）</td></tr>
+  <tr><td><code>discountRate</code></td><td>BigDecimal</td><td>折扣率（折扣券）</td></tr>
+  <tr><td><code>maxDiscountAmount</code></td><td>BigDecimal</td><td>折扣封顶（折扣券，可空）</td></tr>
+  <tr><td><code>minSpendAmount</code></td><td>BigDecimal</td><td>使用门槛</td></tr>
+  <tr><td><code>validType</code></td><td>String</td><td>fixed / relative</td></tr>
+  <tr><td><code>validStartAt</code> / <code>validEndAt</code></td><td>String</td><td>固定有效期起止（fixed）</td></tr>
+  <tr><td><code>validDays</code></td><td>Integer</td><td>领取后有效天数（relative）</td></tr>
+  <tr><td><code>totalQuantity</code> / <code>claimedQuantity</code> / <code>remainingQuantity</code></td><td>Integer</td><td>总量 / 已领 / 剩余（null=不限量）</td></tr>
+  <tr><td><code>perUserLimit</code></td><td>Integer</td><td>每人限领</td></tr>
+  <tr><td><code>status</code></td><td>String</td><td>active / inactive</td></tr>
+  <tr><td><code>claimedByMe</code></td><td>Boolean</td><td>当前用户是否已达上限（领券中心返回）</td></tr>
+  <tr><td><code>createdAt</code></td><td>String</td><td>创建时间</td></tr>
+</table>
+
+<h2>七、管理端接口（管理后台用）</h2>
+<div class="card">
+  <p class="muted">Roles：<code>platform_admin</code>、<code>property_admin</code>。平台券仅 <code>platform_admin</code> 可创建/管理；<code>property_admin</code> 仅能管理本物业的商家券。</p>
+  <table>
+    <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+    <tr><td>GET</td><td><span class="ep">/admin/coupons</span></td><td>模板列表（分页，支持 scope/status/merchantId/propertyCompanyId 过滤）</td></tr>
+    <tr><td>GET</td><td><span class="ep">/admin/coupons/{id}</span></td><td>模板详情</td></tr>
+    <tr><td>POST</td><td><span class="ep">/admin/coupons</span></td><td>创建模板</td></tr>
+    <tr><td>PUT</td><td><span class="ep">/admin/coupons/{id}</span></td><td>更新模板（已发放后禁改面额/门槛）</td></tr>
+    <tr><td>PUT</td><td><span class="ep">/admin/coupons/{id}/status</span></td><td>启用/停用，body <code>{"status":"active"|"inactive"}</code></td></tr>
+    <tr><td>POST</td><td><span class="ep">/admin/coupons/grant</span></td><td>定向发放</td></tr>
+  </table>
+  <h3>创建模板请求体</h3>
+  <pre><code>{
+  "name": "满100减20",
+  "description": "仅限本店使用",
+  "type": "full_reduction",        // full_reduction | discount | instant_reduction
+  "scope": "merchant",             // platform | merchant
+  "merchantId": "mch_demo002",     // scope=merchant 必填
+  "valueAmount": 20.00,            // 满减/立减必填
+  "discountRate": null,            // 折扣券必填（8.5=8.5折）
+  "maxDiscountAmount": null,       // 折扣券可选封顶
+  "minSpendAmount": 100.00,        // 门槛，默认 0
+  "validType": "relative",         // fixed | relative
+  "validStartAt": null,            // fixed 必填 "yyyy-MM-dd HH:mm:ss"
+  "validEndAt": null,              // fixed 必填
+  "validDays": 30,                 // relative 必填
+  "totalQuantity": 1000,           // 不传=不限量
+  "perUserLimit": 1,               // 必填
+  "status": "active"
+}</code></pre>
+  <h3>定向发放请求体</h3>
+  <pre><code>POST /admin/coupons/grant
+{
+  "templateId": "cpt_xxx",
+  "residentIds": ["res_001", "res_002"],
+  "quantity": 1          // 每人发放张数，默认 1
+}
+// 响应：{ "grantedCount": 2 }</code></pre>
+</div>
+
+<h2>八、商家端接口（商家工作台用）</h2>
+<div class="card">
+  <p class="muted">Roles：<code>merchant</code>（商家身份由登录态解析）。</p>
+  <table>
+    <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+    <tr><td>GET</td><td><span class="ep">/merchant/coupons</span></td><td>本商家券模板列表（仅 scope=merchant 且属于本商家）</td></tr>
+    <tr><td>POST</td><td><span class="ep">/merchant/coupons/grant</span></td><td>发放本商家券（body 同管理端）</td></tr>
+  </table>
+  <div class="note">商家只能发放<strong>自己的商家券</strong>；发放平台券或他人券返回 <code>PERMISSION_DENIED</code>。</div>
+</div>
+
+<h2>九、错误码</h2>
+<div class="card">
+  <table>
+    <tr><th>错误码</th><th>HTTP</th><th>说明 / 前端处理建议</th></tr>
+    <tr><td><code>60040</code></td><td>404</td><td>优惠券模板不存在</td></tr>
+    <tr><td><code>60041</code></td><td>404</td><td>优惠券不存在（userCouponId 无效或非本人持有）</td></tr>
+    <tr><td><code>60042</code></td><td>400</td><td>优惠券不可用（已使用/已锁定/已过期）</td></tr>
+    <tr><td><code>60043</code></td><td>400</td><td>优惠券已过期 → 提示并刷新可用券</td></tr>
+    <tr><td><code>60044</code></td><td>400</td><td>优惠券已使用 → 提示并取消选中</td></tr>
+    <tr><td><code>60045</code></td><td>400</td><td>未达使用门槛 → 置灰或提示</td></tr>
+    <tr><td><code>60046</code></td><td>400</td><td>券不适用于当前商家</td></tr>
+    <tr><td><code>60047</code></td><td>400</td><td>优惠券已被领完</td></tr>
+    <tr><td><code>60048</code></td><td>400</td><td>已达每人限领上限</td></tr>
+    <tr><td><code>60049</code></td><td>400</td><td>该优惠券不可领取</td></tr>
+    <tr><td><code>60050</code></td><td>400</td><td>模板已发放，不可修改关键字段（管理端）</td></tr>
+  </table>
+</div>
+
+<h2>十、前端注意事项</h2>
+<div class="card">
+  <ul>
+    <li>全局 Jackson 配置 <code>default-property-inclusion=non_null</code>：<strong>值为 null 的字段不会出现</strong>在 JSON 中，不是返回 null。例如平台券的 <code>merchantId</code>/<code>merchantName</code> 会"整个消失"，前端判空请用 <code>!field</code> 而非 <code>field === null</code>。</li>
+    <li>优惠券<strong>只抵扣商品金额</strong>，不抵扣配送费；配送费结算不受影响。</li>
+    <li>试算不锁券、支付才锁券；订单取消/超时未支付券会自动释放，刷新「我的券」即可。</li>
+    <li>不要在下单页用 <code>discountAmount</code> 自行计算最终应付现金，应以 <code>POST /orders/preview</code> 返回的 <code>cashAmount</code> 为准（后端还会叠加物业币/积分规则）。</li>
+    <li>商品列表不要再展示原「优惠券10元」商品（已下架 <code>status=inactive</code>）。</li>
+  </ul>
+</div>
+
+<p class="muted" style="margin-top:36px">本说明对应接口文档 v8.8 §98 优惠券模块；数据库变更见 <code>backend/src/main/resources/db/migration/V17__coupon.sql</code>（生产环境需手动执行）。</p>
+
+</div>
+</body>
+</html>

@@ -34,4 +34,7 @@ public class PreviewOrderRequest {
 
     @Schema(description = "家庭ID（使用家庭物业币池时传入）", example = "fam_abc123")
     private String familyId;
+
+    @Schema(description = "期望使用的用户优惠券ID（user_coupon.id）", example = "ucp_1a2b3c")
+    private String userCouponId;
 }

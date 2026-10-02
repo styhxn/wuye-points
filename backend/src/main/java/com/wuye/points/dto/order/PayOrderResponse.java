@@ -36,6 +36,9 @@ public class PayOrderResponse {
     @Schema(description = "现金支付金额", example = "84.90")
     private BigDecimal cashAmount;
 
+    @Schema(description = "优惠券抵扣金额", example = "20.00")
+    private BigDecimal couponAmount;
+
     @Schema(description = "支付时间", example = "2026-01-01T00:00:00.000Z")
     private String paidAt;
 

@@ -54,6 +54,12 @@ public class OrderListItemResponse {
     @Schema(description = "现金支付金额", example = "84.90")
     private BigDecimal cashAmount;
 
+    @Schema(description = "使用的用户优惠券ID", example = "ucp_1a2b3c")
+    private String couponId;
+
+    @Schema(description = "优惠券抵扣金额", example = "20.00")
+    private BigDecimal couponAmount;
+
     @Schema(description = "配送地址", example = "阳光花园1号楼1单元101")
     private String deliveryAddress;
 

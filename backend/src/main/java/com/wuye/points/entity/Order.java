@@ -141,4 +141,12 @@ public class Order extends BaseEntity {
     /** 履约方式选定时间 */
     @Column(name = "fulfillment_chosen_at")
     private LocalDateTime fulfillmentChosenAt;
+
+    /** 使用的用户优惠券ID（user_coupon.id） */
+    @Column(name = "coupon_id", length = 32)
+    private String couponId;
+
+    /** 优惠券抵扣金额（由商家承担；佣金基数按 totalAmount - couponAmount 计算） */
+    @Column(name = "coupon_amount", precision = 10, scale = 2)
+    private BigDecimal couponAmount;
 }

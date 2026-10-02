@@ -256,7 +256,10 @@ public class DistributionService {
         BigDecimal pointCost = BigDecimal.valueOf(pointUsed)
                 .divide(exchangeRate, MONEY_SCALE, RoundingMode.HALF_UP);
         BigDecimal coinCost = coinUsed;
-        BigDecimal totalAmount = defaultDecimal(order.getTotalAmount());
+        // 分账口径：优惠券由商家承担，平台佣金基数按「实付商品金额」= totalAmount − couponAmount
+        BigDecimal totalAmount = defaultDecimal(order.getTotalAmount())
+                .subtract(defaultDecimal(order.getCouponAmount()))
+                .max(BigDecimal.ZERO);
         BigDecimal commissionRate = config.getCommissionRate();
 
         BigDecimal distributableAmount = totalAmount.multiply(commissionRate)

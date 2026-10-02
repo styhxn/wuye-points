@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前端交付说明 — 商家详情页商品显示问题修复</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1f2328; --muted:#656d76; --line:#d8dee4;
+    --brand:#2563eb; --ok:#1a7f37; --warn:#9a6700; --warn-bg:#fff8c5; --err:#cf222e;
+    --code-bg:#f6f8fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 80px}
+  header{background:linear-gradient(120deg,#1e3a8a,#2563eb);color:#fff;border-radius:14px;padding:28px 28px;margin-bottom:24px}
+  header h1{margin:0 0 8px;font-size:24px;letter-spacing:.3px}
+  header p{margin:0;opacity:.9;font-size:14px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:4px solid var(--brand)}
+  h3{font-size:16px;margin:22px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .tag{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;font-weight:600;vertical-align:middle}
+  .tag-ok{background:#dafbe1;color:var(--ok)}
+  .tag-err{background:#ffebe9;color:var(--err)}
+  .tag-warn{background:var(--warn-bg);color:var(--warn)}
+  .tag-api{background:#ddf4ff;color:#0969da}
+  code{background:var(--code-bg);padding:2px 6px;border-radius:5px;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:13px;line-height:1.55}
+  pre code{background:none;padding:0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f0f3f6;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  .req{color:var(--err);font-weight:700}
+  .opt{color:var(--muted)}
+  .note{border-left:4px solid var(--warn);background:var(--warn-bg);padding:12px 16px;border-radius:8px;margin:14px 0}
+  .good{border-left:4px solid var(--ok);background:#dafbe1;padding:12px 16px;border-radius:8px;margin:14px 0}
+  .bad{border-left:4px solid var(--err);background:#ffebe9;padding:12px 16px;border-radius:8px;margin:14px 0}
+  ul{margin:8px 0;padding-left:22px}
+  li{margin:5px 0}
+  .muted{color:var(--muted);font-size:13px}
+  .ep{font-family:ui-monospace,Consolas,monospace;font-weight:600;color:#0969da}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>商家详情页商品显示问题 — 修复说明与接口字段交付</h1>
+  <p>交付对象：前端 · 版本：2026-10-02 · 对应后端分支 <code style="background:rgba(255,255,255,.18);color:#fff">2026-10-02</code> · 接口文档同步至 v8.8</p>
+</header>
+
+<h2>一、问题结论（先看这里）</h2>
+<div class="card">
+  <p>排查确认：<strong>后端商品对象的 <code>name</code>、<code>price</code> 字段一直存在且命名正确</strong>，不是"字段名写错"导致的问题。真正的原因是下面两点：</p>
+  <table>
+    <tr><th style="width:34%">根因</th><th>说明</th></tr>
+    <tr>
+      <td><span class="tag tag-warn">文档缺失</span> 商家详情页取错了来源</td>
+      <td>商家详情页的商品其实由 <span class="ep">GET /merchants/{id}</span> <strong>内联返回</strong>（字段 <code>products[]</code>），但旧文档 §7.3 <strong>完全没有写这个字段</strong>，前端不知道有它，所以商品区渲染不出内容。</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-err">调用报错</span> 独立商品接口的必要参数</td>
+      <td><span class="ep">GET /products?merchantId=xxx</span> 在<strong>未登录且未传 <code>propertyCompanyId</code></strong> 时会直接返回 <code>10001 参数缺失</code>（HTTP 400）。旧文档把该参数标为"可选"且示例不带，前端照文档调用必然失败。<strong>本次已修复</strong>：传了 <code>merchantId</code> 时后端会自动从商家推导物业公司。</td>
+    </tr>
+    <tr>
+      <td><span class="tag tag-warn">取值陷阱</span> 字段会"整个消失"</td>
+      <td>全局 Jackson 配置为 <code>default-property-inclusion=non_null</code>，<strong>值为 null 的字段不会出现在 JSON 里</strong>（不是返回 null）。最典型的是 <code>memberPrice</code>（业主价）只在登录时返回。</td>
+    </tr>
+  </table>
+</div>
+
+<h2>二、商家详情页：商品直接从这里取 <span class="tag tag-ok">推荐</span></h2>
+
+<h3>2.1 接口</h3>
+<pre><code>GET /api/v1/merchants/{id}
+Auth: Optional（可选登录）
+Roles: any</code></pre>
+<p class="muted">商家详情页渲染商品列表，<strong>直接用这个接口返回的 <code>data.products</code> 即可，无需再调 <code>GET /products</code></strong>。</p>
+
+<h3>2.2 取数规则</h3>
+<ul>
+  <li>只包含该商家 <code>status = "active"</code> 且<strong>未被软删除</strong>的商品；</li>
+  <li>按 <code>createdAt</code> <strong>倒序</strong>，<strong>最多返回 20 条</strong>；</li>
+  <li>商家没有上架商品时，<code>products</code> 为<strong>空数组 <code>[]</code></strong>（不会缺失该字段）。</li>
+</ul>
+
+<h3>2.3 响应示例</h3>
+<pre><code>{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "mch_demo001",
+    "name": "万达超市",
+    "status": "active",
+    "products": [
+      {
+        "id": "prd_demo001",
+        "name": "可口可乐330ml",
+        "description": "经典碳酸饮料",
+        "coverUrl": "https://cdn.example.com/product/prd_demo001.jpg",
+        "price": 3.50,
+        "memberPrice": 3.00,
+        "pointPrice": 350,
+        "stock": 100,
+        "category": "饮料",
+        "status": "active"
+      }
+    ]
+  },
+  "timestamp": "2026-07-01 15:23:33"
+}</code></pre>
+
+<h3>2.4 <code>products[]</code> 字段表</h3>
+<table>
+  <tr><th>字段</th><th>类型</th><th>必返</th><th>说明</th></tr>
+  <tr><td><code>id</code></td><td>String</td><td class="req">是</td><td>商品ID（<code>prd_</code> 前缀）</td></tr>
+  <tr><td><code>name</code></td><td>String</td><td class="req">是</td><td><strong>商品名称</strong></td></tr>
+  <tr><td><code>price</code></td><td>Number</td><td class="req">是</td><td><strong>原价</strong>（元）</td></tr>
+  <tr><td><code>memberPrice</code></td><td>Number</td><td class="opt">否</td><td>业主价。<strong>仅携带登录态时返回</strong>，未登录时字段不出现</td></tr>
+  <tr><td><code>pointPrice</code></td><td>Integer</td><td class="opt">否</td><td>积分兑换价，可为空</td></tr>
+  <tr><td><code>stock</code></td><td>Integer</td><td class="req">是</td><td>库存</td></tr>
+  <tr><td><code>category</code></td><td>String</td><td class="opt">否</td><td>商品分类，可为空</td></tr>
+  <tr><td><code>status</code></td><td>String</td><td class="req">是</td><td><code>active</code> / <code>inactive</code> / <code>sold_out</code></td></tr>
+  <tr><td><code>coverUrl</code></td><td>String</td><td class="opt">否</td><td>封面图，可为空</td></tr>
+  <tr><td><code>description</code></td><td>String</td><td class="opt">否</td><td>商品描述，可为空</td></tr>
+</table>
+
+<h2>三、商品列表接口（独立调用时）</h2>
+<pre><code>GET /api/v1/products?page=1&amp;pageSize=20&amp;merchantId=mch_xxx
+Auth: Optional
+Roles: any</code></pre>
+
+<h3>3.1 <code>propertyCompanyId</code> 的取值规则（本次变更）<span class="tag tag-api">行为变更</span></h3>
+<table>
+  <tr><th>调用方</th><th>是否传 propertyCompanyId</th><th>结果</th></tr>
+  <tr><td>平台管理员</td><td>跨物业查询时<span class="req">必传</span></td><td>按传入值过滤</td></tr>
+  <tr><td>已登录用户（居民/商家/技师/物业管理员）</td><td>不传</td><td>自动取当前用户所属物业公司（<strong>跨物业隔离</strong>）</td></tr>
+  <tr><td><strong>未登录</strong></td><td>不传，但<strong>传了 <code>merchantId</code></strong></td><td><strong>自动从该商家推导物业公司</strong>，可正常返回该店商品 <span class="tag tag-ok">本次修复</span></td></tr>
+  <tr><td><strong>未登录</strong></td><td>不传，也没传 <code>merchantId</code></td><td>返回 <code>10001 参数缺失</code>（HTTP 400）</td></tr>
+</table>
+<div class="good">
+  <strong>给前端的建议：</strong>做"某个商家的商品列表"时，<strong>优先用 <code>GET /merchants/{id}</code> 的 <code>products</code></strong>（一次请求拿商家信息+商品）；若确实要分页/筛选商品，再用 <code>GET /products</code> 并<strong>务必带上 <code>merchantId</code></strong>。
+</div>
+
+<h3>3.2 响应字段（<code>data.list[]</code>）</h3>
+<table>
+  <tr><th>字段</th><th>类型</th><th>必返</th><th>说明</th></tr>
+  <tr><td><code>id</code></td><td>String</td><td class="req">是</td><td>商品ID</td></tr>
+  <tr><td><code>merchantId</code></td><td>String</td><td class="req">是</td><td>所属商家ID</td></tr>
+  <tr><td><code>merchantName</code></td><td>String</td><td class="opt">否</td><td>所属商家名称</td></tr>
+  <tr><td><code>name</code></td><td>String</td><td class="req">是</td><td><strong>商品名称</strong></td></tr>
+  <tr><td><code>price</code></td><td>Number</td><td class="req">是</td><td><strong>原价</strong>（元）</td></tr>
+  <tr><td><code>memberPrice</code></td><td>Number</td><td class="opt">否</td><td>业主价，<strong>仅登录时返回</strong></td></tr>
+  <tr><td><code>pointPrice</code></td><td>Integer</td><td class="opt">否</td><td>积分兑换价</td></tr>
+  <tr><td><code>stock</code></td><td>Integer</td><td class="req">是</td><td>库存</td></tr>
+  <tr><td><code>category</code></td><td>String</td><td class="opt">否</td><td>分类</td></tr>
+  <tr><td><code>status</code></td><td>String</td><td class="req">是</td><td>商品状态</td></tr>
+  <tr><td><code>coverUrl</code></td><td>String</td><td class="opt">否</td><td>封面图</td></tr>
+  <tr><td><code>description</code></td><td>String</td><td class="opt">否</td><td>描述</td></tr>
+  <tr><td><code>createdAt</code></td><td>String</td><td class="req">是</td><td>创建时间（ISO UTC）</td></tr>
+</table>
+
+<h2>四、必须注意的取值陷阱</h2>
+<div class="bad">
+  <strong>不要这样写：</strong><br>
+  <code>if (item.memberPrice === null) ...</code> —— 字段可能根本不存在，<code>item.memberPrice</code> 是 <code>undefined</code>。
+</div>
+<div class="good">
+  <strong>请这样写：</strong><br>
+  <code>const mp = item.memberPrice ?? item.price;   // 无业主价时回退原价</code><br>
+  或 <code>if (item.memberPrice != null) { /* 显示业主价 */ }</code>
+</div>
+<ul>
+  <li>所有<strong>可空字段</strong>（<code>memberPrice</code>、<code>pointPrice</code>、<code>category</code>、<code>coverUrl</code>、<code>description</code>）在为空时<strong>字段不出现</strong>，请统一做空值兜底。</li>
+  <li><strong>不要依赖字段一定存在</strong>来判断接口是否成功——请以 <code>code === 0</code> 判断。</li>
+</ul>
+
+<h2>五、排查对照表</h2>
+<table>
+  <tr><th>现象</th><th>原因</th><th>处理</th></tr>
+  <tr><td>商家详情页商品区空白</td><td>没读 <code>data.products</code></td><td>改用 <span class="ep">GET /merchants/{id}</span> 的 <code>products</code> 渲染</td></tr>
+  <tr><td>商品列表接口 400 / code=10001</td><td>未登录又没传 <code>propertyCompanyId</code>（也没传 <code>merchantId</code>）</td><td>带上 <code>merchantId</code>（已修复）或显式传 <code>propertyCompanyId</code></td></tr>
+  <tr><td>商品列表返回空数组</td><td>跨物业隔离：商家不属于当前用户物业公司</td><td>属预期行为；或改用商家详情接口</td></tr>
+  <tr><td>业主价不显示</td><td>未登录 → <code>memberPrice</code> 字段不返回</td><td>登录后重试，或按上面的空值兜底处理</td></tr>
+</table>
+
+<p class="muted" style="margin-top:36px">如有疑问请对照《API接口文档_v8.8》§6.1（商品列表）与 §7.3（商家详情）对应章节。</p>
+
+</div>
+</body>
+</html>

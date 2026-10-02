@@ -22,6 +22,12 @@ public class PreviewOrderResponse {
     @Schema(description = "商品金额（不含配送费，满额判断口径）", example = "95.00")
     private BigDecimal productAmount;
 
+    @Schema(description = "使用的用户优惠券ID", example = "ucp_1a2b3c")
+    private String couponId;
+
+    @Schema(description = "优惠券抵扣金额（从商品金额中抵扣，由商家承担）", example = "20.00")
+    private BigDecimal couponAmount;
+
     @Schema(description = "配送费（用户实际支付）", example = "5.00")
     private BigDecimal deliveryFee;
 

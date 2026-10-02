@@ -127,6 +127,7 @@ public class OrderService {
     private final PaymentRecordRepository paymentRecordRepository;
     private final EcommerceSplitProperties ecommerceSplitProperties;
     private final MerchantWechatAccountRepository merchantWechatAccountRepository;
+    private final CouponService couponService;
 
     @Transactional
     public CreateOrderResponse createOrder(CreateOrderRequest request) {
@@ -167,6 +168,7 @@ public class OrderService {
         order.setCashAmount(BigDecimal.ZERO);
         order.setPointEarned(0);
         order.setCoinEarned(BigDecimal.ZERO);
+        order.setCouponAmount(BigDecimal.ZERO);
         order.setAddress(StringUtils.hasText(request.getAddress()) ? request.getAddress() : buildDefaultAddress(resident));
         order.setContactPhone(StringUtils.hasText(request.getContactPhone()) ? request.getContactPhone() : resident.getPhone());
         order.setRemark(request.getRemark());
@@ -252,6 +254,7 @@ public class OrderService {
         order.setCashAmount(BigDecimal.ZERO);
         order.setPointEarned(0);
         order.setCoinEarned(BigDecimal.ZERO);
+        order.setCouponAmount(BigDecimal.ZERO);
         order.setAddress(StringUtils.hasText(request.getAddress())
                 ? request.getAddress() : buildDefaultAddress(resident));
         order.setContactPhone(StringUtils.hasText(request.getContactPhone())
@@ -313,6 +316,16 @@ public class OrderService {
         BigDecimal payable = order.getTotalAmount().add(defaultDecimal(order.getDeliveryFee()));
         boolean useFamilyPool = resolveUseFamilyPool(request.getFamilyId(), order, resident);
 
+        // 优惠券：锁定并抵扣商品金额（由商家承担；配送费不参与抵扣）
+        BigDecimal couponAmount = couponService.lockForOrder(request.getUserCouponId(),
+                resident.getId(), merchant.getId(), order.getTotalAmount(), order.getId());
+        if (couponAmount.compareTo(BigDecimal.ZERO) > 0) {
+            order.setCouponId(request.getUserCouponId());
+            order.setCouponAmount(couponAmount);
+            orderRepository.save(order);
+            payable = payable.subtract(couponAmount).max(BigDecimal.ZERO);
+        }
+
         PaymentBreakdown breakdown = resolvePaymentBreakdown(request, payable, config);
         if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
             // 含现金部分：微信预下单，订单保持 pending，支付成功后由回调 completeChannelPayment 落账
@@ -348,6 +361,8 @@ public class OrderService {
         }
 
         applyPostPaymentRouting(order, merchant, items, resident, config);
+        // 支付成功：核销优惠券
+        couponService.markUsedByOrder(order.getId());
 
         try {
             orderRepository.save(order);
@@ -364,6 +379,7 @@ public class OrderService {
                 .pointUsed(order.getPointUsed())
                 .coinUsed(order.getCoinUsed())
                 .cashAmount(order.getCashAmount())
+                .couponAmount(defaultDecimal(order.getCouponAmount()))
                 .paidAt(DateTimeUtil.toIsoUtc(order.getPaidAt()))
                 .pointEarned(pointEarned)
                 .coinEarned(coinEarned)
@@ -436,6 +452,7 @@ public class OrderService {
                 .pointUsed(breakdown.pointUsed())
                 .coinUsed(breakdown.coinUsed())
                 .cashAmount(breakdown.cashAmount())
+                .couponAmount(defaultDecimal(order.getCouponAmount()))
                 .paymentRecordId(record.getId())
                 .payParams(payParams)
                 .build();
@@ -494,6 +511,8 @@ public class OrderService {
         order.setCashAmount(record.getCashAmount());
         order.setOrderStatus("paid");
         order.setPaidAt(LocalDateTime.now());
+        // 支付成功：核销优惠券（券在 payOrder 预定时已锁定并记录在订单上）
+        couponService.markUsedByOrder(order.getId());
 
         applyPostPaymentRouting(order, merchant, channelItems, resident, channelConfig);
 
@@ -643,6 +662,8 @@ public class OrderService {
 
         deliveryService.failDeliveryForCancelledOrder(order.getId());
         distributionService.reverseForCancelledOrder(order.getId());
+        // 取消/退款：释放优惠券回用户账户
+        couponService.releaseByOrder(order.getId());
 
         return CancelOrderResponse.builder()
                 .orderId(order.getId())
@@ -746,12 +767,17 @@ public class OrderService {
                 : new BigDecimal("100.0000");
         BigDecimal pointValue = BigDecimal.valueOf(pointUsed)
                 .divide(exchangeRate, 2, RoundingMode.HALF_UP);
-        BigDecimal cashAmount = totalAmount.subtract(coinUsed).subtract(pointValue).max(BigDecimal.ZERO);
+        BigDecimal couponAmount = couponService.previewDiscount(request.getUserCouponId(),
+                resident.getId(), merchant.getId(), productAmount);
+        BigDecimal cashAmount = totalAmount.subtract(couponAmount).subtract(coinUsed).subtract(pointValue)
+                .max(BigDecimal.ZERO);
 
         return PreviewOrderResponse.builder()
                 .totalAmount(totalAmount)
                 .subtotal(productAmount)
                 .productAmount(productAmount)
+                .couponId(couponAmount.compareTo(BigDecimal.ZERO) > 0 ? request.getUserCouponId() : null)
+                .couponAmount(couponAmount)
                 .deliveryFee(deliveryFee)
                 .originalDeliveryFee(originalDeliveryFee)
                 .deliveryWaiverAmount(deliveryWaiverAmount)
@@ -843,12 +869,17 @@ public class OrderService {
                 : new BigDecimal("100.0000");
         BigDecimal pointValue = BigDecimal.valueOf(pointUsed)
                 .divide(exchangeRate, 2, RoundingMode.HALF_UP);
-        BigDecimal cashAmount = totalAmount.subtract(coinUsed).subtract(pointValue).max(BigDecimal.ZERO);
+        BigDecimal couponAmount = couponService.previewDiscount(request.getUserCouponId(),
+                resident.getId(), merchant.getId(), productAmount);
+        BigDecimal cashAmount = totalAmount.subtract(couponAmount).subtract(coinUsed).subtract(pointValue)
+                .max(BigDecimal.ZERO);
 
         return PreviewOrderResponse.builder()
                 .totalAmount(totalAmount)
                 .subtotal(productAmount)
                 .productAmount(productAmount)
+                .couponId(couponAmount.compareTo(BigDecimal.ZERO) > 0 ? request.getUserCouponId() : null)
+                .couponAmount(couponAmount)
                 .deliveryFee(deliveryFee)
                 .originalDeliveryFee(originalDeliveryFee)
                 .deliveryWaiverAmount(deliveryWaiverAmount)
