@@ -20,10 +20,12 @@ import com.wuye.points.repository.MerchantPointPurchaseRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.MerchantPointPurchaseSpecifications;
+import com.wuye.points.support.MoneySupport;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.MerchantSupport;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -39,6 +41,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MerchantPointService {
@@ -231,8 +234,53 @@ public class MerchantPointService {
         }
     }
 
+    /**
+     * 商家积分消费扣减（如用积分支付广告位）。
+     *
+     * <p>口径：入参为「应付金额（元）」，按商家挂接配置的积分兑换比折算为积分
+     * （{@code 1元 = X积分}，默认 100），取整沿用全站统一口径
+     * {@link MoneySupport#toPointsForConsume}（消费方向向上取整，绝不会少扣）。
+     * 随后按购买记录时间顺序（FIFO）扣减已审核通过记录的 {@code remainingPoints}；
+     * 余额不足抛出 {@link ErrorCode#MERCHANT_POINT_INSUFFICIENT}，由事务整体回滚。</p>
+     * <p>并发安全：查询带行级写锁（{@code PESSIMISTIC_WRITE}），保证「校验 + 扣减」原子，防止并发透支。</p>
+     *
+     * @param merchantId        商家ID
+     * @param propertyCompanyId 物业公司ID（决定积分兑换比）
+     * @param payAmountYuan     应付金额（元）
+     * @param reason            消费事由（仅记录日志，便于对账追溯）
+     */
     @Transactional
-    public void spendPoints(String merchantId, String propertyCompanyId, BigDecimal pointAmount, String reason) {
-        // TODO: 商家积分扣减（待接入 MerchantPointBalance / PointRecord 写入）
+    public void spendPoints(String merchantId, String propertyCompanyId, BigDecimal payAmountYuan, String reason) {
+        if (payAmountYuan == null || payAmountYuan.compareTo(BigDecimal.ZERO) <= 0) {
+            return; // 0 元（如免费额度）无需扣减
+        }
+        BigDecimal rate = resolveExchangeRate(merchantId, propertyCompanyId);
+        int pointsNeeded = MoneySupport.toPointsForConsume(payAmountYuan, rate);
+        if (pointsNeeded <= 0) {
+            return;
+        }
+
+        int remaining = pointsNeeded;
+        for (MerchantPointPurchase purchase : merchantPointPurchaseRepository
+                .findApprovedWithRemainingForUpdate(merchantId)) {
+            if (remaining <= 0) {
+                break;
+            }
+            int available = purchase.getRemainingPoints() != null ? purchase.getRemainingPoints() : 0;
+            if (available <= 0) {
+                continue;
+            }
+            int deduct = Math.min(available, remaining);
+            purchase.setRemainingPoints(available - deduct);
+            merchantPointPurchaseRepository.save(purchase);
+            remaining -= deduct;
+        }
+
+        if (remaining > 0) {
+            // 余额不足：抛异常回滚本次事务（含已扣减的记录），避免部分扣减的脏数据
+            throw new BizException(ErrorCode.MERCHANT_POINT_INSUFFICIENT);
+        }
+        log.info("[商家积分] 消费扣减 merchantId={} propertyCompanyId={} payAmount={}元 points={} rate={} reason={}",
+                merchantId, propertyCompanyId, payAmountYuan, pointsNeeded, rate, reason);
     }
 }

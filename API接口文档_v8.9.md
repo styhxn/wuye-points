@@ -9962,6 +9962,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/merchant/points/grant \
 - 手机号在该物业下未找到住户 / 住户与商家不属于同一物业时返回错误
 - 商家无需选择购买记录，系统自动从该商家所有已审核通过的购买记录中按时间顺序扣减积分
 - 商家积分总余额 = 所有已审核通过的购买记录的 `remainingPoints` 之和
+- 该余额同时用于商家积分消费（如 §59.2 用积分支付广告位）：按积分兑换比将应付金额折算为积分后，按购买记录时间顺序（FIFO）扣减，余额不足返回 `94002`
 - 余额不足时返回错误
 
 **错误响应**：
@@ -16210,6 +16211,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchant/service-requests/pe
 **行为说明**：
 
 - `free` / `coin` / `point`：同步扣减并立即投放（`status=active`），响应不含 `paymentRecordId`/`payParams`。
+- `point`（商家积分）扣减口径：应付金额按商家挂接的积分兑换比折算为积分（`1元 = X积分`，默认 `100`，消费方向向上取整），从该商家所有**已审核通过**的购买记录 `remainingPoints` 中按时间顺序（FIFO）扣减；余额不足返回 `94002`，广告不创建（事务回滚）。
 - `wechat`：先落库 `status=pending_payment`（**不投放、不占额度**），返回 `payParams` 由前端调起微信支付；**微信回调确认后才激活投放**。未收到款项绝不投放。
 - `mock`：仅当 `app.payment.mock-enabled=true`（开发环境）可用；生产环境返回 `10002`。
 
@@ -16246,6 +16248,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchant/service-requests/pe
 | `60011` | 免费额度已用完，请选择付费投放 |
 | `70003` | 该广告已有待支付流水，请勿重复提交（防重复扣款） |
 | `90105` | 本周额度不足 |
+| `94002` | 商家积分余额不足（`paymentMethod=point`） |
 
 > **说明**：扣减本周额度并写入 `merchant_ads`；投放成功后向服务范围内住户 fan-out `messageType=merchant_ad` 聊天卡片。付费方式（`coin`/`point`/`wechat`）不占用免费名额。
 
