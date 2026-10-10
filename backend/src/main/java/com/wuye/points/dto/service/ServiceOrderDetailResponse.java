@@ -1,5 +1,6 @@
 package com.wuye.points.dto.service;
 
+import com.wuye.points.payment.WechatJsPayParams;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -70,4 +71,10 @@ public class ServiceOrderDetailResponse {
 
     @Schema(description = "更新时间", example = "2026-01-01T00:00:00.000Z")
     private String updatedAt;
+
+    @Schema(description = "支付流水ID（含现金部分且已微信预下单时返回）")
+    private String paymentRecordId;
+
+    @Schema(description = "微信小程序调起支付参数（含现金部分时返回，前端原样透传 wx.requestPayment）")
+    private WechatJsPayParams payParams;
 }

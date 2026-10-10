@@ -2,13 +2,17 @@ package com.wuye.points.controller;
 
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.propertycompany.ApplySettlementWithdrawalRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyResponse;
 import com.wuye.points.dto.propertycompany.UpdateCoinUseConditionRequest;
 import com.wuye.points.dto.propertycompany.PropertyCompanyDetailResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyListItemResponse;
+import com.wuye.points.dto.propertycompany.SettlementBalanceResponse;
 import com.wuye.points.dto.propertycompany.UpdatePropertyCompanyRequest;
+import com.wuye.points.dto.rolewithdrawal.RoleWithdrawalItemResponse;
 import com.wuye.points.service.PropertyCompanyService;
+import com.wuye.points.service.PropertyCompanySettlementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminPropertyCompanyController {
 
     private final PropertyCompanyService propertyCompanyService;
+    private final PropertyCompanySettlementService propertyCompanySettlementService;
 
     @Operation(summary = "物业公司列表", description = "获取物业公司列表。角色: property_admin, platform_admin")
     @GetMapping
@@ -99,5 +104,54 @@ public class AdminPropertyCompanyController {
             @Parameter(description = "资源ID(pc_)") @PathVariable String id,
             @Valid @RequestBody UpdateCoinUseConditionRequest request) {
         return ApiResponse.success(propertyCompanyService.updateCoinUseCondition(id, request));
+    }
+
+    @Operation(summary = "物业公司结算余额",
+            description = "查询指定物业公司的分成结算余额（已结算-已提现，§51.10）。角色: property_admin, platform_admin")
+    @GetMapping("/{id}/settlement-balance")
+    public ApiResponse<SettlementBalanceResponse> getSettlementBalance(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id) {
+        return ApiResponse.success(propertyCompanySettlementService.getBalance(id));
+    }
+
+    @Operation(summary = "物业公司结算提现记录",
+            description = "分页查询指定物业公司分成账户的提现记录（§51.11 GET）。角色: property_admin, platform_admin")
+    @GetMapping("/{id}/settlement-withdrawals")
+    public ApiResponse<PageResponse<RoleWithdrawalItemResponse>> listSettlementWithdrawals(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "审核状态") @RequestParam(required = false) String auditStatus,
+            @Parameter(description = "开始日期") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期") @RequestParam(required = false) String endDate) {
+        return ApiResponse.success(propertyCompanySettlementService.list(
+                id, auditStatus, page, pageSize, startDate, endDate));
+    }
+
+    @Operation(summary = "提交结算提现申请",
+            description = "物业管理员发起分成账户提现（§51.11 POST），落库 withdrawal_records（type=property_company）。角色: property_admin, platform_admin")
+    @PostMapping("/{id}/settlement-withdrawals")
+    public ApiResponse<RoleWithdrawalItemResponse> applySettlementWithdrawal(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Valid @RequestBody ApplySettlementWithdrawalRequest request) {
+        return ApiResponse.success(propertyCompanySettlementService.apply(id, request));
+    }
+
+    @Operation(summary = "审批结算提现",
+            description = "平台管理员审核通过（§51.12），扣减分成账户余额。角色: platform_admin")
+    @PostMapping("/{id}/settlement-withdrawals/{withdrawalId}/approve")
+    public ApiResponse<RoleWithdrawalItemResponse> approveSettlementWithdrawal(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Parameter(description = "提现记录ID(wr_)") @PathVariable String withdrawalId) {
+        return ApiResponse.success(propertyCompanySettlementService.approve(id, withdrawalId));
+    }
+
+    @Operation(summary = "拒绝结算提现",
+            description = "平台管理员审核拒绝（§51.13）。角色: platform_admin")
+    @PostMapping("/{id}/settlement-withdrawals/{withdrawalId}/reject")
+    public ApiResponse<RoleWithdrawalItemResponse> rejectSettlementWithdrawal(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Parameter(description = "提现记录ID(wr_)") @PathVariable String withdrawalId) {
+        return ApiResponse.success(propertyCompanySettlementService.reject(id, withdrawalId));
     }
 }

@@ -6,6 +6,7 @@ import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.service.ActivityGroupService;
 import com.wuye.points.service.CanteenService;
 import com.wuye.points.service.CommunityServiceService;
+import com.wuye.points.service.MerchantAdService;
 import com.wuye.points.service.OrderService;
 import com.wuye.points.service.PropertyCoinService;
 import com.wuye.points.service.PropertyFeeService;
@@ -31,6 +32,7 @@ public class PaymentBizDispatcher {
     private final ActivityGroupService activityGroupService;
     private final ResidentShopService residentShopService;
     private final CanteenService canteenService;
+    private final MerchantAdService merchantAdService;
 
     public void complete(PaymentRecord record) {
         switch (record.getBizType()) {
@@ -42,6 +44,7 @@ public class PaymentBizDispatcher {
             case PaymentBizType.ACTIVITY_SUBSCRIPTION -> activityGroupService.completeChannelPayment(record);
             case PaymentBizType.RESIDENT_SHOP_DEPOSIT -> residentShopService.completeChannelPayment(record);
             case PaymentBizType.QUOTA_PURCHASE -> canteenService.completeQuotaPurchase(record);
+            case PaymentBizType.AD_PURCHASE -> merchantAdService.completeChannelPayment(record);
             default -> throw new BizException(ErrorCode.WECHAT_API_ERROR,
                     "未知支付业务类型: " + record.getBizType());
         }

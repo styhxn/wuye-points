@@ -5,10 +5,12 @@ import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.payment.PayChannel;
 import com.wuye.points.payment.PaymentBizType;
 import com.wuye.points.repository.ActivityGroupSubscriptionRepository;
+import com.wuye.points.repository.MerchantAdRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.ServiceOrderRepository;
 import com.wuye.points.repository.ServiceSubscriptionRepository;
+import com.wuye.points.service.CommunityServiceService;
 import com.wuye.points.service.CouponService;
 import com.wuye.points.service.ProductStockService;
 import lombok.RequiredArgsConstructor;
@@ -43,8 +45,10 @@ public class PendingPaymentScheduler {
     private final ActivityGroupSubscriptionRepository activityGroupSubscriptionRepository;
     private final ServiceOrderRepository serviceOrderRepository;
     private final ServiceSubscriptionRepository serviceSubscriptionRepository;
+    private final MerchantAdRepository merchantAdRepository;
     private final ProductStockService productStockService;
     private final CouponService couponService;
+    private final CommunityServiceService communityServiceService;
     private final PayChannel wechatPayService;
 
     @Scheduled(cron = "0 */10 * * * ?")
@@ -115,20 +119,34 @@ public class PendingPaymentScheduler {
                     log.info("服务订单支付超时自动取消 orderId={}", order.getId());
                 }
             });
+            // 现金部分未收款，已当场抵扣的积分/物业币须退回（幂等：流水已置 closed）
+            communityServiceService.refundPendingBreakdown(record);
         } else if (PaymentBizType.SERVICE_SUBSCRIPTION.equals(record.getBizType())) {
             serviceSubscriptionRepository.findById(record.getBizId()).ifPresent(subscription -> {
-                if ("pending".equals(subscription.getStatus())) {
+                if ("pending_payment".equals(subscription.getStatus())) {
                     subscription.setStatus("cancelled");
                     serviceSubscriptionRepository.save(subscription);
                     log.info("服务订阅支付超时自动取消 subscriptionId={}", subscription.getId());
                 }
             });
+            // 现金部分未收款，已当场抵扣的积分/物业币须退回（幂等：流水已置 closed）
+            communityServiceService.refundPendingBreakdown(record);
         } else if (PaymentBizType.ACTIVITY_SUBSCRIPTION.equals(record.getBizType())) {
+            // 订阅预支付超时：置为已取消，避免一直停留在 pending_payment 无法重订
             activityGroupSubscriptionRepository.findById(record.getBizId()).ifPresent(subscription -> {
-                if ("pending".equals(subscription.getStatus())) {
+                if ("pending_payment".equals(subscription.getStatus())) {
                     subscription.setStatus("cancelled");
                     activityGroupSubscriptionRepository.save(subscription);
                     log.info("活动组订阅支付超时自动取消 subscriptionId={}", subscription.getId());
+                }
+            });
+        } else if (PaymentBizType.AD_PURCHASE.equals(record.getBizType())) {
+            // 广告预支付超时：置为已取消，避免一直停留在 pending_payment 无法重发
+            merchantAdRepository.findById(record.getBizId()).ifPresent(ad -> {
+                if (!"active".equals(ad.getStatus())) {
+                    ad.setStatus("cancelled");
+                    merchantAdRepository.save(ad);
+                    log.info("商家广告支付超时自动取消 adId={}", ad.getId());
                 }
             });
         }

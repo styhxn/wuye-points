@@ -6,6 +6,7 @@ import com.wuye.points.dto.delivery.AssignDeliveryRequest;
 import com.wuye.points.dto.delivery.AssignDeliveryResponse;
 import com.wuye.points.dto.delivery.CompleteDeliveryRequest;
 import com.wuye.points.dto.delivery.CompleteDeliveryResponse;
+import com.wuye.points.dto.delivery.CourierOptionResponse;
 import com.wuye.points.dto.delivery.GrabDeliveryResponse;
 import com.wuye.points.dto.delivery.MyDeliveryItemResponse;
 import com.wuye.points.dto.delivery.PendingDeliveryItemResponse;
@@ -126,6 +127,21 @@ public class DeliveryController {
             @Parameter(description = "配送单ID", example = "dlv_xxx") @PathVariable String id,
             @Valid @RequestBody(required = false) CompleteDeliveryRequest request) {
         return ApiResponse.success(deliveryService.merchantConfirm(id, request));
+    }
+
+    /**
+     * 可用配送员分页（指派用）
+     * Auth: Required | Roles: merchant, property_admin, platform_admin, coordinator, sector_leader, individual_leader
+     */
+    @Operation(summary = "可用配送员分页（指派用）",
+            description = "指派配送前查询可用配送员，与管理端 GET /admin/couriers 同源。"
+                    + "角色：merchant, property_admin, platform_admin, coordinator, sector_leader, individual_leader")
+    @GetMapping("/couriers")
+    public ApiResponse<PageResponse<CourierOptionResponse>> listCouriers(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "物业公司ID（超管筛选）") @RequestParam(required = false) String propertyCompanyId) {
+        return ApiResponse.success(deliveryService.listCouriers(page, pageSize, propertyCompanyId));
     }
 
     /**

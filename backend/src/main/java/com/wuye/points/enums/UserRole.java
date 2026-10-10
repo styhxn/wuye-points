@@ -11,6 +11,7 @@ public enum UserRole {
     merchant("商家"),
     courier("快递员"),
     activity_leader("活动组组长"),
+    building_leader("单元楼长"),
     technician("技工");
 
     private final String description;

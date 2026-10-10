@@ -28,8 +28,13 @@ desktop.ini
 *.key
 *.pem
 *.p12
+# 开发配置含真实商户/数据库凭据，禁止入库
 application-dev.yml
-application-prod.yml
+# application-prod.yml 仅含环境变量占位与 fail-closed 默认值（无密钥），必须入库以保证生产部署可复现
+
+# === Agent / Tooling ===
+.agnes/
+.trae/
 
 # === Logs ===
 *.log

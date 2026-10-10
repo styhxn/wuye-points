@@ -97,8 +97,8 @@ public class CanteenService {
     private final PayChannel wechatPayService;
     private final SnowflakeIdGenerator idGenerator;
 
-    /** 模拟支付开关：仅开发环境可开启；生产必须关闭，否则商家可零成本获得食堂额度。 */
-    @Value("${app.payment.mock-enabled:true}")
+    /** 模拟支付开关：仅开发环境可开启；生产必须关闭，否则商家可零成本获得食堂额度（fail-closed 默认 false）。 */
+    @Value("${app.payment.mock-enabled:false}")
     private boolean mockPayEnabled;
 
     // ==================== 购买额度 ====================

@@ -8,7 +8,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.ByteArrayOutputStream;
@@ -182,9 +184,15 @@ public class WechatHttpClient {
                 throw new WechatPayException(extract(result, "code"), extract(result, "message"), result);
             }
             return result;
-        } catch (HttpClientErrorException e) {
+        } catch (HttpStatusCodeException e) {
+            // 覆盖 4xx / 5xx：回传微信侧错误码与信息，便于前端与排障
             String r = e.getResponseBodyAsString();
             throw new WechatPayException(extract(r, "code"), extract(r, "message"), r);
+        } catch (ResourceAccessException e) {
+            // 连接/读取超时、连接被拒：统一转 WechatPayException，避免裸异常冒泡成「内部服务异常」
+            throw new WechatPayException("WECHAT_HTTP_TIMEOUT", "微信接口调用超时或网络不可达: " + e.getMessage(), null);
+        } catch (RestClientException e) {
+            throw new WechatPayException("WECHAT_HTTP_ERROR", "微信接口调用失败: " + e.getMessage(), null);
         }
     }
 

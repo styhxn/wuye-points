@@ -5,7 +5,9 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.distribution.DistributionCalculateResponse;
 import com.wuye.points.dto.distribution.DistributionRecordItemResponse;
 import com.wuye.points.dto.distribution.DistributionStatsResponse;
+import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Coordinator;
+import com.wuye.points.entity.Delivery;
 import com.wuye.points.entity.DistributionRecord;
 import com.wuye.points.entity.IndividualLeader;
 import com.wuye.points.entity.Merchant;
@@ -18,7 +20,9 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
+import com.wuye.points.repository.DeliveryRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
@@ -60,22 +64,30 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DistributionService {
 
+    private static final BigDecimal DEFAULT_PLATFORM_SHARE = new BigDecimal("0.0000");
     private static final BigDecimal DEFAULT_PROPERTY_SHARE = new BigDecimal("0.3000");
     private static final BigDecimal DEFAULT_COORDINATOR_SHARE = new BigDecimal("0.7000");
     private static final BigDecimal DEFAULT_SECTOR_LEADER_RATE = new BigDecimal("0.1000");
     private static final BigDecimal DEFAULT_INDIVIDUAL_LEADER_RATE = new BigDecimal("0.0000");
     private static final BigDecimal DEFAULT_POINT_EXCHANGE_RATE = new BigDecimal("100.0000");
     private static final int MONEY_SCALE = 2;
+    /** 计算版本标识（规范§8.5 distribution_b_v1） */
+    private static final String CALCULATION_VERSION = "distribution_b_v1";
+    /** 成本击穿差额默认承担方（不扣商家） */
+    private static final String DEFAULT_DEFICIT_SPONSOR = "property";
+    private static final String MERCHANT_SPONSOR = "merchant";
 
     private final DistributionRecordRepository distributionRecordRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     private final MerchantRepository merchantRepository;
     private final CoordinatorRepository coordinatorRepository;
+    private final BuildingLeaderRepository buildingLeaderRepository;
     private final SectorLeaderRepository sectorLeaderRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
     private final ResidentRepository residentRepository;
     private final OrderRepository orderRepository;
+    private final DeliveryRepository deliveryRepository;
     private final PointPoolRepository pointPoolRepository;
     private final PointPoolRecordRepository pointPoolRecordRepository;
     private final DistributionConverter distributionConverter;
@@ -89,7 +101,8 @@ public class DistributionService {
             return existing.get();
         }
 
-        ShareBreakdown breakdown = buildShareBreakdown(order, resident, config);
+        ShareBreakdown breakdown = buildShareBreakdown(
+                order, config, resident.getPropertyCompanyId(), resolveBuildingLeaderSection(order));
         DistributionRecord record = toRecord(order, resident, config.getCommissionRate(), breakdown);
         distributionRecordRepository.save(record);
 
@@ -122,13 +135,17 @@ public class DistributionService {
         reversal.setPointCost(negate(original.getPointCost()));
         reversal.setCoinCost(negate(original.getCoinCost()));
         reversal.setDistributableAmount(negate(original.getDistributableAmount()));
+        reversal.setPlatformShare(negate(original.getPlatformShare()));
         reversal.setPropertyShare(negate(original.getPropertyShare()));
         reversal.setCoordinatorShare(negate(original.getCoordinatorShare()));
         reversal.setSectorLeaderShare(negate(original.getSectorLeaderShare()));
         reversal.setIndividualLeaderShare(negate(original.getIndividualLeaderShare()));
+        reversal.setBuildingLeaderShare(negate(original.getBuildingLeaderShare()));
         reversal.setCoordinatorId(original.getCoordinatorId());
         reversal.setSectorLeaderId(original.getSectorLeaderId());
         reversal.setIndividualLeaderId(original.getIndividualLeaderId());
+        reversal.setBuildingLeaderId(original.getBuildingLeaderId());
+        reversal.setBuildingLeaderRate(original.getBuildingLeaderRate());
         distributionRecordRepository.save(reversal);
     }
 
@@ -176,6 +193,25 @@ public class DistributionService {
         return buildRecordPage(recordPage, page, pageSize);
     }
 
+    /** 楼长查看自己的分成明细（只读，仅限本人） */
+    @Transactional(readOnly = true)
+    public PageResponse<DistributionRecordItemResponse> listMyRecordsForBuildingLeader(int page, int pageSize) {
+        roleGuard.requireAnyRole("resident");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        BuildingLeader leader = buildingLeaderRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                        UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
+                .orElseThrow(() -> new BizException(ErrorCode.BUILDING_LEADER_NOT_FOUND, "当前用户不是楼长"));
+
+        Pageable pageable = PageRequest.of(Math.max(page, 1) - 1, pageSize,
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<DistributionRecord> recordPage = distributionRecordRepository
+                .findByBuildingLeaderIdOrderByCreatedAtDesc(leader.getId(), pageable);
+        return buildRecordPage(recordPage, page, pageSize);
+    }
+
     @Transactional(readOnly = true)
     public DistributionStatsResponse getStats(
             String startDate,
@@ -197,53 +233,166 @@ public class DistributionService {
         return buildStats(scopedPropertyCompanyId, null, start, end, dimension);
     }
 
+    /**
+     * 分账试算（预览，不落库）。规范§21.3 支持两种模式：
+     * <ul>
+     *   <li>① 订单快照试算：传 {@code orderId}，金额与比例一律读订单落库快照，客户端不可篡改；</li>
+     *   <li>② 管理端假设试算：传 {@code merchantId} + {@code productAmount} 等。</li>
+     * </ul>
+     */
     @Transactional(readOnly = true)
     public DistributionCalculateResponse calculatePreview(
+            String orderId,
             String merchantId,
+            BigDecimal productAmount,
             BigDecimal totalAmount,
+            BigDecimal originalDeliveryFee,
+            BigDecimal deliveryFee,
+            String deliverySubsidySponsor,
             Integer pointUsed,
             BigDecimal coinUsed,
             String propertyCompanyId) {
         roleGuard.requireAnyRole("coordinator", "property_admin", "platform_admin", "merchant", "resident");
-        validateOptionalId(merchantId, "mch_");
-        if (totalAmount == null || totalAmount.compareTo(BigDecimal.ZERO) < 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "totalAmount不合法");
+        if (!StringUtils.hasText(orderId) && !StringUtils.hasText(merchantId)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "orderId与merchantId至少传一个");
         }
 
-        String scopedPropertyCompanyId = resolvePreviewPropertyCompanyId(propertyCompanyId);
+        Order previewOrder;
+        String resolvedMerchantId;
+        String resolvedPropertyCompanyId;
+        BuildingLeaderSection buildingLeader;
+
+        if (StringUtils.hasText(orderId)) {
+            validateOptionalId(orderId, "ord_");
+            previewOrder = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new BizException(ErrorCode.ORDER_NOT_FOUND));
+            resolvedMerchantId = previewOrder.getMerchantId();
+            resolvedPropertyCompanyId = previewOrder.getPropertyCompanyId();
+            buildingLeader = resolveBuildingLeaderSection(previewOrder);
+        } else {
+            validateOptionalId(merchantId, "mch_");
+            resolvedMerchantId = merchantId;
+            resolvedPropertyCompanyId = resolvePreviewPropertyCompanyId(propertyCompanyId);
+            BigDecimal goodsAmount = productAmount != null ? productAmount : totalAmount;
+            if (goodsAmount == null || goodsAmount.compareTo(BigDecimal.ZERO) < 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "productAmount不合法");
+            }
+            previewOrder = new Order();
+            previewOrder.setMerchantId(merchantId);
+            previewOrder.setTotalAmount(goodsAmount);
+            previewOrder.setCouponAmount(BigDecimal.ZERO);
+            BigDecimal effectiveFee = defaultDecimal(deliveryFee);
+            BigDecimal originalFee = originalDeliveryFee != null ? originalDeliveryFee : effectiveFee;
+            previewOrder.setDeliveryFee(effectiveFee);
+            previewOrder.setOriginalDeliveryFee(originalFee);
+            previewOrder.setDeliverySubsidyAmount(originalFee.subtract(effectiveFee).max(BigDecimal.ZERO));
+            previewOrder.setDeliverySubsidySponsor(
+                    StringUtils.hasText(deliverySubsidySponsor) ? deliverySubsidySponsor : "merchant");
+            previewOrder.setPointUsed(pointUsed != null ? pointUsed : 0);
+            previewOrder.setCoinUsed(coinUsed != null ? coinUsed : BigDecimal.ZERO);
+            buildingLeader = resolvePreviewBuildingLeader();
+            if (buildingLeader.id() != null) {
+                previewOrder.setBuildingLeaderId(buildingLeader.id());
+                previewOrder.setBuildingLeaderRate(buildingLeader.rate());
+            }
+        }
+
         MerchantPropertyConfig config = merchantPropertyConfigRepository
-                .findByMerchantIdAndPropertyCompanyId(merchantId, scopedPropertyCompanyId)
+                .findByMerchantIdAndPropertyCompanyId(resolvedMerchantId, resolvedPropertyCompanyId)
                 .filter(item -> "active".equals(item.getStatus()))
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_CONFIG_NOT_FOUND));
 
-        Resident resident = residentRepository.findById(UserContext.currentUserId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        PropertyCompany propertyCompany = propertyCompanyRepository.findById(resolvedPropertyCompanyId)
+                .orElseThrow(() -> new BizException(ErrorCode.SYSTEM_ERROR));
 
-        Order previewOrder = new Order();
-        previewOrder.setMerchantId(merchantId);
-        previewOrder.setTotalAmount(totalAmount);
-        previewOrder.setPointUsed(pointUsed != null ? pointUsed : 0);
-        previewOrder.setCoinUsed(coinUsed != null ? coinUsed : BigDecimal.ZERO);
+        ShareBreakdown breakdown = buildShareBreakdown(
+                previewOrder, config, resolvedPropertyCompanyId, buildingLeader);
+        DeliveryChain deliveryChain = resolveDeliveryChain(previewOrder, propertyCompany);
 
-        ShareBreakdown breakdown = buildShareBreakdown(previewOrder, resident, config);
+        BigDecimal productBase = money(defaultDecimal(previewOrder.getTotalAmount())
+                .subtract(defaultDecimal(previewOrder.getCouponAmount())));
+        BigDecimal merchantGoodsShare = money(productBase.subtract(breakdown.commissionBaseAmount()));
+        BigDecimal merchantDeliverySubsidy = MERCHANT_SPONSOR.equals(deliveryChain.subsidySponsor())
+                ? deliveryChain.subsidyAmount() : BigDecimal.ZERO;
+        BigDecimal merchantAdjustmentAmount = BigDecimal.ZERO;
+        BigDecimal merchantShare = money(merchantGoodsShare
+                .subtract(merchantDeliverySubsidy)
+                .add(merchantAdjustmentAmount));
+
         return DistributionCalculateResponse.builder()
-                .totalAmount(totalAmount)
+                .totalAmount(money(productBase.add(deliveryChain.deliveryFee())))
+                .productAmount(productBase)
                 .commissionRate(config.getCommissionRate())
                 .pointCost(breakdown.pointCost())
                 .coinCost(breakdown.coinCost())
+                .commissionBaseAmount(breakdown.commissionBaseAmount())
+                .productCommission(breakdown.commissionBaseAmount())
+                .productBase(money(productBase.subtract(breakdown.pointCost()).subtract(breakdown.coinCost())))
                 .distributableAmount(breakdown.distributableAmount())
+                .deficitAmount(breakdown.deficitAmount())
+                .deficitSponsor(DEFAULT_DEFICIT_SPONSOR)
+                .platformShareRate(defaultRate(propertyCompany.getPlatformShareRate(), DEFAULT_PLATFORM_SHARE))
+                .platformShare(breakdown.platformShare())
                 .propertyShare(breakdown.propertyShare())
+                .managementPoolAmount(breakdown.managementPoolAmount())
+                .sectorGrossAmount(money(breakdown.sectorLeaderShare().add(breakdown.individualLeaderShare())))
                 .coordinatorShare(breakdown.coordinatorShare())
                 .sectorLeaderShare(breakdown.sectorLeaderShare())
                 .individualLeaderShare(breakdown.individualLeaderShare())
+                .buildingLeaderShare(breakdown.buildingLeaderShare())
+                .originalDeliveryFee(deliveryChain.originalDeliveryFee())
+                .deliveryFee(deliveryChain.deliveryFee())
+                .effectiveDeliveryFee(deliveryChain.deliveryFee())
+                .deliveryWaiverAmount(deliveryChain.subsidyAmount())
+                .deliverySubsidySponsor(deliveryChain.subsidySponsor())
+                .deliverySubsidyAmount(deliveryChain.subsidyAmount())
+                .deliverySettlementBase(deliveryChain.settlementBase())
+                .merchantGoodsShare(merchantGoodsShare)
+                .merchantDeliverySubsidy(merchantDeliverySubsidy)
+                .merchantAdjustmentAmount(merchantAdjustmentAmount)
+                .merchantShare(merchantShare)
+                .platformDeliveryShare(deliveryChain.platformDeliveryShare())
+                .courierEarning(deliveryChain.courierEarning())
+                .courierShare(deliveryChain.courierEarning())
                 .coordinatorId(breakdown.coordinatorId())
                 .sectorLeaderId(breakdown.sectorLeaderId())
                 .individualLeaderId(breakdown.individualLeaderId())
+                .buildingLeaderId(breakdown.buildingLeaderId())
+                .calculationVersion(CALCULATION_VERSION)
                 .build();
     }
 
-    private ShareBreakdown buildShareBreakdown(Order order, Resident resident, MerchantPropertyConfig config) {
-        String propertyCompanyId = resident.getPropertyCompanyId();
+    /** 模式②：按住户当前「小区 + 楼栋」解析启用中的楼长（仅预览；正式以订单快照为准） */
+    private BuildingLeaderSection resolvePreviewBuildingLeader() {
+        String userId = UserContext.currentUserId();
+        if (!StringUtils.hasText(userId)) {
+            return new BuildingLeaderSection(null, BigDecimal.ZERO);
+        }
+        return residentRepository.findById(userId)
+                .map(resident -> {
+                    BuildingLeader leader = resolveActiveBuildingLeader(resident);
+                    return leader != null
+                            ? new BuildingLeaderSection(leader.getId(), defaultDecimal(leader.getCommissionRate()))
+                            : new BuildingLeaderSection(null, BigDecimal.ZERO);
+                })
+                .orElseGet(() -> new BuildingLeaderSection(null, BigDecimal.ZERO));
+    }
+
+    /** 按住户当前所属「小区 + 楼栋」解析启用中的楼长（仅用于预览，正式以订单快照为准） */
+    private BuildingLeader resolveActiveBuildingLeader(Resident resident) {
+        if (!StringUtils.hasText(resident.getCommunityId()) || !StringUtils.hasText(resident.getBuilding())) {
+            return null;
+        }
+        return buildingLeaderRepository
+                .findFirstByCommunityIdAndBuildingAndStatusOrderByCreatedAtDesc(
+                        resident.getCommunityId(), resident.getBuilding(), "active")
+                .orElse(null);
+    }
+
+    private ShareBreakdown buildShareBreakdown(Order order,
+                                              MerchantPropertyConfig config,
+                                              String propertyCompanyId,
+                                              BuildingLeaderSection buildingLeader) {
         PropertyCompany propertyCompany = propertyCompanyRepository.findById(propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.SYSTEM_ERROR));
 
@@ -262,22 +411,31 @@ public class DistributionService {
                 .max(BigDecimal.ZERO);
         BigDecimal commissionRate = config.getCommissionRate();
 
-        BigDecimal distributableAmount = totalAmount.multiply(commissionRate)
-                .subtract(pointCost)
-                .subtract(coinCost)
-                .setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+        // 抽佣基础额（一级三档分账基数 = 商品实付 × 抽佣率）
+        BigDecimal commissionBaseAmount = money(totalAmount.multiply(commissionRate));
+        BigDecimal rawDistributableAmount = money(commissionBaseAmount.subtract(pointCost).subtract(coinCost));
+        BigDecimal distributableAmount = rawDistributableAmount.max(BigDecimal.ZERO);
+        BigDecimal deficitAmount = rawDistributableAmount.negate().max(BigDecimal.ZERO);
 
-        if (distributableAmount.compareTo(BigDecimal.ZERO) < 0) {
+        if (distributableAmount.compareTo(BigDecimal.ZERO) <= 0 && deficitAmount.compareTo(BigDecimal.ZERO) > 0) {
             return new ShareBreakdown(
                     pointCost, coinCost, distributableAmount,
+                    commissionBaseAmount, deficitAmount,
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                    null, null, null);
+                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    null, null, null, null, null);
         }
 
+        BigDecimal platformRate = defaultRate(propertyCompany.getPlatformShareRate(), DEFAULT_PLATFORM_SHARE);
         BigDecimal propertyRate = defaultRate(propertyCompany.getPropertyShareRate(), DEFAULT_PROPERTY_SHARE);
-        BigDecimal coordinatorRate = defaultRate(propertyCompany.getCoordinatorShareRate(), DEFAULT_COORDINATOR_SHARE);
         BigDecimal sectorLeaderRate = defaultRate(propertyCompany.getSectorLeaderRate(), DEFAULT_SECTOR_LEADER_RATE);
         BigDecimal individualLeaderRate = defaultRate(propertyCompany.getIndividualLeaderRate(), DEFAULT_INDIVIDUAL_LEADER_RATE);
+
+        // 一级三档（规范§4.2）：平台独立取整，管理盘用减法吸收分币误差，
+        // 保证 平台 + 物业毛 + 管理盘 = 平台盘（抽佣基础额 − 积分/物业币成本），账目守恒。
+        BigDecimal platformShare = money(distributableAmount.multiply(platformRate));
+        BigDecimal propertyGrossShare = money(distributableAmount.multiply(propertyRate));
+        BigDecimal managementPoolAmount = money(distributableAmount.subtract(platformShare).subtract(propertyGrossShare));
 
         Merchant merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
         String sector = resolveMerchantSector(merchant);
@@ -286,24 +444,42 @@ public class DistributionService {
                 .findFirstByPropertyCompanyIdAndStatusOrderByCommissionRateDesc(propertyCompanyId, "active")
                 .orElse(null);
 
+        // 楼长分成：以订单快照为准，从「物业公司分成」中定向扣除（保持总额守恒，不影响统筹链路）
         if (coordinator == null) {
+            // 无统筹：物业取得「扣除平台盘后的全部分配额」（保持原有口径），再扣楼长分成
+            BigDecimal buildingLeaderShare = BigDecimal.ZERO;
+            BigDecimal propertyShare = money(distributableAmount.subtract(platformShare));
+            if (buildingLeader.rate().compareTo(BigDecimal.ZERO) > 0) {
+                buildingLeaderShare = money(propertyShare.multiply(buildingLeader.rate()));
+                propertyShare = money(propertyShare.subtract(buildingLeaderShare));
+            }
             return new ShareBreakdown(
                     pointCost, coinCost, distributableAmount,
-                    distributableAmount.setScale(MONEY_SCALE, RoundingMode.HALF_UP),
-                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                    null, null, null);
+                    commissionBaseAmount, deficitAmount,
+                    platformShare, propertyShare,
+                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    buildingLeaderShare,
+                    null, null, null,
+                    buildingLeader.id(), buildingLeader.rate());
         }
 
-        BigDecimal propertyShare = money(distributableAmount.multiply(propertyRate));
-        BigDecimal coordinatorRaw = money(distributableAmount.multiply(coordinatorRate));
+        // 物业分成（毛）= 平台盘 × 物业比例；楼长分成从物业毛额中定向扣除（净额落库）
+        BigDecimal buildingLeaderShare = BigDecimal.ZERO;
+        BigDecimal propertyShare = propertyGrossShare;
+        if (buildingLeader.rate().compareTo(BigDecimal.ZERO) > 0) {
+            buildingLeaderShare = money(propertyGrossShare.multiply(buildingLeader.rate()));
+            propertyShare = money(propertyGrossShare.subtract(buildingLeaderShare));
+        }
 
         SectorLeader sectorLeader = sectorLeaderRepository
                 .findFirstByPropertyCompanyIdAndSectorAndCoordinatorIdAndStatus(
                         propertyCompanyId, sector, coordinator.getId(), "active")
                 .orElse(null);
 
+        // 管理盘级联（规范§4.3）：板块毛额 = 管理盘 × 板块比例；个体 = 板块毛额 × 个体比例；
+        // 板块负责人 = 板块毛额 − 个体；统筹 = 管理盘 − 板块毛额（减法吸收分币误差）
         BigDecimal sectorLeaderGross = sectorLeader != null
-                ? money(coordinatorRaw.multiply(sectorLeaderRate))
+                ? money(managementPoolAmount.multiply(sectorLeaderRate))
                 : BigDecimal.ZERO;
 
         IndividualLeader individualLeader = sectorLeader != null
@@ -315,14 +491,76 @@ public class DistributionService {
                 ? money(sectorLeaderGross.multiply(individualLeaderRate))
                 : BigDecimal.ZERO;
         BigDecimal sectorLeaderShare = money(sectorLeaderGross.subtract(individualLeaderShare));
-        BigDecimal coordinatorShare = money(coordinatorRaw.subtract(sectorLeaderGross));
+        BigDecimal coordinatorShare = money(managementPoolAmount.subtract(sectorLeaderGross));
 
         return new ShareBreakdown(
                 pointCost, coinCost, distributableAmount,
+                commissionBaseAmount, deficitAmount,
+                platformShare,
                 propertyShare, coordinatorShare, sectorLeaderShare, individualLeaderShare,
+                managementPoolAmount,
+                buildingLeaderShare,
                 coordinator.getId(),
                 sectorLeader != null ? sectorLeader.getId() : null,
-                individualLeader != null ? individualLeader.getId() : null);
+                individualLeader != null ? individualLeader.getId() : null,
+                buildingLeader.id(),
+                buildingLeader.rate());
+    }
+
+    /**
+     * 解析订单的楼长分成绑定：严格以订单创建时写入的快照为准，
+     * 保证"分成从订单产生那一刻算绑定关系"，后续修改/撤销楼长不影响已产生订单。
+     */
+    private BuildingLeaderSection resolveBuildingLeaderSection(Order order) {
+        if (!StringUtils.hasText(order.getBuildingLeaderId())) {
+            return new BuildingLeaderSection(null, BigDecimal.ZERO);
+        }
+        BigDecimal rate = defaultDecimal(order.getBuildingLeaderRate());
+        if (rate.compareTo(BigDecimal.ZERO) <= 0 || rate.compareTo(BigDecimal.ONE) > 0) {
+            return new BuildingLeaderSection(null, BigDecimal.ZERO);
+        }
+        return new BuildingLeaderSection(order.getBuildingLeaderId(), rate);
+    }
+
+    /**
+     * 配送分账链路（规范§5/§7.6）：
+     * <pre>
+     * 配送结算基数 = 实付配送费 + 配送补贴（满额减免额）
+     * 公司配送收入 = 配送结算基数 × platformDeliveryShareRate
+     * 配送员收入   = 配送结算基数 − 公司配送收入   ← 减法吸收分币误差
+     * </pre>
+     * 不再使用 courierPerOrder 固定每单金额。
+     */
+    private DeliveryChain resolveDeliveryChain(Order order, PropertyCompany propertyCompany) {
+        BigDecimal deliveryFee = defaultDecimal(order.getDeliveryFee());
+        BigDecimal originalFee = order.getOriginalDeliveryFee() != null
+                ? order.getOriginalDeliveryFee()
+                : deliveryFee;
+        BigDecimal subsidyAmount = order.getDeliverySubsidyAmount() != null
+                ? defaultDecimal(order.getDeliverySubsidyAmount())
+                : originalFee.subtract(deliveryFee).max(BigDecimal.ZERO);
+        String sponsor = StringUtils.hasText(order.getDeliverySubsidySponsor())
+                ? order.getDeliverySubsidySponsor()
+                : (subsidyAmount.compareTo(BigDecimal.ZERO) > 0 ? MERCHANT_SPONSOR : "none");
+
+        BigDecimal base = money(deliveryFee.add(subsidyAmount));
+        BigDecimal rate = defaultRate(propertyCompany.getPlatformDeliveryShareRate(), BigDecimal.ZERO);
+        BigDecimal platformDeliveryShare = money(base.multiply(rate));
+        BigDecimal courierEarning = money(base.subtract(platformDeliveryShare));
+
+        return new DeliveryChain(originalFee, deliveryFee, subsidyAmount, sponsor, base,
+                platformDeliveryShare, courierEarning);
+    }
+
+    /** 配送分账链计算结果 */
+    private record DeliveryChain(
+            BigDecimal originalDeliveryFee,
+            BigDecimal deliveryFee,
+            BigDecimal subsidyAmount,
+            String subsidySponsor,
+            BigDecimal settlementBase,
+            BigDecimal platformDeliveryShare,
+            BigDecimal courierEarning) {
     }
 
     private DistributionRecord toRecord(Order order,
@@ -340,6 +578,7 @@ public class DistributionService {
         record.setPointCost(breakdown.pointCost());
         record.setCoinCost(breakdown.coinCost());
         record.setDistributableAmount(breakdown.distributableAmount());
+        record.setPlatformShare(breakdown.platformShare());
         record.setPropertyShare(breakdown.propertyShare());
         record.setCoordinatorShare(breakdown.coordinatorShare());
         record.setSectorLeaderShare(breakdown.sectorLeaderShare());
@@ -347,6 +586,9 @@ public class DistributionService {
         record.setCoordinatorId(breakdown.coordinatorId());
         record.setSectorLeaderId(breakdown.sectorLeaderId());
         record.setIndividualLeaderId(breakdown.individualLeaderId());
+        record.setBuildingLeaderShare(breakdown.buildingLeaderShare());
+        record.setBuildingLeaderId(breakdown.buildingLeaderId());
+        record.setBuildingLeaderRate(breakdown.buildingLeaderRate());
         return record;
     }
 
@@ -355,18 +597,11 @@ public class DistributionService {
                                                  LocalDateTime start,
                                                  LocalDateTime end,
                                                  String dimension) {
-        DistributionStatsResponse.Summary summary = DistributionStatsResponse.Summary.builder()
-                .totalDistributableAmount(defaultDecimal(distributionRecordRepository.sumDistributableAmount(
-                        propertyCompanyId, start, end)))
-                .propertyAmount(defaultDecimal(distributionRecordRepository.sumPropertyShare(
-                        propertyCompanyId, start, end)))
-                .coordinatorAmount(defaultDecimal(distributionRecordRepository.sumCoordinatorShare(
-                        propertyCompanyId, start, end)))
-                .sectorLeaderAmount(defaultDecimal(distributionRecordRepository.sumSectorLeaderShare(
-                        propertyCompanyId, start, end)))
-                .individualLeaderAmount(defaultDecimal(distributionRecordRepository.sumIndividualLeaderShare(
-                        propertyCompanyId, start, end)))
-                .build();
+        // 汇总口径：仅按物业公司 + 时间区间过滤（与原有 sum* 查询一致，统筹筛选不影响汇总卡）
+        List<DistributionRecord> summaryRecords = distributionRecordRepository.findAll(
+                DistributionSpecifications.withFilters(
+                        propertyCompanyId, null, null, null, null, null, start, end));
+        DistributionStatsResponse.Summary summary = buildSummary(summaryRecords);
 
         if (!"detail".equals(dimension)) {
             return DistributionStatsResponse.builder()
@@ -377,22 +612,128 @@ public class DistributionService {
                     .build();
         }
 
-        List<DistributionRecord> records = distributionRecordRepository.findAll(
-                DistributionSpecifications.withFilters(
-                        propertyCompanyId,
-                        null,
-                        null,
-                        coordinatorId,
-                        null,
-                        null,
-                        start,
-                        end));
+        List<DistributionRecord> records = StringUtils.hasText(coordinatorId)
+                ? summaryRecords.stream()
+                        .filter(record -> coordinatorId.equals(record.getCoordinatorId()))
+                        .toList()
+                : summaryRecords;
 
         return DistributionStatsResponse.builder()
                 .summary(summary)
                 .byProperty(buildByProperty(records))
                 .byCoordinator(buildByCoordinator(records))
                 .bySector(buildBySector(records))
+                .build();
+    }
+
+    /**
+     * 汇总统计（规范§21.2）。商品链字段由分成记录 + 订单派生，配送链字段以
+     * deliveries.platform_earning / courier_earning 为唯一事实源（与商家自配单口径一致）。
+     */
+    private DistributionStatsResponse.Summary buildSummary(List<DistributionRecord> records) {
+        Set<String> orderIds = records.stream()
+                .map(DistributionRecord::getOrderId)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+        Map<String, Order> orderMap = orderIds.isEmpty() ? Map.of()
+                : orderRepository.findAllById(orderIds).stream()
+                        .collect(Collectors.toMap(Order::getId, Function.identity()));
+        Map<String, Delivery> deliveryMap = orderIds.isEmpty() ? Map.of()
+                : deliveryRepository.findByOrderIdIn(orderIds).stream()
+                        .collect(Collectors.toMap(Delivery::getOrderId, Function.identity(), (a, b) -> a));
+
+        BigDecimal productAmount = BigDecimal.ZERO;
+        BigDecimal totalOrderAmount = BigDecimal.ZERO;
+        BigDecimal totalDistributableAmount = BigDecimal.ZERO;
+        BigDecimal merchantGoodsAmount = BigDecimal.ZERO;
+        BigDecimal merchantDeliverySubsidyAmount = BigDecimal.ZERO;
+        BigDecimal platformAmount = BigDecimal.ZERO;
+        BigDecimal platformDeliveryAmount = BigDecimal.ZERO;
+        BigDecimal courierAmount = BigDecimal.ZERO;
+        BigDecimal propertyAmount = BigDecimal.ZERO;
+        BigDecimal coordinatorAmount = BigDecimal.ZERO;
+        BigDecimal sectorLeaderAmount = BigDecimal.ZERO;
+        BigDecimal individualLeaderAmount = BigDecimal.ZERO;
+        BigDecimal buildingLeaderAmount = BigDecimal.ZERO;
+        BigDecimal deficitAmount = BigDecimal.ZERO;
+        BigDecimal reversalAmount = BigDecimal.ZERO;
+
+        for (DistributionRecord record : records) {
+            BigDecimal recordTotal = defaultDecimal(record.getTotalAmount());
+            // 冲正记录金额为负，派生字段需保持同号
+            BigDecimal sign = recordTotal.compareTo(BigDecimal.ZERO) < 0
+                    ? BigDecimal.ONE.negate() : BigDecimal.ONE;
+
+            productAmount = productAmount.add(recordTotal);
+            totalDistributableAmount = totalDistributableAmount.add(defaultDecimal(record.getDistributableAmount()));
+            platformAmount = platformAmount.add(defaultDecimal(record.getPlatformShare()));
+            propertyAmount = propertyAmount.add(defaultDecimal(record.getPropertyShare()));
+            coordinatorAmount = coordinatorAmount.add(defaultDecimal(record.getCoordinatorShare()));
+            sectorLeaderAmount = sectorLeaderAmount.add(defaultDecimal(record.getSectorLeaderShare()));
+            individualLeaderAmount = individualLeaderAmount.add(defaultDecimal(record.getIndividualLeaderShare()));
+            buildingLeaderAmount = buildingLeaderAmount.add(defaultDecimal(record.getBuildingLeaderShare()));
+
+            BigDecimal distributable = defaultDecimal(record.getDistributableAmount());
+            if (distributable.compareTo(BigDecimal.ZERO) < 0) {
+                reversalAmount = reversalAmount.add(distributable.abs());
+            }
+
+            Order order = orderMap.get(record.getOrderId());
+            BigDecimal commissionBaseAmount;
+            if (order != null) {
+                BigDecimal goodsAmount = defaultDecimal(order.getTotalAmount());
+                BigDecimal productBase = money(goodsAmount
+                        .subtract(defaultDecimal(order.getCouponAmount())).max(BigDecimal.ZERO));
+                commissionBaseAmount = money(productBase.multiply(defaultDecimal(record.getCommissionRate())));
+                merchantGoodsAmount = merchantGoodsAmount.add(
+                        sign.multiply(money(productBase.subtract(commissionBaseAmount))));
+                totalOrderAmount = totalOrderAmount.add(
+                        recordTotal.add(sign.multiply(defaultDecimal(order.getDeliveryFee()))));
+                if (MERCHANT_SPONSOR.equals(order.getDeliverySubsidySponsor())) {
+                    merchantDeliverySubsidyAmount = merchantDeliverySubsidyAmount
+                            .add(sign.multiply(defaultDecimal(order.getDeliverySubsidyAmount())));
+                }
+            } else {
+                commissionBaseAmount = defaultDecimal(record.getDistributableAmount())
+                        .add(defaultDecimal(record.getPointCost()))
+                        .add(defaultDecimal(record.getCoinCost()));
+                merchantGoodsAmount = merchantGoodsAmount.add(recordTotal.subtract(commissionBaseAmount));
+                totalOrderAmount = totalOrderAmount.add(recordTotal);
+            }
+
+            // 成本击穿差额：仅正向记录可产生（冲正记录对应的原单必然 distributable>0）
+            BigDecimal costs = defaultDecimal(record.getPointCost()).add(defaultDecimal(record.getCoinCost()));
+            deficitAmount = deficitAmount.add(costs.subtract(sign.multiply(commissionBaseAmount))
+                    .max(BigDecimal.ZERO));
+
+            Delivery delivery = deliveryMap.get(record.getOrderId());
+            if (delivery != null) {
+                platformDeliveryAmount = platformDeliveryAmount.add(defaultDecimal(delivery.getPlatformEarning()));
+                courierAmount = courierAmount.add(defaultDecimal(delivery.getCourierEarning()));
+            }
+        }
+
+        BigDecimal merchantAmount = merchantGoodsAmount.subtract(merchantDeliverySubsidyAmount);
+        BigDecimal managementPoolAmount = coordinatorAmount.add(sectorLeaderAmount).add(individualLeaderAmount);
+
+        return DistributionStatsResponse.Summary.builder()
+                .productAmount(money(productAmount))
+                .totalOrderAmount(money(totalOrderAmount))
+                .totalDistributableAmount(money(totalDistributableAmount))
+                .merchantGoodsAmount(money(merchantGoodsAmount))
+                .merchantDeliverySubsidyAmount(money(merchantDeliverySubsidyAmount))
+                .merchantAmount(money(merchantAmount))
+                .platformAmount(money(platformAmount))
+                .platformDeliveryAmount(money(platformDeliveryAmount))
+                .courierAmount(money(courierAmount))
+                .propertyAmount(money(propertyAmount))
+                .managementPoolAmount(money(managementPoolAmount))
+                .coordinatorAmount(money(coordinatorAmount))
+                .sectorLeaderAmount(money(sectorLeaderAmount))
+                .individualLeaderAmount(money(individualLeaderAmount))
+                .buildingLeaderAmount(money(buildingLeaderAmount))
+                .deficitAmount(money(deficitAmount))
+                .reversalAmount(money(reversalAmount))
                 .build();
     }
 
@@ -495,10 +836,17 @@ public class DistributionService {
                 individualLeaderRepository.findById(record.getIndividualLeaderId())
                         .ifPresent(i -> residentIds.add(i.getResidentId()));
             }
+            if (StringUtils.hasText(record.getBuildingLeaderId())) {
+                buildingLeaderRepository.findById(record.getBuildingLeaderId())
+                        .ifPresent(b -> residentIds.add(b.getResidentId()));
+            }
         }
 
         Map<String, Order> orderMap = orderRepository.findAllById(orderIds).stream()
                 .collect(Collectors.toMap(Order::getId, Function.identity()));
+        Map<String, Delivery> deliveryMap = orderIds.isEmpty() ? Map.of()
+                : deliveryRepository.findByOrderIdIn(orderIds).stream()
+                        .collect(Collectors.toMap(Delivery::getOrderId, Function.identity(), (a, b) -> a));
         Map<String, Merchant> merchantMap = merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity()));
         Map<String, Resident> residentMap = residentRepository.findAllById(residentIds).stream()
@@ -518,12 +866,17 @@ public class DistributionService {
                 individualLeaderRepository.findById(record.getIndividualLeaderId()).ifPresent(i ->
                         leaderNameMap.put(record.getIndividualLeaderId(), residentMap.get(i.getResidentId())));
             }
+            if (StringUtils.hasText(record.getBuildingLeaderId())) {
+                buildingLeaderRepository.findById(record.getBuildingLeaderId()).ifPresent(b ->
+                        leaderNameMap.put(record.getBuildingLeaderId(), residentMap.get(b.getResidentId())));
+            }
         }
 
         List<DistributionRecordItemResponse> list = records.stream()
                 .map(record -> distributionConverter.toListItem(
                         record,
                         orderMap.get(record.getOrderId()),
+                        deliveryMap.get(record.getOrderId()),
                         merchantMap.get(record.getMerchantId()),
                         residentMap.get(record.getResidentId()),
                         leaderNameMap))
@@ -672,12 +1025,23 @@ public class DistributionService {
             BigDecimal pointCost,
             BigDecimal coinCost,
             BigDecimal distributableAmount,
+            BigDecimal commissionBaseAmount,
+            BigDecimal deficitAmount,
+            BigDecimal platformShare,
             BigDecimal propertyShare,
             BigDecimal coordinatorShare,
             BigDecimal sectorLeaderShare,
             BigDecimal individualLeaderShare,
+            BigDecimal managementPoolAmount,
+            BigDecimal buildingLeaderShare,
             String coordinatorId,
             String sectorLeaderId,
-            String individualLeaderId) {
+            String individualLeaderId,
+            String buildingLeaderId,
+            BigDecimal buildingLeaderRate) {
+    }
+
+    /** 订单楼长绑定快照（id + 分成比例） */
+    private record BuildingLeaderSection(String id, BigDecimal rate) {
     }
 }

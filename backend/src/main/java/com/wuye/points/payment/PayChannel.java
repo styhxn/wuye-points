@@ -3,7 +3,6 @@ package com.wuye.points.payment;
 import com.wuye.points.entity.PaymentRecord;
 
 import java.math.BigDecimal;
-import java.util.Map;
 
 /**
  * 统一支付通道接口。
@@ -43,11 +42,13 @@ public interface PayChannel {
 
     void close(PaymentRecord record);
 
-    /** 校验回调通知（微信通道：body 直接校验；微信通道不使用本方法，走 {@code PaymentCompletionService.handleWechatNotify}）。 */
-    boolean verifyNotify(Map<String, Object> body);
-
-    void markPaidFromNotify(Map<String, Object> body, PaymentRecord record);
-
+    /**
+     * 查单确认已支付后落账（仅置 paid + paidAt）。
+     *
+     * <p>注意：微信支付回调不走本接口的方法——回调统一由
+     * {@code PaymentCompletionService.handleWechatNotify} 验签 + 解密 + 金额校验后落账，
+     * 不存在「按回调 body 直接置 paid」的旁路。
+     */
     void markPaidFromQuery(PaymentRecord record);
 
     static String fen(BigDecimal yuan) {

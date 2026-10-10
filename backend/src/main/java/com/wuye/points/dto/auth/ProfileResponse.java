@@ -47,6 +47,12 @@ public class ProfileResponse {
     @Schema(description = "角色", example = "resident")
     private String role;
 
+    @Schema(description = "是否为单元楼长（住户子身份，role 仍为 resident）", example = "false")
+    private Boolean isBuildingLeader;
+
+    @Schema(description = "单元楼长ID（非楼长时为 null）", example = "bl_abc123")
+    private String buildingLeaderId;
+
     @Schema(description = "物业公司ID", example = "pc_abc123")
     private String propertyCompanyId;
 

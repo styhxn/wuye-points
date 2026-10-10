@@ -12,11 +12,15 @@ import com.wuye.points.dto.residentmerchant.PayResidentMerchantDepositResponse;
 import com.wuye.points.dto.residentmerchant.PublicResidentMerchantListingFlatItemResponse;
 import com.wuye.points.dto.residentmerchant.PublicResidentMerchantShopResponse;
 import com.wuye.points.dto.residentmerchant.ResidentMerchantListingItemResponse;
+import com.wuye.points.dto.residentmerchant.SellerWalletResponse;
 import com.wuye.points.dto.residentmerchant.ShareListingResponse;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantListingRequest;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantVisibilityRequest;
+import com.wuye.points.dto.rolewithdrawal.ApplyRoleWithdrawalRequest;
+import com.wuye.points.dto.rolewithdrawal.RoleWithdrawalItemResponse;
 import com.wuye.points.service.ResidentMerchantSettlementService;
 import com.wuye.points.service.ResidentShopService;
+import com.wuye.points.service.RoleWithdrawalService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,6 +47,7 @@ public class ResidentShopController {
 
     private final ResidentShopService residentShopService;
     private final ResidentMerchantSettlementService residentMerchantSettlementService;
+    private final RoleWithdrawalService roleWithdrawalService;
 
     @Operation(summary = "申请成为业主商户", description = "需登录，角色：resident（业主）")
     @PostMapping("/apply")
@@ -149,5 +154,34 @@ public class ResidentShopController {
             @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.success(residentMerchantSettlementService.listMySales(page, pageSize));
+    }
+
+    @Operation(summary = "业主卖货钱包概览",
+            description = "展示业主商城卖货收益的独立钱包概览（仅可提现，不可消费）。"
+                    + "wallet 余额 = 累计已结算卖货收益 − 已提现 − 在途提现。需登录，角色：resident")
+    @GetMapping("/seller-wallet")
+    public ApiResponse<SellerWalletResponse> sellerWallet() {
+        return ApiResponse.success(residentMerchantSettlementService.getSellerWallet());
+    }
+
+    @Operation(summary = "业主卖货钱包提现申请",
+            description = "从卖货钱包发起提现，进入管理端审核流程。需登录，角色：resident；金额不得超过可提现余额")
+    @PostMapping("/seller-wallet/withdrawals")
+    public ApiResponse<RoleWithdrawalItemResponse> applySellerWalletWithdrawal(
+            @Valid @RequestBody ApplyRoleWithdrawalRequest request) {
+        return ApiResponse.success(roleWithdrawalService.applyForResidentSeller(request));
+    }
+
+    @Operation(summary = "业主卖货钱包提现记录",
+            description = "分页查询卖货钱包的提现记录。需登录，角色：resident")
+    @GetMapping("/seller-wallet/withdrawals")
+    public ApiResponse<PageResponse<RoleWithdrawalItemResponse>> listSellerWalletWithdrawals(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "审核状态：pending/approved/rejected/completed") @RequestParam(required = false) String auditStatus,
+            @Parameter(description = "开始日期（yyyy-MM-dd）") @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束日期（yyyy-MM-dd）") @RequestParam(required = false) String endDate) {
+        return ApiResponse.success(
+                roleWithdrawalService.listForResidentSeller(page, pageSize, auditStatus, startDate, endDate));
     }
 }

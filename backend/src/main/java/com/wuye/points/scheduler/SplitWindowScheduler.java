@@ -40,7 +40,7 @@ public class SplitWindowScheduler {
     @Scheduled(cron = "0 30 2 * * ?")
     @SchedulerLock(name = "split_finish_expired_window", lockAtMostFor = "PT2H", lockAtLeastFor = "PT1M")
     public void finishExpiredWindow() {
-        if (!wechatSplitProperties.isEnabled()) {
+        if (!wechatSplitService.isEnabled()) {
             return;
         }
         List<WechatSplitRecord> frozen = splitRecordRepository.findByStatus("frozen");
@@ -74,7 +74,7 @@ public class SplitWindowScheduler {
     @Scheduled(cron = "0 50 2 * * ?")
     @SchedulerLock(name = "split_retry_failed_withdrawals", lockAtMostFor = "PT2H", lockAtLeastFor = "PT1M")
     public void retryFailedWithdrawals() {
-        if (!wechatSplitProperties.isEnabled()) return;
+        if (!wechatSplitService.isEnabled()) return;
         if (!wechatSplitProperties.isAutoWithdrawEnabled()) return;
         List<WechatSplitRecord> failed = splitRecordRepository.findByWithdrawStatus("withdraw_failed");
         for (WechatSplitRecord split : failed) {
@@ -107,7 +107,7 @@ public class SplitWindowScheduler {
     @Scheduled(cron = "0 10 3 * * ?")
     @SchedulerLock(name = "split_reconcile_daily", lockAtMostFor = "PT1H", lockAtLeastFor = "PT1M")
     public void reconcileDaily() {
-        if (!wechatSplitProperties.isEnabled()) {
+        if (!wechatSplitService.isEnabled()) {
             return;
         }
         List<String> unfinished = List.of("pending", "frozen", "finished", "withdrawing");

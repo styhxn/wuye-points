@@ -18,4 +18,7 @@ public class SubscribeActivityGroupRequest {
 
     @Schema(description = "是否自动续费", example = "true")
     private Boolean autoRenew;
+
+    @Schema(description = "用户openid（paymentMethod=wechat 时使用；不传则取用户绑定openid）", example = "oGX3Z5Xx...")
+    private String openid;
 }

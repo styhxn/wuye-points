@@ -62,6 +62,10 @@ public class MerchantAd extends BaseEntity {
     @Column(name = "payment_method", length = 10)
     private String paymentMethod;
 
+    /** 状态：pending_payment 待支付 / active 投放中 / cancelled 已取消（支付超时/失败） */
+    @Column(name = "status", length = 20)
+    private String status;
+
     /** 定向广告-目标楼栋（JSON数组） */
     @Column(name = "target_buildings", columnDefinition = "json")
     private String targetBuildings;

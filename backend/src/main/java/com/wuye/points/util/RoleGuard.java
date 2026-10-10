@@ -23,10 +23,26 @@ public class RoleGuard {
     private static final Set<String> LEGACY_PROPERTY_ADMIN_ROLES =
             Set.of("property_leader", "property_operator");
 
-    /** JWT role 归一化：历史物业子账号角色视为 property_admin */
+    /**
+     * 住户子角色：单元楼长本质是「特殊住户 + 楼长」，其住户身份不应丢失。
+     * 存量数据/令牌中 role 可能仍为 building_leader，此处归一化为 resident，
+     * 保证所有 requireAnyRole("resident") 的住户功能继续可用；
+     * 楼长身份改由 building_leaders 表的 active 记录判定。
+     */
+    private static final Set<String> RESIDENT_SUB_ROLES = Set.of("building_leader");
+
+    /** JWT role 归一化：历史物业子账号角色视为 property_admin；住户子角色视为 resident */
     public static String normalizeRole(String role) {
-        return role != null && LEGACY_PROPERTY_ADMIN_ROLES.contains(role)
-                ? "property_admin" : role;
+        if (role == null) {
+            return null;
+        }
+        if (LEGACY_PROPERTY_ADMIN_ROLES.contains(role)) {
+            return "property_admin";
+        }
+        if (RESIDENT_SUB_ROLES.contains(role)) {
+            return "resident";
+        }
+        return role;
     }
 
     public void requireAnyRole(String... allowedRoles) {
@@ -49,7 +65,7 @@ public class RoleGuard {
     }
 
     public boolean isResident() {
-        return "resident".equals(UserContext.currentRole());
+        return "resident".equals(normalizeRole(UserContext.currentRole()));
     }
 
     public boolean isMerchant() {
@@ -175,6 +191,11 @@ public class RoleGuard {
     public static final Set<String> PROPERTY_COMPANY_STATUS = Set.of("active", "inactive");
     public static final Set<String> COIN_ISSUE_MODES = Set.of("auto", "manual");
 
+    /**
+     * 可被管理端直接写入 residents.role 的角色白名单。
+     * 注意：不含 building_leader —— 楼长是住户的叠加身份（由 building_leaders 表判定），
+     * 不允许通过改 role 的方式授予，否则会破坏该住户的住户功能（社区论坛等）。
+     */
     public static final Set<String> VALID_ROLES = Set.of(
             "platform_admin", "property_admin", "community_admin",
             "resident", "merchant", "courier", "technician",
@@ -202,8 +223,9 @@ public class RoleGuard {
     }
 
     /**
-     * 是否为"居民衍生的组长类角色"：业主、活动组长、协调员、板块负责人、个体负责人。
+     * 是否为"居民衍生的组长类角色"：业主、活动组长、协调员、板块负责人、个体负责人、单元楼长。
      * 这些角色均以居民账户（res_xxx）存在，可作为活动组负责人，按 leaderId 归属校验。
+     * 单元楼长已是住户子角色（role=resident），「是否楼长」请查 building_leaders 表的 active 记录。
      */
     public boolean isLeaderRole() {
         String role = UserContext.currentRole();
@@ -211,6 +233,7 @@ public class RoleGuard {
                 || "activity_leader".equals(role)
                 || "coordinator".equals(role)
                 || "sector_leader".equals(role)
-                || "individual_leader".equals(role);
+                || "individual_leader".equals(role)
+                || "building_leader".equals(role);
     }
 }

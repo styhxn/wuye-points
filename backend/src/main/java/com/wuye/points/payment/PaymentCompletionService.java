@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.Map;
 
 /**
@@ -29,6 +30,9 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class PaymentCompletionService {
+
+    /** 回调金额与预下单金额不一致时的终态：不入账、不自动关单，留待人工对账（不会被 pending 扫描误收尾） */
+    private static final String STATUS_AMOUNT_MISMATCH = "amount_mismatch";
 
     private final PayChannel payChannel;
     private final PaymentRecordRepository paymentRecordRepository;
@@ -64,6 +68,21 @@ public class PaymentCompletionService {
             if (isAlreadyPaid(record)) {
                 return Map.of("code", "SUCCESS", "message", "重复通知");
             }
+            // 金额校验（官方规范要求）：回调 amount.total 必须与本地预下单金额（cashAmount）一致。
+            // 不一致说明数据异常或串单，一律不入账（置 amount_mismatch 待人工对账，ERROR 日志告警），
+            // 避免「按错误金额发货、少收/多收却照常履约」。应答 SUCCESS 停止重推——重推不会改变结果。
+            Integer paidFen = extractPaidFen(decoded);
+            if (!isAmountMatched(paidFen, record)) {
+                String msg = "支付金额与预下单金额不一致（微信total=" + paidFen + "分，本地cash="
+                        + record.getCashAmount() + "元），已拦截入账待人工对账";
+                record.setStatus(STATUS_AMOUNT_MISMATCH);
+                record.setErrorMsg(msg);
+                record.setChannelTradeNo(transactionId);
+                paymentRecordRepository.save(record);
+                log.error("微信回调金额校验失败 recordId={} outTradeNo={} {}",
+                        record.getId(), outTradeNo, msg);
+                return Map.of("code", "SUCCESS", "message", "金额校验失败，待人工对账");
+            }
             // 竞态防御：流水本地已关单（PendingPaymentScheduler 30min 收尾）但微信实际支付成功
             // （30~120min 窗口内用户完成支付）。订单已取消，不能置 paid 走 finalize（无人履约），
             // 应立即原路退款，避免「钱已扣、单已取消、资金滞留」。
@@ -87,6 +106,33 @@ public class PaymentCompletionService {
 
     private boolean isAlreadyPaid(PaymentRecord record) {
         return "paid".equalsIgnoreCase(record.getStatus()) || "PAID".equals(record.getStatus());
+    }
+
+    /** 从回调明文中取微信实收金额（amount.total，单位分）；缺失或格式异常返回 null。 */
+    private Integer extractPaidFen(Map<String, Object> decoded) {
+        Object amountObj = decoded.get("amount");
+        if (!(amountObj instanceof Map<?, ?> amount)) {
+            return null;
+        }
+        Object total = amount.get("total");
+        if (total instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return total == null ? null : Integer.valueOf(String.valueOf(total));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** 校验微信实收金额（分）与本地预下单金额（cashAmount 元）一致；金额缺失视为校验不通过（fail-closed）。 */
+    private boolean isAmountMatched(Integer paidFen, PaymentRecord record) {
+        if (paidFen == null) {
+            return false;
+        }
+        BigDecimal cash = record.getCashAmount() != null ? record.getCashAmount() : BigDecimal.ZERO;
+        int expectedFen = cash.multiply(new BigDecimal("100")).setScale(0, RoundingMode.HALF_UP).intValue();
+        return paidFen == expectedFen;
     }
 
     /**

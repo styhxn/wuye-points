@@ -11,6 +11,7 @@ import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.MerchantWechatAccountRepository;
 import com.wuye.points.repository.WechatSplitRecordRepository;
 import com.wuye.points.service.MerchantTransferService;
+import com.wuye.points.service.PlatformSettingService;
 import com.wuye.points.service.SplitRecoveryService;
 import com.wuye.points.service.WalletFlowService;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -51,6 +52,7 @@ public class WechatSplitService {
     private final WechatSplitRecordRepository splitRecordRepository;
     private final WechatSplitReceiverAccountService receiverAccountService;
     private final WechatSplitProperties wechatSplitProperties;
+    private final PlatformSettingService platformSettingService;
     private final WechatPayProperties wechatPayProperties;
     private final WechatPayService wechatPayService;
     private final DistributionRecordRepository distributionRecordRepository;
@@ -61,9 +63,21 @@ public class WechatSplitService {
     private final SplitRecoveryService recoveryService;
     private final SnowflakeIdGenerator idGenerator;
 
-    /** 业务总开关（普通分账是否启用）。 */
+    /**
+     * 业务总开关（普通分账是否启用）：配置总开关（{@code wechat-split.enabled}，fail-closed）
+     * 与运营运行时开关（{@code settlement.wechatSplitEnabled}，管理端 {@code PUT /admin/settlement-config}）取与。
+     * <p>两个开关都必须为 true 才启用，故管理端只能收紧、无法突破配置总开关，保持 fail-closed。</p>
+     */
     public boolean isEnabled() {
-        return wechatSplitProperties.isEnabled();
+        return wechatSplitProperties.isEnabled() && platformSettingService.isWechatSplitEnabled();
+    }
+
+    /**
+     * 该物业公司是否启用分账：在 {@link #isEnabled()} 基础上叠加灰度白名单
+     * （白名单非空时仅名单内启用）。
+     */
+    public boolean isEnabledForProperty(String propertyCompanyId) {
+        return isEnabled() && wechatSplitProperties.isEnabledForProperty(propertyCompanyId);
     }
 
     /**
@@ -147,7 +161,8 @@ public class WechatSplitService {
 
     /**
      * 电商收付通模式：发起一笔请求分账（receivers 含平台 MERCHANT_ID + 快递员 PERSONAL_OPENID）。
-     * 分账金额 = 佣金总额(distributableAmount) + 配送结算基数(deliveryFee − courierEarning 归平台)；
+     * 分账金额 = 佣金总额(distributableAmount) + 平台配送分成(delivery.platformEarning)；
+     * 快递员配送报酬(delivery.courierEarning) 单独作为一笔 PERSONAL_OPENID 分账；
      * 商家货款不参与分账，完结时解冻给商家。
      */
     private void ecommerceFreeze(PaymentRecord record, DistributionRecord dist) {
@@ -166,13 +181,12 @@ public class WechatSplitService {
             return;
         }
 
-        // 配送信息：配送费直分快递员
+        // 配送信息：平台配送分成归平台，配送报酬直分快递员（deliveries 为配送侧唯一事实源）
         Delivery delivery = deliveryRepository.findByOrderId(record.getBizId()).orElse(null);
         BigDecimal courierEarning = delivery != null ? nz(delivery.getCourierEarning()) : BigDecimal.ZERO;
-        BigDecimal deliveryFee = delivery != null ? nz(delivery.getFee()) : BigDecimal.ZERO;
-        // 平台应收 = 佣金 + 配送结算基数中归平台部分（基数 ≈ 用户实付配送费，减免差额由钱包补贴流水体现）
-        BigDecimal platformAmount = money(nz(dist.getDistributableAmount())
-                .add(deliveryFee).subtract(courierEarning));
+        BigDecimal platformDeliveryShare = delivery != null ? nz(delivery.getPlatformEarning()) : BigDecimal.ZERO;
+        // 平台应收 = 商品佣金总额 + 平台配送分成
+        BigDecimal platformAmount = money(nz(dist.getDistributableAmount()).add(platformDeliveryShare));
         String platformMchId = ecommerceProps.resolvePlatformReceiverMchId(wechatPayProperties);
 
         // 快递员 openid（未注册则本次跳过，配送费留待补分/对账）

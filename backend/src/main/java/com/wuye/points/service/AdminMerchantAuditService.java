@@ -7,6 +7,7 @@ import com.wuye.points.dto.admin.merchantaudit.AuditMerchantWithdrawalRequest;
 import com.wuye.points.dto.admin.merchantaudit.AuditMerchantWithdrawalResponse;
 import com.wuye.points.dto.admin.merchantaudit.MerchantPointPurchaseListItemResponse;
 import com.wuye.points.dto.admin.merchantaudit.MerchantWithdrawalListItemResponse;
+import com.wuye.points.dto.admin.merchantaudit.MerchantWithdrawalSummaryResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantPointPurchase;
@@ -28,6 +29,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -146,6 +148,33 @@ public class AdminMerchantAuditService {
                 .toList();
 
         return PageResponse.of(list, page, pageSize, withdrawalPage.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public MerchantWithdrawalSummaryResponse getWithdrawalSummary(String propertyCompanyId) {
+        permissionGuard.requirePermission("merchant.audit");
+        String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        LocalDateTime todayEnd = LocalDate.now().plusDays(1).atStartOfDay();
+
+        return MerchantWithdrawalSummaryResponse.builder()
+                .pendingCount(merchantWithdrawalRepository.countByStatuses(
+                        scopedPropertyCompanyId, List.of("pending")))
+                .pendingAmount(nz(merchantWithdrawalRepository.sumAmountByStatuses(
+                        scopedPropertyCompanyId, List.of("pending"))))
+                .todayProcessedCount(merchantWithdrawalRepository.countAuditedBetween(
+                        scopedPropertyCompanyId, todayStart, todayEnd))
+                .todayProcessedAmount(nz(merchantWithdrawalRepository.sumActualAmountAuditedBetween(
+                        scopedPropertyCompanyId, todayStart, todayEnd)))
+                .approvedCount(merchantWithdrawalRepository.countByStatuses(
+                        scopedPropertyCompanyId, List.of("approved", "completed")))
+                .approvedAmount(nz(merchantWithdrawalRepository.sumActualAmountByStatuses(
+                        scopedPropertyCompanyId, List.of("approved", "completed"))))
+                .build();
+    }
+
+    private BigDecimal nz(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     @Transactional

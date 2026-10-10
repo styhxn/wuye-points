@@ -1,6 +1,6 @@
 # 物业积分服务系统 — API 接口文档
 
-> **版本**：v8.8
+> **版本**：v8.9
 > **Base URL**：`https://test.yuanxusoftware.top/api/v1`
 > **维护方**：连云港元序软件有限公司
 > **文档说明**：本文件为**当前最新完整接口文档**（已去除历史版本迭代说明，仅保留最新契约）。
@@ -88,6 +88,7 @@
   - [二期 — 商家广告推送](#59-二期--商家广告推送-merchant-ads)
   - [二期 — 业主商户体系](#60-二期--业主商户体系-resident-merchants)
   - [优惠券模块](#98-优惠券模块)
+  - [单元楼长与业主卖货钱包](#99-单元楼长与业主卖货钱包)
 - [三期 — 模块负责人体系](#61-三期--模块负责人体系-sector-leaders)
   - [三期 — 快递负责人体系](#62-三期--快递负责人体系-courier-managers)
   - [三期 — 商家端口改造](#63-三期--商家端口改造-merchant-port)
@@ -3919,6 +3920,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 | `60044` | 400  | 优惠券已使用 |
 | `60045` | 400  | 未达优惠券使用门槛 |
 | `60046` | 400  | 优惠券适用范围不匹配（商家券与订单商家不一致） |
+| `99001` | 502  | 微信支付调用失败/未配置。**2026-10-06 起** message 会附带微信侧错误码与信息，形如 `微信支付失败[CODE]：xxx`（如签名错误、appid 与 mchid 不匹配、api-v3-key 长度错误、私钥缺失等），便于直接定位，不再只有笼统的"内部服务异常" |
 
 
 > **说明**：`60001` 表示商家 ID 本身不存在；`60006` 表示商家存在，但在当前物业公司下缺少 `merchant_property_configs` 挂接记录（抽佣比例、积分兑换比等）。下单与支付均会校验挂接配置。
@@ -4495,6 +4497,13 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/send-deli
 }
 ```
 
+> **2026-10-06 修复（v8.10）**：确认收货是分账结算的触发点——订单置 `completed` 时生成
+> `distribution_records`（含楼长分成）与业主卖货明细。此前骑手送达后订单停在 `delivering`，
+> 若买家不确认收货则分成永不落账（商家货款、楼长分成、四级分账均不生成，而骑手配送费已先行入账）。
+> 现新增每小时兜底任务 `OrderAutoConfirmScheduler`：对「已送达且超过售后窗口期（复用
+> `order.refundWindowDays`，默认 3 天）」仍为 `delivering` 的订单自动确认收货并结算，保证账目闭环。
+> 配送员的配送费与时点无关，骑手点「送达」即计入可提现余额。
+
 ---
 
 
@@ -4558,6 +4567,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/pending?page=1&pa
         "deliverySettlementBase": 0.30,
         "platformDeliveryShare": 0.03,
         "courierEarning": 0.27,
+        "courierShare": 0.27,
         "settlementStatus": "pending",
         "status": "pending",
         "timeoutMinutes": 30,
@@ -4575,13 +4585,17 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/pending?page=1&pa
 }
 ```
 
-> **待抢单/可抢单列表项字段**（`PendingDeliveryItemResponse`）：`id`、`orderId`、`orderNo`、`merchantId`、`merchantName`、`merchantAddress`、`pickupAddress`、`deliveryAddress`、`contactPhone`、`fee`（= 用户实际支付配送费）、`originalDeliveryFee`（满额减免前基础配送费）、`deliverySubsidySponsor`、`deliverySubsidyAmount`、`deliverySettlementBase`（= 配送费 + 补贴）、`platformDeliveryShare`（公司配送收入）、`courierEarning`（配送员最终收入 = 基数 − 公司配送收入）、`settlementStatus`（`pending`/`settled`/`reversed`）、`status`、`timeoutMinutes`、`createdAt`。
-
-> **v6.6 变更说明**：待抢单列表查询条件扩展为匹配两类订单的配送单（`delivery.status = pending`）：
-> 1. **`order.orderStatus = paid`**（订单已支付，尚未选择履约方式，等待商家决策）；
-> 2. **`order.orderStatus = delivering` AND `order.fulfillmentMode = courier_hall`**（商家已选择平台配送，配送单已创建但尚未被骑手抢单）。
+> **待抢单/可抢单列表项字段**（`PendingDeliveryItemResponse`）：`id`、`orderId`、`orderNo`、`merchantId`、`merchantName`、`merchantAddress`、`pickupAddress`、`deliveryAddress`、`contactPhone`、`residentId`、`fee`（= 用户实际支付配送费）、`originalDeliveryFee`（满额减免前基础配送费）、`deliverySubsidySponsor`、`deliverySubsidyAmount`、`deliverySettlementBase`（= 配送费 + 补贴）、`platformDeliveryShare`（公司配送收入）、`courierEarning`（配送员最终收入 = 基数 − 公司配送收入）、`courierShare`（兼容旧字段，**恒等于** `courierEarning`）、`settlementStatus`（`pending`/`settled`/`reversed`）、`status`、`carrierType`（`courier`/`merchant`）、`merchantDeliveryFeeShare`（仅商家自配单有值）、`timeoutMinutes`、`createdAt`。
 >
-> 此前仅匹配第 1 类，导致非团购订单商家选择「发布到抢单大厅」后（订单状态变为 `delivering`），配送单不会出现在待抢单列表中。现在两类均会展示。
+> **配送侧取数口径（A1，distribution_b_v1）**：`courierEarning` 不再取 `delivery_rules.courier_per_order` 固定每单金额，改为
+> `deliverySettlementBase × (1 − platform_delivery_share_rate)`；恒等式 `deliverySettlementBase = platformDeliveryShare + courierEarning` 始终成立。`courier_per_order` / `delivery_courier_per_order` / `courier_share_rate` 列保留但**不参与分账**（仅历史兼容）。
+
+> **待抢单列表查询口径（2026-10-06 修复）**：仅匹配「商家已选择平台配送」的配送单（`delivery.status = pending`）：
+> **`order.orderStatus = delivering` AND `order.fulfillmentMode = courier_hall`**（商家已选择 `courier_hall` 或超时兜底为平台配送，等待骑手抢单）。
+>
+> **不再**匹配 `order.orderStatus = paid`（订单已支付但商家**尚未**选择履约方式）：该阶段订单**不生成配送单**，
+> 因此不会出现在待抢大厅，避免「商家选择自配 / 发布抢单大厅」形同虚设。
+> 同时排除 `carrier_type = merchant` 的商家自配单。
 
 ---
 
@@ -4623,6 +4637,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
 
 | 字段                 | 类型             | 说明                              |
 | ------------------ | -------------- | ------------------------------- |
+| `courierShare`     | `BigDecimal`   | 兼容旧字段，恒等于 `courierEarning`       |
 | `proofImageUrls`   | `List<String>` | 完成配送时上传的凭证 URL（仅 `completed` 有值） |
 | `completeRemark`   | `String`       | 完成配送备注                          |
 
@@ -4653,6 +4668,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
         "deliverySettlementBase": 0.30,
         "platformDeliveryShare": 0.03,
         "courierEarning": 0.27,
+        "courierShare": 0.27,
         "settlementStatus": "pending",
         "status": "accepted",
         "acceptedAt": "2026-07-01 15:25:00",
@@ -4702,6 +4718,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
     "deliverySettlementBase": 0.30,
     "platformDeliveryShare": 0.03,
     "courierEarning": 0.27,
+    "courierShare": 0.27,
     "settlementStatus": "pending",
     "acceptedAt": "2026-07-01 15:25:00",
     "timeoutAt": "2026-07-01 15:55:00"
@@ -4774,7 +4791,10 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/compl
     "deliverySettlementBase": 0.30,
     "platformDeliveryShare": 0.03,
     "courierEarning": 0.27,
-    "settlementStatus": "settled",
+    "courierShare": 0.27,
+    "settlementStatus": "pending",
+    "carrierType": "courier",
+    "merchantDeliveryFeeShare": null,
     "deliveredAt": "2026-07-01 15:40:00",
     "proofImageUrls": ["https://test.yuanxusoftware.top/api/v1/static/proof/xxx.jpg"],
     "remark": "已送达"
@@ -4873,6 +4893,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/assig
 **Roles**: `merchant`, `property_admin`, `platform_admin`, `coordinator`, `sector_leader`, `individual_leader`
 
 指派配送（§9.7）前查询可用配送员；与管理端 `GET /admin/couriers`（§10.5.3）数据同源。
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐：分页查询本物业 `role=courier` 的住户；`status` 按该配送员是否存在进行中配送单（`accepted`/`picked`）判定为 `online` / `offline`；`id` 与 `courierId` 均为其住户 ID（`res_` 前缀）。
 
 **Query 参数**：
 
@@ -5245,6 +5267,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/deliveries/capacity?pr
 
 与 §9.8 `GET /deliveries/couriers` 同源；管理端送货页用此路径。
 
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐，实现与 §9.8 同源（`property_admin`/`platform_admin` 可直接查本物业或指定物业）。
+
 **Query 参数**：`page`、`pageSize`、`propertyCompanyId`（同 §9.8）
 
 **响应**：同 §9.8 `CourierOptionResponse` 分页。
@@ -5257,6 +5281,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/deliveries/capacity?pr
 **Roles**: `property_admin`, `platform_admin`
 
 分页查询配送相关订单（底层与订单列表同源筛选）。
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐：复用订单列表筛选（`OrderService.listOrders`），按 `propertyCompanyId` 做物业隔离。
 
 **Query 参数**：
 
@@ -6763,7 +6789,40 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/property-fees/pf_demo001/pay
 }
 ```
 
-> **`wechat`/`mixed` 含现金部分说明**：成功响应返回 `paymentRecordId` + `payParams`（`wx.requestPayment`），此时账单 `paymentStatus` 仍为 `unpaid`（待微信支付），**属预期，勿当失败**；支付成功后由回调/查询兜底确认，`paymentStatus` 变更为 `paid`。
+**成功响应**（`wechat`/`mixed` 含现金部分，返回微信预下单参数）：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "propertyFeeId": "pf_demo001",
+    "paidAmount": 0.00,
+    "totalPaidAmount": 0.00,
+    "remainingAmount": 100.00,
+    "paymentStatus": "unpaid",
+    "paymentMethod": "wechat",
+    "pointUsed": 0,
+    "coinUsed": 0.00,
+    "cashAmount": 100.00,
+    "paidAt": null,
+    "paymentRecordId": "pr_2f9c1a",
+    "payParams": {
+      "appId": "wxa1b2c3d4e5f6",
+      "timeStamp": "1735660000",
+      "nonceStr": "5K8264ILTKCH16CQ2502SI8ZNMTM67VS",
+      "package": "prepay_id=wx201410272009395522657a690389285100",
+      "signType": "RSA",
+      "paySign": "..."
+    }
+  },
+  "timestamp": "2026-10-08 15:23:33"
+}
+```
+
+> **`wechat`/`mixed` 含现金部分说明**：成功响应返回 `paymentRecordId` + `payParams`（前端原样透传 `wx.requestPayment`），此时账单 `paymentStatus` 仍为 `unpaid`（待微信支付），**属预期，勿当失败**；支付成功后由回调/查询兜底确认，`paymentStatus` 变更为 `paid`。
+>
+> **约束**：含现金部分时才走微信预下单（`cashAmount > 0`）；纯 `point`/`property_coin` 即时到账。微信支付未开通时返回 `10002`（fail-closed，不会静默置为已缴）；同一账单已有待支付流水时返回 `70003`（防重复扣款）。
 
 ---
 
@@ -7458,8 +7517,10 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services \
 
 **业务说明**：
 
-- 本接口**一步完成订阅 + 支付**：`property_coin`/`point` 余额充足直接生效（`status=active`）；`wechat` 走微信预下单。
-- `wechat`：成功响应返回 `paymentRecordId` 与 `payParams`，订阅记录保持 `pending`，**支付成功后由微信支付回调/查询兜底确认**，`status` 变更为 `active`；前端勿把 `pending` 当失败，轮询 `GET /services/my-subscriptions`。
+- 本接口**一步完成订阅 + 支付**：`property_coin`/`point` 余额充足直接生效（`status=active`）；含现金部分（`wechat`，或 `mixed` 有余款）走微信预下单。
+- 含现金部分：先落 `pending_payment` 订阅（**不生效**），成功响应返回 `paymentRecordId` 与 `payParams`，由前端调起 `wx.requestPayment`；**微信回调确认后才置 `active`**。前端勿把 `pending_payment` 当失败，轮询 `GET /services/my-subscriptions` 直到 `active`。
+- `mixed` 的积分/物业币部分**当场抵扣**；若现金部分超时未付（默认 30 分钟，`PendingPaymentScheduler` 兜底）订阅置 `cancelled`，已抵扣的**积分/物业币自动退回**，可重新订阅。
+- 未收到款项绝不生效：微信支付未配置时调用本接口直接返回 `10002`，不会回退为「直接生效」。
 
 **成功响应**（`wechat` 场景）：
 
@@ -7477,7 +7538,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services \
     "startDate": "2026-01-01T00:00:00.000Z",
     "endDate": "2026-02-01T00:00:00.000Z",
     "autoRenew": true,
-    "status": "pending",
+    "status": "pending_payment",
     "paymentRecordId": "pr_xxx",
     "payParams": {
       "appId": "wx1234567890abcdef",
@@ -7492,13 +7553,16 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services \
 }
 ```
 
-> `payParams` 字段原样传给 `wx.requestPayment(...)`；`status=pending` 时订阅尚未生效，生效由回调/兜底确认。
+> `payParams` 字段原样传给 `wx.requestPayment(...)`；`status=pending_payment` 时订阅尚未生效，`active` 由微信回调/兜底确认后落定。
 
 **错误响应**：
 
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `10002` | 400 | 参数无效（`paymentMethod` 错误、`subType` 无效、混合支付金额不足等） |
+| `10002` | 400 | 在线支付未开通（微信支付未配置），请改用物业币或积分 |
+| `10001` | 400 | 含现金部分但未绑定 openid，无法调起支付 |
+| `70003` | 409 | 订阅支付处理中，请勿重复提交（同一服务已有待支付订阅） |
 | `96003` | 409 | 已订阅该服务 |
 | `96001` | 404 | 服务不存在 |
 | `17001` | 400 | 服务已下架 |
@@ -7596,8 +7660,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services/svc_demo001/book \
 - 本接口**同时完成预约与支付**，成功后返回服务订单（`id` 为 `so_` 前缀）；**无需**也**不能**再调用 `POST /service-orders/{id}/pay`（该接口不存在）。
 - `address` / `contactPhone` **未传时自动带出**：地址默认拼接用户登记的 `楼栋+单元+房号`，联系电话默认用户注册手机号（仍可传入覆盖）。
 - `property_coin` / `point`：余额充足时扣款成功，`orderStatus` 一般为 `confirmed`。
-- `wechat`：后端创建订单后 `orderStatus` 为 `pending`（待微信支付），成功响应含 `paymentRecordId` 与 `payParams`（前端 `wx.requestPayment`）；支付成功后由回调/查询兜底确认，`orderStatus` 变更为 `confirmed`。属预期，**勿当作接口失败**。
-- `mixed`：须传 `pointUsed`、`coinUsed`，且积分折算 + 物业币 + 现金部分须覆盖应付金额，否则返回 `10002`（混合支付金额不足）。
+- 含现金部分（`wechat`，或 `mixed` 有余款）：后端创建订单后 `orderStatus` 为 `pending`（待微信支付），成功响应含 `paymentRecordId` 与 `payParams`（前端 `wx.requestPayment`）；**微信回调确认后**才置 `confirmed`。属预期，**勿当作接口失败**。
+- `mixed`：须传 `pointUsed`、`coinUsed`，且积分折算 + 物业币 + 现金部分须覆盖应付金额，否则返回 `10002`（混合支付金额不足）。积分/物业币部分**当场抵扣**；若现金部分超时未付（默认 30 分钟，`PendingPaymentScheduler` 兜底）订单置 `cancelled`，已抵扣的**积分/物业币自动退回**，可重新预约。
+- 未收到款项绝不确认：微信支付未配置时，含现金部分的请求直接返回 `10002`，不会回退为「直接确认」。
 - 仅适用于**非订阅类**服务（`isSubscription=false`）；订阅类请用 §17.4 `subscribe`。
 
 **成功响应**：
@@ -7630,6 +7695,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/services/svc_demo001/book \
 | 错误码     | HTTP | 说明    |
 | ------- | ---- | ----- |
 | `10002` | 400  | 参数无效（如 `paymentMethod` 错误、混合支付金额不足、订阅类服务误调 `book`） |
+| `10002` | 400  | 在线支付未开通（微信支付未配置），请改用物业币或积分 |
+| `10001` | 400  | 含现金部分但未绑定 openid，无法调起支付 |
+| `70003` | 409  | 预约支付处理中，请勿重复提交（同一服务已有待支付订单） |
 | `40001` | 400  | 积分余额不足（`paymentMethod=point` 或 `mixed` 积分部分） |
 | `50001` | 400  | 物业币余额不足（`paymentMethod=property_coin` 或 `mixed` 物业币部分） |
 | `30001` | 404  | 服务不存在 |
@@ -8306,7 +8374,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups/ag_admin002/
 | `startDate`      | `String`     | 订阅开始日期 `yyyy-MM-dd`  |
 | `endDate`        | `String`     | 订阅结束日期 `yyyy-MM-dd`  |
 | `autoRenew`      | `Boolean`    | 是否自动续费               |
-| `status`         | `String`     | 订阅状态，一般为 `active`    |
+| `status`         | `String`     | 订阅状态：`pending_payment`(待支付) / `active`(生效) / `expired` / `cancelled`    |
 | `paidAt`         | `String`     | 支付时间（ISO-8601 UTC）   |
 | `pricingTierId`  | `String`     | 课时价格ID，无课时为 `null`   |
 | `tierName`       | `String`     | 课时名称，无课时为 `null`     |
@@ -8318,7 +8386,10 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups/ag_admin002/
 **业务说明**：
 
 - 订阅成功后会**自动加入**活动组（若当前不是活跃成员）
-- `wechat`：成功响应返回 `paymentRecordId` 与 `payParams`（`wx.requestPayment`），订阅 `status=pending`，**支付成功后由回调/查询兜底确认**变更为 `active`；前端勿把 `pending` 当失败，轮询 `GET /activity-groups/{id}/subscription-status`
+- `property_coin` / `point`：同步扣款并**立即生效**（`status=active` 且自动入组）
+- `wechat`：先落库 `status=pending_payment`（**不生效、不入组、不占用**），成功响应返回 `paymentRecordId` 与 `payParams`（`wx.requestPayment`）由前端调起支付；**微信回调确认后才置 `active` 并自动入组**。前端勿把 `pending_payment` 当失败，轮询 `GET /activity-groups/{id}/subscription-status` 直到 `active`
+- 未收到款项绝不生效：微信支付未配置（`wechatPayService.isEnabled()=false`）时调用本接口直接返回 `10002`，不会回退为「直接生效」
+- 超时未支付（默认 30 分钟，兜底 `PendingPaymentScheduler`）订阅自动置 `cancelled`，可重新订阅
 - 有 active 课时价格的组，必须传 `pricingTierId`，金额取该课时 `price`，`subType` 须与课时 `period` 一致
 - 无课时价格的组，仍可走旧 `monthlyFee`/`yearlyFee`；月费/年费均为 0 时调用本接口将返回 `10002`：`该活动组无需订阅`，请直接调用 `join`
 - 是否付费组判定：有 active 课时 或 `monthlyFee`/`yearlyFee` > 0
@@ -8335,6 +8406,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups/ag_admin002/
 | `50001` | 400  | 物业币余额不足（`paymentMethod=property_coin`）    |
 | `90007` | 404  | 活动组/课时不存在（`pricingTierId` 不属于该组或已 inactive） |
 | `90008` | 409  | 已订阅该活动组（有效期内重复订阅）                         |
+| `70003` | 409  | 订阅支付处理中，请勿重复提交（同一住户同一活动组已有待支付订阅） |
+| `10001` | 400  | `paymentMethod=wechat` 且未绑定 openid，无法调起支付 |
+| `10002` | 400  | 在线支付未开通（微信支付未配置），请改用物业币或积分 |
 
 
 **常见联调错误**：
@@ -9375,6 +9449,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/stats?startDate
       "coordinatorAmount": 4200.00,
       "sectorLeaderAmount": 3150.00,
       "individualLeaderAmount": 3150.00,
+      "buildingLeaderAmount": 300.00,
       "deficitAmount": 0.00,
       "reversalAmount": 0.00
     },
@@ -9422,6 +9497,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/stats?startDate
 | `coordinatorAmount` | 统筹总金额 |
 | `sectorLeaderAmount` | 板块负责人总金额 |
 | `individualLeaderAmount` | 个体负责人总金额 |
+| `buildingLeaderAmount` | 单元楼长分成合计（从物业分成中定向扣除，不影响统筹/板块/个体链路） |
 | `deficitAmount` | 成本击穿差额合计 |
 | `reversalAmount` | 冲正金额合计（REVERSED 记录绝对值之和） |
 
@@ -9488,12 +9564,15 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/calculate?merch
     "distributableAmount": 20.00,
     "deficitAmount": 0.00,
     "deficitSponsor": "property",
+    "platformShareRate": 0.1000,
     "platformShare": 2.00,
     "propertyShare": 12.00,
     "managementPoolAmount": 6.00,
+    "sectorGrossAmount": 3.60,
     "coordinatorShare": 2.40,
     "sectorLeaderShare": 1.80,
     "individualLeaderShare": 1.80,
+    "buildingLeaderShare": 0.00,
     "originalDeliveryFee": 2.00,
     "deliveryFee": 0.00,
     "deliveryWaiverAmount": 2.00,
@@ -9509,6 +9588,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/calculate?merch
     "coordinatorId": "coo_demo001",
     "sectorLeaderId": "sec_demo001",
     "individualLeaderId": "ind_demo001",
+    "buildingLeaderId": null,
     "calculationVersion": "distribution_b_v1"
   },
   "timestamp": "2026-07-01 15:23:33"
@@ -9526,12 +9606,15 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/calculate?merch
 | `commissionBaseAmount` | 抽佣基础额 = 商品金额 × 抽佣率 |
 | `distributableAmount` | 平台盘 = max(抽佣基础额 − 积分成本 − 物业币成本, 0) |
 | `deficitAmount`/`deficitSponsor` | 成本击穿差额 / 承担方（默认 property） |
+| `platformShareRate` | 公司平台盘比例快照 |
 | `platformShare` | 公司商品平台盘收入 = 平台盘 × platformShareRate |
-| `propertyShare` | 物业商品平台盘收入 |
+| `propertyShare` | 物业商品平台盘收入（已扣楼长分成） |
 | `managementPoolAmount` | 管理盘 = 平台盘 − 平台 − 物业（减法吸收分币误差） |
+| `sectorGrossAmount` | 板块毛额 = 管理盘 × sectorLeaderRate |
 | `coordinatorShare` | 统筹实得 = 管理盘 − 板块毛额 |
 | `sectorLeaderShare` | 板块负责人实得 = 板块毛额 − 个体负责人 |
 | `individualLeaderShare` | 个体负责人实得 = 板块毛额 × individualLeaderRate |
+| `buildingLeaderShare` | 单元楼长份额（从物业分成中扣除，未绑定楼长时为 0） |
 | `originalDeliveryFee` | 满额减免前基础配送费 |
 | `deliveryFee` | 实付配送费 |
 | `deliveryWaiverAmount` | 满额减免金额 |
@@ -9543,8 +9626,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/distribution/calculate?merch
 | `merchantAdjustmentAmount` | 商家调整额 |
 | `merchantShare` | 商家最终实得 |
 | `platformDeliveryShare` | 公司配送收入 = 基数 × platformDeliveryShareRate |
-| `courierEarning` | 配送员最终收入 = 基数 − 公司配送收入（**正式配送员收入字段**，`courierShare` 不再使用） |
-| `coordinatorId`/`sectorLeaderId`/`individualLeaderId` | 各级负责人ID |
+| `courierEarning` | 配送员最终收入 = 基数 − 公司配送收入（**正式字段**）；兼容别名 `courierShare` 恒等于本字段 |
+| `coordinatorId`/`sectorLeaderId`/`individualLeaderId`/`buildingLeaderId` | 各级负责人ID（`buildingLeaderId` 为预览时按住户楼栋实时解析） |
 | `calculationVersion` | 计算版本（`distribution_b_v1`） |
 
 > **兼容字段**：`productCommission` = `commissionBaseAmount`、`productBase` = 商品实付 = `productAmount − pointCost − coinCost`、`effectiveDeliveryFee` = `deliveryFee`、`courierShare` = `courierEarning`、`breakdown` 旧结构保留。标准字段语义以本表为准。
@@ -9675,6 +9758,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/distribution/statistic
       "coordinatorAmount": 4200.00,
       "sectorLeaderAmount": 3150.00,
       "individualLeaderAmount": 3150.00,
+      "buildingLeaderAmount": 300.00,
       "deficitAmount": 0.00,
       "reversalAmount": 0.00
     },
@@ -10753,11 +10837,11 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/activity-groups/ag_demo001/su
 
 | 字段               | 类型           | 说明                                  |
 | ---------------- | ------------ | ----------------------------------- |
-| `subscribed`     | `Boolean`    | 当前是否在有效期内已订阅                     |
+| `subscribed`     | `Boolean`    | 当前是否在有效期内已订阅；`pending_payment`（微信待支付）为 `false`，请轮询至 `active` |
 | `subscriptionType` | `String`   | 订阅类型：`monthly`/`quarterly`/`yearly` |
 | `startDate`      | `String`     | 订阅开始日期 `yyyy-MM-dd`                |
 | `endDate`        | `String`     | 订阅结束日期 `yyyy-MM-dd`                |
-| `status`         | `String`     | 订阅状态：`active`/`expired`/`cancelled` |
+| `status`         | `String`     | 订阅状态：`pending_payment`(待支付)/`active`/`expired`/`cancelled` |
 | `pricingTierId`  | `String`     | 课时价格ID，无课时为 `null`                |
 | `tierName`       | `String`     | 课时名称，无课时为 `null`                  |
 | `tierCode`       | `String`     | 课时编码，无课时为 `null`                  |
@@ -11429,14 +11513,17 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/coin-withdrawals/cw_de
 
 **查询参数**：`propertyCompanyId`（platform_admin 可指定，否则取当前）
 
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。
+> **口径说明**：`coin_withdrawals` 表**无 `completed_at` 字段**，`completed` 为终态，故「今日完成」按 `updated_at` 落在今日统计。
+
 **响应**（`CoinWithdrawalSummaryResponse`）：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `pendingCount` | `Long` | 待审笔数 |
 | `pendingAmount` | `BigDecimal` | 待审金额合计（实到金额） |
-| `todayCompletedCount` | `Long` | 今日完成笔数（按 completedAt） |
-| `todayCompletedAmount` | `BigDecimal` | 今日完成金额合计 |
+| `todayCompletedCount` | `Long` | 今日完成笔数（按 `updated_at`，表无 `completed_at`） |
+| `todayCompletedAmount` | `BigDecimal` | 今日完成金额合计（按 `updated_at`） |
 | `approvedCount` | `Long` | 已通过笔数（approved+completed） |
 | `approvedAmount` | `BigDecimal` | 已通过金额合计（实到金额） |
 
@@ -11783,6 +11870,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/merchants/mch_demo001/
 **Roles**: `property_admin`, `platform_admin`
 
 **查询参数**：`propertyCompanyId`（platform_admin 可指定，否则取当前）
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。
 
 **响应**（`MerchantWithdrawalSummaryResponse`）：
 
@@ -15163,6 +15252,8 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/order-config \
 
 **说明**：查询指定物业公司的结算余额（已结算-已提现）。
 
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐（`PropertyCompanySettlementService.getBalance`）。
+
 ---
 
 ### 51.11 GET/POST `/admin/property-companies/{id}/settlement-withdrawals` — 物业公司结算提现
@@ -15172,8 +15263,16 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/order-config \
 
 | 方法 | 说明 |
 | --- | --- |
-| GET | 查询物业公司结算提现记录列表 |
-| POST | 提交物业公司结算提现申请 |
+| GET | 查询物业公司结算提现记录列表（**已实现**，2026-10-06 补齐） |
+| POST | 提交物业公司结算提现申请（**已实现**，2026-10-06 补齐） |
+
+**POST 请求体**（`ApplySettlementWithdrawalRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `amount` | `BigDecimal` | ✅ | 提现金额（元），须 > 0 且 ≤ 分成账户余额 |
+
+**POST 说明**：落库 `withdrawal_records`（`withdrawal_type=property_company`），手续费按物业公司 `withdrawal_fee_rate`（未配置取平台默认物业类费率）计算，初始状态 `pending` 待平台审核。**响应**：单条 `RoleWithdrawalItemResponse`。
 
 ---
 
@@ -15182,12 +15281,16 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/order-config \
 **Auth**: Required  
 **Roles**: `platform_admin`
 
+**说明**：审核通过，将提现金额从物业公司分成账户余额（`settlement_balance`）中扣减，状态置 `approved` 并写 `completedAt`。仅 `pending` 状态可审批；余额不足返回业务错误。**响应**：单条 `RoleWithdrawalItemResponse`。
+
 ---
 
 ### 51.13 POST `/admin/property-companies/{id}/settlement-withdrawals/{withdrawalId}/reject` — 拒绝提现
 
 **Auth**: Required  
 **Roles**: `platform_admin`
+
+**说明**：审核拒绝，状态置 `rejected`（不扣减余额）。仅 `pending` 状态可审批。**响应**：单条 `RoleWithdrawalItemResponse`。
 
 ---
 
@@ -16054,6 +16157,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchant/service-requests/pe
 
 `merchant_ads`（`mad_`）、`merchant_ad_quota`（`maq_`，按周计数）
 
+`merchant_ads.status` 记录投放状态：`pending_payment` 待支付 / `active` 投放中 / `cancelled` 已取消（支付超时/失败）。存量数据迁移见 `V20__merchant_ad_status.sql`（幂等，手工执行）。
+
 ## 59.1 GET `/merchant/ads/quota` — 本周额度
 
 ```json
@@ -16074,13 +16179,82 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchant/service-requests/pe
 
 ## 59.2 POST `/merchant/ads` — 发布广告
 
-**请求体**：`title`, `content`, `imageUrls`, `productId`（可选，关联商品）
+**Auth**: Required
+**Roles**: `merchant`（当前登录商家）
 
-**错误**：`90105` 本周额度不足
+**请求体**（`CreateMerchantAdRequest`）：
 
-> **说明**：扣减本周额度并写入 `merchant_ads`；**暂不向服务范围内居民批量 fan-out 聊天消息**（前端可先走广告历史/运营位；后续版本补推送）。
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `title` | String | 是 | 广告标题（≤128） |
+| `content` | String | 是 | 广告内容 |
+| `imageUrls` | String[] | 否 | 图片 URL 列表 |
+| `productId` | String | 否 | 关联商品 ID |
+| `durationDays` | int | 是 | 展示天数，1~30（按天计价） |
+| `paymentMethod` | String | 是 | `free`(免费额度) / `coin`(物业币) / `point`(商家积分) / `wechat`(微信) / `mock`(模拟，仅开发环境) |
+| `openid` | String | 否 | `paymentMethod=wechat` 时使用；不传则取当前用户绑定 openid |
+
+**响应** `data`（`MerchantAdListItemResponse`）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` / `title` / `content` / `imageUrls` / `productId` | — | 基础字段 |
+| `durationDays` / `startDate` / `endDate` | — | 投放天数与起止日期 |
+| `payAmount` | `BigDecimal` | 应付金额（`0`=免费额度投放） |
+| `paymentMethod` | String | 支付方式回显 |
+| `status` | String | `pending_payment` 待支付 / `active` 投放中 / `cancelled` 已取消 |
+| `recipientCount` | Integer | 实际 fan-out 到的住户数 |
+| `paymentRecordId` | String | 微信预下单成功后返回，用于查询支付状态 |
+| `payParams` | Object | 微信小程序调起支付参数（`timeStamp`/`nonceStr`/`package`/`signType`/`paySign`），前端原样透传 `wx.requestPayment` |
+
+**行为说明**：
+
+- `free` / `coin` / `point`：同步扣减并立即投放（`status=active`），响应不含 `paymentRecordId`/`payParams`。
+- `wechat`：先落库 `status=pending_payment`（**不投放、不占额度**），返回 `payParams` 由前端调起微信支付；**微信回调确认后才激活投放**。未收到款项绝不投放。
+- `mock`：仅当 `app.payment.mock-enabled=true`（开发环境）可用；生产环境返回 `10002`。
+
+**微信支付示例（`paymentMethod=wechat`）**：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "id": "mad_xxx",
+    "title": "新品上市",
+    "status": "pending_payment",
+    "payAmount": 35.00,
+    "paymentMethod": "wechat",
+    "paymentRecordId": "pay_xxx",
+    "payParams": {
+      "timeStamp": "1720000000",
+      "nonceStr": "abc123",
+      "package": "prepay_id=wx_xxx",
+      "signType": "RSA",
+      "paySign": "xxx"
+    }
+  }
+}
+```
+
+**错误**：
+
+| 错误码 | 说明 |
+| --- | --- |
+| `10001` | `paymentMethod=wechat` 且未绑定 openid，无法调起支付 |
+| `10002` | `paymentMethod` 不合法 / 生产环境使用 `mock` / 在线支付未开通 |
+| `10003` | 展示天数超出 1~30 |
+| `60011` | 免费额度已用完，请选择付费投放 |
+| `70003` | 该广告已有待支付流水，请勿重复提交（防重复扣款） |
+| `90105` | 本周额度不足 |
+
+> **说明**：扣减本周额度并写入 `merchant_ads`；投放成功后向服务范围内住户 fan-out `messageType=merchant_ad` 聊天卡片。付费方式（`coin`/`point`/`wechat`）不占用免费名额。
 
 ## 59.3 GET `/merchant/ads` — 本店广告历史
+
+**Auth**: Required
+**Roles**: `merchant`
+
+标准分页 `data.list` + `data.pagination`，列表项为 `MerchantAdListItemResponse`（字段同上，含 `status`）。`status=pending_payment` 表示微信支付尚未完成，`cancelled` 表示支付超时/失败已取消。
 
 ## 59.4 GET `/admin/merchant-ad-packages` — 额度包配置（平台）
 
@@ -17041,7 +17215,10 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 63.1 POST `/merchant/ads/targeted` — 创建定向广告
 
+**Auth**: Required
 **Roles**: `merchant`
+
+按楼栋 / 性别 / 年龄段定向投放，计费与支付口径同 §59.2（按天计价，`free`/`coin`/`point` 同步扣减立即投放，`wechat` 预下单待回调投放）。
 
 ```json
 // Request Body
@@ -17049,15 +17226,33 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
   "merchantId": "mch_xxx",
   "title": "定向推广",
   "content": "...",
-  "imageUrls": "[\"url1\"]",
+  "imageUrls": ["url1"],
   "productId": "prd_xxx",
-  "targetBuildings": "[\"1栋\",\"2栋\"]",
+  "targetBuildings": ["1栋","2栋"],
   "targetGender": "male",
-  "targetAgeBrackets": "[\"30-40\",\"40-50\"]"
+  "targetAgeBrackets": ["ab_001"],
+  "durationDays": 7,
+  "paymentMethod": "wechat",
+  "openid": "oGX3Z5Xx..."
 }
 ```
 
-`targetGender` 可选值：`male` / `female` / `all`。消耗本周广告额度。
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `merchantId` | String | 是 | 须等于当前登录商家 ID |
+| `title` / `content` | String | 是 | 标题 / 内容 |
+| `imageUrls` | String[] | 否 | 图片 URL 列表 |
+| `productId` | String | 否 | 关联商品 ID |
+| `targetBuildings` | String[] | 否 | 目标楼栋列表（与 `residents.building` 对齐） |
+| `targetGender` | String | 否 | `male` / `female` / `all` |
+| `targetAgeBrackets` | String[] | 否 | 目标年龄段配置 ID 列表（`ab_`） |
+| `durationDays` | int | 是 | 展示天数，1~30 |
+| `paymentMethod` | String | 是 | `free` / `coin` / `point` / `wechat` / `mock` |
+| `openid` | String | 否 | `paymentMethod=wechat` 时使用 |
+
+**响应**：同 §59.2 `MerchantAdListItemResponse`（含 `status` / `paymentRecordId` / `payParams`）。
+
+**错误**：同 §59.2，另有 `20004`（为其他商家创建）。
 
 ## 63.2 GET `/admin/distributor-products` — 分销商品列表
 
@@ -17367,9 +17562,10 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 > - **非团购非食堂单**：`requires_delivery=true`，支付成功后 → `pending_choice`，进入下述履约方式选择流程。
 
 1. 非团购单支付成功 → `order_status = paid`，`fulfillment_mode = pending_choice`，`fulfillment_deadline = 支付时间 + 30 分钟`。
-2. 商家在时限内选择：
-   - `merchant_self`：创建商家自配配送单（`carrier_type = merchant`，`status = merchant_self`），订单进入 `delivering`。
-   - `courier_hall`：创建平台配送单（`carrier_type = courier`，`status = pending`），订单进入 `delivering`，等待骑手抢单。配送单会出现在 `GET /deliveries/pending` 待抢单列表中（v6.6 修复：此前因查询仅匹配 `orderStatus=paid`，商家选择后订单变为 `delivering` 导致不显示）。
+   **此时不生成配送单，订单/配送单均不会出现在待抢大厅**（2026-10-06 修复：此前支付后即生成 `pending` 配送单，导致骑手在商家选择前即可抢单）。
+2. 商家在时限内选择（**选择时才创建配送单**）：
+   - `merchant_self`：创建商家自配配送单（`carrier_type = merchant`，`status = merchant_self`），订单进入 `delivering`，骑手不可见/不可抢。
+   - `courier_hall`：创建平台配送单（`carrier_type = courier`，`status = pending`），订单进入 `delivering`，等待骑手抢单。此时配送单才出现在 `GET /deliveries/pending` 待抢单列表中。
    - （`POST /orders/{id}/send-delivery` 等价于选择 `courier_hall`，兼容历史调用方。）
 3. 超时未选 → 定时任务 `FulfillmentChoiceTimeoutJob` 默认改派 `courier_hall`（平台配送），并记录 `action = timeout`。
 4. 配送完成记账：
@@ -17429,6 +17625,10 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 > （骑手侧 `complete` 又拒绝非 courier 承运单）。现已实现：配送单置 `completed`、
 > 订单同步置 `completed`（含 `deliveredAt` / `completedAt`）。
 > 平台配送单仍走 `POST /deliveries/{id}/complete`（骑手）。
+>
+> **2026-10-06 修复（v8.10）**：订单置 `completed` 后现同步执行结算
+> （`OrderCompletionService.settleOnCompleted`：生成 `distribution_records`（含楼长分成）与业主卖货明细）。
+> 修复此前商家自配单完成却无任何分成记录、楼长钱包不增加的问题。
 
 ```json
 // Request Body（可空）
@@ -17515,6 +17715,15 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 | 7 | 订单详情 `deliveryId` 恒 `null` | `OrderDetailResponse.deliveryId` 从未赋值 | 按 `deliveries.order_id` 回填，并新增 `carrierType` |
 | 8 | 订单列表/详情缺少履约字段 | 未输出 | 新增 `requiresDelivery` / `fulfillmentMode` / `fulfillmentModeLabel` / `fulfillmentDeadline` / `fulfillmentChosenAt` |
 | 9 | 板块负责人发/改/删特惠 403 | `sector_leader` 走 `requireAdmin()`，只允许 `property_admin`/`platform_admin` | 按角色放行（不要求 `promotion.push`），数据范围收敛本物业；详情/发布/下架 Roles 同步补齐 |
+
+## 68.9 2026-10-06 修复（履约方式选择落空）
+
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | 「商家选择自配 / 发布抢单大厅」形同虚设：支付后配送单立即进入待抢大厅，骑手可先于商家选择抢单 | 支付成功即调用 `createDeliveryForPaidOrder` 生成 `carrier_type=courier,status=pending` 配送单；且待抢查询匹配 `order_status=paid` | 支付后**不生成配送单**，仅在商家选择 `merchant_self`/`courier_hall` 或超时兜底时创建；待抢查询**移除** `order_status=paid` 分支，仅保留 `delivering AND fulfillment_mode=courier_hall` |
+
+> **影响面**：`POST /merchants/my/orders/{id}/fulfillment`、`POST /orders/{id}/choose-fulfillment`、`POST /orders/{id}/send-delivery`、`FulfillmentChoiceTimeoutJob`、`POST /admin/orders/{id}/override-fulfillment` 行为一致；
+> 无数据库结构变更。存量「已支付且未选择」订单若已有 `pending` 配送单，修复后不再出现在待抢大厅，待商家选择后按新规则处理。
 
 ---
 
@@ -17668,7 +17877,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 70.5 GET `/admin/role-withdrawals` — 配送员/多角色提现审核列表
 
-> **背景**：快递员/个体负责人/统筹/板块负责人的提现申请统一落库 `withdrawal_records`（`withdrawal_type=courier / individual_leader / coordinator / sector_leader`），管理端需经本接口查询审核（原 `/admin/merchant-withdrawals` 仅查商家提现表 `merchant_withdrawals`，不包含这些记录）。
+> **背景**：快递员/个体负责人/统筹/板块负责人/单元楼长/业主卖货的提现申请统一落库 `withdrawal_records`（`withdrawal_type=courier / individual_leader / coordinator / sector_leader / building_leader / resident_seller`），管理端需经本接口查询审核（原 `/admin/merchant-withdrawals` 仅查商家提现表 `merchant_withdrawals`，不包含这些记录）。
 
 **Auth**: Required  
 **Roles**: `property_admin`, `platform_admin`  
@@ -17687,7 +17896,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/role-withdrawals?page=
 | --- | --- | --- | --- | --- |
 | `page` | `int` | ❌ | `1` | 页码 |
 | `pageSize` | `int` | ❌ | `20` | 每页条数 |
-| `withdrawalType` | `String` | ❌ | | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader` |
+| `withdrawalType` | `String` | ❌ | | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader`/`building_leader`（单元楼长分成）/`resident_seller`（业主卖货收益） |
 | `auditStatus` | `String` | ❌ | | 审核状态：`pending`/`approved`/`rejected`/`completed`（兼容传 `pending_audit`，等价 `pending`） |
 | `keyword` | `String` | ❌ | | 关键词（提现ID/申请人ID/住户姓名/手机号，子查询匹配） |
 | `startDate` | `String` | ❌ | | 开始日期 `yyyy-MM-dd` |
@@ -17740,7 +17949,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/role-withdrawals?page=
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `list[].id` | `String` | 提现记录ID（`wr_` 前缀） |
-| `list[].withdrawalType` | `String` | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader` |
+| `list[].withdrawalType` | `String` | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader`/`building_leader`/`resident_seller` |
 | `list[].applicantId` | `String` | 申请人主体ID（`cm_`/`il_`/`coo_`/`sec_`/`res_`） |
 | `list[].applicantName` | `String` | 申请人姓名（关联住户为空时为 null） |
 | `list[].residentId` | `String` | 关联住户ID |
@@ -18061,6 +18270,20 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/role-withdrawals/wr_35
 `DistributionCalculateResponse` 新增 `merchantShare` 字段（= 订单额 × (1 − 抽佣率)，即商家实得；与 `DistributionRecordItemResponse.merchantShare` 口径一致，C 端试算直接读取，勿本地估算）。
 
 `DistributionRecordItemResponse` 新增 `platformShare` 字段。
+
+### v8.9 口径澄清（distribution_b_v1，2026-10-06）
+
+**A1 配送员报酬取数修正**：`courierEarning` 不再读取 `delivery_rules.courier_per_order` 固定每单金额，改为
+`deliverySettlementBase × (1 − platform_delivery_share_rate)`，其中 `deliverySettlementBase = 实付配送费 + 配送补贴`。
+`delivery_rules.courier_per_order`、`property_companies.delivery_courier_per_order`、`courier_share_rate` 列保留但**不再参与分账**（仅历史兼容）。
+`courierShare` 恒等于 `courierEarning`。
+
+**B1 电商模式平台分成口径统一**：商品链路的 `platformShare = 平台盘 × platform_share_rate`，`summary.platformAmount` 即该值合计（demo 场景为 1.00）。
+电商收付通模式下，平台分账金额 = `distributableAmount`（商品佣金平台盘）+ `deliveries.platform_earning`（平台配送分成），与普通分账路径平台总收入一致。
+
+**C1 交付前置**：生产禁用 Flyway，需手动执行 `V18__building_leader_and_seller_wallet.sql` 与 `V19__distribution_b_v1_alignment.sql`（均幂等）。
+
+**订单侧新增快照列**（`orders`）：`original_delivery_fee`（满额减免前基础配送费）、`delivery_subsidy_sponsor`（承担方 `none`/`merchant`/`property`/`platform`）、`delivery_subsidy_amount`（配送补贴金额）。结算时读取快照，不得按最新配置重算。
 
 ---
 
@@ -19412,6 +19635,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 | `60004` | 404  | 商品不存在          | 商品ID无效                            |
 | `60005` | 409  | 商家已被踢出         | 商家被物业踢出                           |
 | `60006` | 404  | 商家在该物业下未完成挂接配置 | `merchant_property_configs` 无对应记录 |
+| `60011` | 400  | 广告额度不足 | 免费额度用尽仍选 `free` 投放（§59.2） |
+| `60012` | 404  | 广告不存在 | 微信回调/超时收尾时 `merchant_ads` 无对应记录 |
 
 
 
@@ -19831,7 +20056,7 @@ wx.requestPayment(payParams) → 用户支付 → 微信支付成功通知（回
 | 字段 | 说明 |
 | --- | --- |
 | `id` | `pr_` + 16 位 hex（雪花完整 64 位，不再截断；历史短 ID 无冲突风险） |
-| `biz_type` | `order`/`property_fee`/`coin_recharge`/`service_order`/`service_subscription`/`activity_subscription`/`resident_shop_deposit` |
+| `biz_type` | `order`/`property_fee`/`coin_recharge`/`service_order`/`service_subscription`/`activity_subscription`/`resident_shop_deposit`/`quota_purchase`/`ad_purchase` |
 | `biz_id` | 业务单ID（订单/预约单/订阅ID/充值单） |
 | `resident_id` / `property_company_id` | 支付人 |
 | `payment_method` | `wechat`/`point`/`property_coin`/`mixed` |
@@ -20353,7 +20578,7 @@ POST /admin/cbk/reconcile/retry/{splitNo}
 
 | 类型 | 文件 | 说明 |
 | --- | --- | --- |
-| Flyway 迁移 | `backend/src/main/resources/db/migration/V9__requirement_alignment.sql` | **合并迁移**（原 V9~V12 合并为一个文件），应用启动时自动执行 |
+| Flyway 迁移 | `backend/src/main/resources/db/migration/V9__requirement_alignment.sql` | **合并迁移**（原 V9~V12 合并为一个文件）。应用启动**不会**自动执行（Flyway 默认关闭，`FLYWAY_ENABLED` 仅非 prod profile 可开；prod 恒禁用），需手动执行 |
 | 手工升级 | `sql/upgrade_all_gaps.sql` | 合并升级脚本，覆盖 V4~V9 全部变更，**幂等可重复执行** |
 | 手工回滚 | `sql/rollback_all_gaps.sql` | 合并回滚脚本，与升级脚本一一对应，幂等 |
 
@@ -20454,15 +20679,22 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 
 ### 96.1 通道与配置
 
-- **支付**：微信支付 APIv3（JSAPI 下单），配置项前缀 `wechat.pay.*`：`mch-id`、`app-id`、`api-v3-key`、`private-key-path` / `private-key-base64`、`merchant-serial-number`、`notify-url`、`refund-notify-url`、`profit-sharing`。
-- **分账**：微信支付**普通分账**（非电商收付通，**无 `sub_mchid` 二级商户**；收款方为已进件的普通商户号或个人 openid），配置项前缀 `wechat-split.*`：`enabled`、`courier-split-enabled`、`user-refund-enabled`、`auto-withdraw-enabled`、`notify-url`、`notify-url-withdraw`、`receiver-relation-type`。
+- **支付**：微信支付 APIv3（JSAPI 下单），配置项前缀 `wechat.pay.*`：`mch-id`、`app-id`、`api-v3-key`、`private-key-path` / `private-key-base64`、`merchant-serial-number`、`notify-url`、`refund-notify-url`、`profit-sharing`、`connect-timeout-ms`、`read-timeout-ms`。
+- **分账**：微信支付**普通分账**（非电商收付通，**无 `sub_mchid` 二级商户**；收款方为已进件的普通商户号或个人 openid），配置项前缀 `wechat-split.*`：`enabled`、`user-refund-enabled`、`auto-withdraw-enabled`、`receiver-relation-type`、`after-sale-days`。
 - 平台级参数一律走环境变量，管理端只维护结算开关（§96.4）。
+- **资金链路开关一律 fail-closed（默认关）**，见 §96.6。
 
 ### 96.2 支付结果回调（唯一已实现的回调入口）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/payment/notify/wechatpay` | 微信支付结果通知（APIv3）。验签 + 解密 + 标流水 `paid` + 写 `payment_settle_outbox` + 发布事件后**立即应答**（须 5 秒内）。成功返回 `{"code":"SUCCESS"}`；失败返回非 200 + `{"code":"FAIL"}`（微信按策略重推）。业务 finalize 由 `PaymentSettleService` 异步完成（指数退避重试 + 卡死 PROCESSING 原子回收）。 |
+| `POST` | `/payment/notify/wechatpay` | 微信支付结果通知（APIv3）。验签 + 解密 + **金额校验** + 标流水 `paid` + 写 `payment_settle_outbox` + 发布事件后**立即应答**（须 5 秒内）。成功返回 `{"code":"SUCCESS"}`；失败返回非 200 + `{"code":"FAIL"}`（微信按策略重推）。业务 finalize 由 `PaymentSettleService` 异步完成（指数退避重试 + 卡死 PROCESSING 原子回收）。 |
+
+**金额校验（fail-closed）**：回调 `amount.total`（分）必须等于本地 `payment_records.cash_amount`（元×100）。
+
+- 一致 → 正常入账。
+- **不一致或金额缺失** → **不入账、不自动关单**，流水置 `amount_mismatch` 并写 `error_msg`，同时打 `ERROR` 日志告警，回调仍应答 `SUCCESS`（重推不会改变结果）。
+- `amount_mismatch` 不在 `pending` 扫描范围内，故不会被超时调度误关单；需人工核对微信账单后处理（退款或人工补录）。
 
 > 线上需在微信商户平台把「支付回调地址」配置为 `{域名}/api/v1/payment/notify/wechatpay`，并与 `wechat.pay.notify-url` 保持一致。
 
@@ -20472,10 +20704,13 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 | --- | --- | --- | --- |
 | 支付结果 | `wechat.pay.notify-url` | `https://<域名>/api/v1/payment/notify/wechatpay` | ✅ 已实现 |
 | 退款结果 | `wechat.pay.refund-notify-url` | 需配置 | ⚠️ **无回调入口**：退款状态由 `RefundQueryScheduler` 主动查询兜底 |
-| 分账结果 | `wechat-split.notify-url` | `https://<域名>/api/v1/payment/wechat-split/split/notify` | ⚠️ **无回调入口**：分账结果由 `SplitWindowScheduler` / `ReverseFailedScheduler` 主动查询兜底 |
-| 提现结果 | `wechat-split.notify-url-withdraw` | `https://<域名>/api/v1/payment/wechat-split/withdraw/notify` | ⚠️ **无回调入口** |
+| 退款结果（缺省） | 未配 `refund-notify-url` 时回退 `wechat.pay.notify-url` | 同上 | 可接收但按「无对应流水」应答 SUCCESS，状态仍由轮询兜底 |
+| 分账结果 | ~~`wechat-split.notify-url`~~ | — | ❌ **已删除**：微信普通分账请求体不含 `notify_url`，微信不推送分账结果通知；原配置无代码读取、无接收控制器，属「死回调路径」。结果由 `SplitWindowScheduler` / `ReverseFailedScheduler` / `SplitFailureScheduler` 主动查询 |
+| 提现结果 | ~~`wechat-split.notify-url-withdraw`~~ | — | ❌ **已删除**：同上，普通分账无平台代提、无提现回调 |
+| 电商分账结果 | `wechat-ecommerce.notify-url` | `https://<域名>/api/v1/payment/ecommerce-split/notify` | ✅ 已实现 |
+| 商家转账结果 | `wechat-ecommerce.transfer-notify-url` | `https://<域名>/api/v1/payment/ecommerce-transfer/notify` | ✅ 已实现 |
 
-> 上述 3 个 ⚠️ 项：配置项已就绪，但代码未提供接收控制器。当前依赖定时任务主动查询保证最终一致；如需实时性，后续以 V10+ 迁移配套新增回调端点（属 P1，不影响现有资金正确性）。
+> 退款与（普通）分账/提现依赖定时任务主动查询保证最终一致；如需实时性，后续以新迁移配套新增回调端点（属 P1，不影响现有资金正确性）。
 
 ### 96.4 结算与钱包（仍然有效，原 §92.6 / §92.7）
 
@@ -20486,9 +20721,29 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 | `GET` | `/wallet/cards` | 查询某主体钱包卡（`ownerType` / `ownerId`） | 管理端 |
 | `GET` | `/technicians/my/wallet/cards` | 技工本人钱包卡 | technician |
 
+> **`wechatSplitEnabled` 为运行时开关，已真正接入分账链路**（非「死开关」）：
+> `WechatSplitService.isEnabled()` = 配置总开关 `wechat-split.enabled` **且** `settlement.wechatSplitEnabled`；
+> 该结果被 `PaymentSettleService`（支付后冻结）、`SplitWindowScheduler` / `SplitFailureScheduler` / `ReverseFailedScheduler` 共同使用。
+> 语义为「管理端只能收紧」：置 `false` 立即停止分账；配置总开关为 `false` 时置 `true` 也不会生效（保持 fail-closed，见 §96.6）。
+
 ### 96.5 定时任务（均已加 ShedLock 分布式锁）
 
 `SplitWindowScheduler`（分账窗口出账）、`ReverseFailedScheduler`（分账回退）、`RefundQueryScheduler`（退款状态查询兜底）、`FulfillmentChoiceTimeoutJob`（履约超时兜底，默认改派平台配送）、`PaymentSettleScheduler`（支付 finalize 兜底与主动对账）。
+
+### 96.6 上线前资金链路开关（fail-closed，默认全部关闭）
+
+以下开关均为**默认关闭**，必须显式置 `true` 才生效；任一环境未显式开启时，行为是「拒绝/不执行」而非「静默放行」。
+
+| 配置项 | 默认 | 作用 | 开启方式 |
+| --- | --- | --- | --- |
+| `wechat.pay.profit-sharing` | `false` | 下单时标记 `settle_info.profit_sharing`，缺失则后续分账报「非分账订单」 | `WECHAT_PAY_PROFIT_SHARING=true` |
+| `wechat-split.enabled` | `false` | 分账链路总开关（冻结/出账/回退调度） | `WECHAT_SPLIT_ENABLED=true` |
+| `wechat-split.auto-withdraw-enabled` | `false` | Path B 自动提现开关。**生效范围：仅「电商收付通」模式有真实资金动作**；「普通分账」模式下收款方自行在微信商户平台提现，开启仅推进状态位 `withdraw_status`，不代表平台自动打款 | `WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED=true` |
+| `app.payment.mock-enabled` | `false` | 模拟支付（保证金/食堂额度直接贷记） | 仅 dev：`application-dev.yml` 已置 `true`；生产**必须保持 false** |
+| `settlement.wechatSplitEnabled` | `true`（DB 无记录时） | 管理端「运行时」分账开关，与 `wechat-split.enabled` **取与** | `PUT /admin/settlement-config`（只能收紧：置 `false` 即停分账，置 `true` 无法突破配置总开关） |
+
+- `application-prod.yml` 已对本表首两项与 `mock-enabled` 再显式声明一次（defense in depth），生产环境即使漏配环境变量也保持关闭。
+- **微信 HTTP 超时**：`wechat.pay.connect-timeout-ms`（默认 `5000`）、`wechat.pay.read-timeout-ms`（默认 `20000`），防止微信侧无响应时连接/线程被无限占用；超时统一包装为 `WechatPayException`（`WECHAT_HTTP_TIMEOUT`），连接被拒等其他传输异常为 `WECHAT_HTTP_ERROR`，由 `GlobalExceptionHandler` 回传，不再冒泡成 `99001 内部服务异常`。
 
 ---
 
@@ -20712,19 +20967,57 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 
 **角色**：property_admin / platform_admin
 
+**查询参数**：`propertyCompanyId`（`platform_admin` 可指定，否则取当前物业）
+
 **响应**：`{"autoEnabled":true,"periodDays":7,"feeRate":0.006}`
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。取值来源：`property_companies.auto_withdrawal_enabled` / `auto_withdrawal_period_days` / `withdrawal_fee_rate`；未指定物业时返回 `autoEnabled=false`、`periodDays=7`，`feeRate` 取平台默认物业类提现费率。
 
 ### 80.2 PUT `/admin/coin-withdrawals/settings` — 更新提现设置
 
+**角色**：property_admin / platform_admin
+
+**查询参数**：`propertyCompanyId`（`platform_admin` 可指定；`property_admin` 取当前物业，不可为空）
+
 **请求**：`{"autoEnabled":true,"periodDays":7}`
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `autoEnabled` | `Boolean` | ✅ | 是否开启自动提现 |
+| `periodDays` | `Integer` | ✅ | 自动提现周期天数，1~365 |
+
+**响应**：同 §80.1。写入 `property_companies.auto_withdrawal_enabled` / `auto_withdrawal_period_days`。
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。
 
 ### 80.3 PUT `/admin/coin-withdrawals/residents/{id}/block` — 阻止/解阻止居民提现
 
+**角色**：property_admin / platform_admin
+
+**路径参数**：`id` 住户ID（`res_`）
+
 **请求**：`{"blocked":true,"reason":"违规操作"}`
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `blocked` | `Boolean` | ✅ | 是否阻止提现 |
+| `reason` | `String` | ❌ | 原因（记入操作日志） |
+
+**响应**：`data` 为 `null`。写 `residents.withdrawal_blocked`，仅影响提现资格，不影响其他功能。
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。
 
 ### 80.4 PUT `/admin/coin-withdrawals/merchants/{id}/block` — 阻止/解阻止商家提现
 
+**角色**：property_admin / platform_admin
+
+**路径参数**：`id` 商家ID（`mch_`）
+
 **请求**：同上
+
+**响应**：`data` 为 `null`。写 `merchants.withdrawal_blocked`，仅影响提现资格。
+
+> **（2026-10-06）** 该接口此前**后端未实现**（调用返回 404），现已补齐。
 
 ### 80.5 定时任务
 
@@ -21600,8 +21893,8 @@ v7.0 起，HTTP 状态码由错误码枚举自身决定（新增错误码时编�
 
 ### 93.5 支付/分账收口（对应 §3.2，P0 · 仍待微信参数确认）
 
-`/admin/cbk/*` 与 §92 框架已就绪，`AutoWithdrawalService` 已对接 `applyCash` 并具备失败回退人工能力；
-但**每个商家是否分配独立微信商户号**未确认，自然人（各负责人）不能误用平台商户号提现，故真实打款参数待微信侧确认后启用。
+`/admin/cbk/*` 与 §92 框架已就绪；但**每个商家是否分配独立微信商户号**未确认，自然人（各负责人）不能误用平台商户号提现，故真实打款参数待微信侧确认后启用。
+（原 `AutoWithdrawalService` / `WechatSplitApiService.applyCash` 占位打款代码无任何调用方、未产生真实资金链路，已移除以免被误认为「提现已接入」；Path B 自动提现实际走 `WechatSplitService#maybeAutoWithdraw` 的电商收付通商家转账。）
 
 ---
 
@@ -21776,9 +22069,21 @@ v7.0 起，HTTP 状态码由错误码枚举自身决定（新增错误码时编�
 
 ---
 
+## 95.22 微信支付主链路三处缺陷修复（库存重复扣减 / 未支付订单库存泄漏 / 库存并发超卖）
+
+- **① 支付成功回调二次扣库存（阻断）**：`POST /orders/{id}/pay`（§8.2）预下单时已**预占**扣减商城库存，而回调落账 `completeChannelPayment` 又扣一次 → 库存充足时静默超卖；**末件商品**时回调抛「商品库存不足」，finalize 重试 10 次后置 `FAILED_PERMANENT`，订单永久停留 `pending`（钱已收、单未完成）。
+  **修复**：回调落账**不再扣减**库存；库存仅由预下单预占，由取消 / 超时关单归还（`PendingPaymentScheduler`，§21652）。
+- **② 未支付订单取消泄漏预占库存**：`POST /orders/{id}/cancel`（§8.3）的归还库存分支漏了 `pending` 状态，而超时调度器仅在订单仍为 `pending` 时才补归还 → 用户主动取消未支付订单后，预占库存永久泄漏。
+  **修复**：`pending` 纳入库存归还分支（未支付订单的退款 / 返奖 / 现金退款分支均为空操作，不产生多余流水）。
+- **③ 库存操作统一收口，消除并发超卖**：`OrderService.deductStock` / `restoreStock` 原为无锁 `findById → setStock → save`（`ProductStockService` 的注释虽声称已收敛，实际未生效），现统一委托 `ProductStockService`（`findByIdForUpdate` 行锁 + `@Version` 乐观锁）。`dpr_` 业主上架货源商品仍跳过商城库存，口径与 §95.19 一致。
+- **无接口签名 / 字段变更，无数据库变更。**
+
+---
+
 > **文档维护**：连云港元序软件有限公司
 > **最后更新**：2026-09-06（v7.9.1 前端问题汇总 7 项修复：orders/preview 405、use-condition 404、商家消息 403、组长聊天历史、组长商品 403、组长配送费 404/403、组员简介 404、拿货人缺失）
 > **2026-09-13 增补**：新增 §97「电商收付通改造」（商家微信进件 / 四层树收款账号 / 分账回退台账），见文末。
+> **2026-10-08 增补**：§95.22 微信支付主链路三处缺陷修复（回调二次扣库存 / 未支付订单库存泄漏 / 库存无锁并发超卖）；另修复 `payment_records.directed_balance_used` NOT NULL 未赋值导致的「数据保存失败（数据库约束冲突）」。
 
 ---
 
@@ -22343,3 +22648,275 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 ### 98.9 存量数据处理
 
 商品 `prd_357991e8e01000`「优惠券10元」（`category=团购`，商家 `mch_demo002`）已被订单/询价引用，**不物理删除**，由 `V17__coupon.sql` 将其 `status` 置为 `inactive`（下架）。同表兜底：`category='团购'` 且名称包含「优惠券」的未删除商品一并下架。
+
+---
+
+<a id="99-单元楼长与业主卖货钱包"></a>
+
+# 99. 单元楼长（building_leader）与业主卖货钱包
+
+> 数据库变更见 `backend/src/main/resources/db/migration/V18__building_leader_and_seller_wallet.sql`（生产禁用 Flyway，需**手动执行**，脚本幂等可重复执行）。
+
+## 99.0 业务口径
+
+### 99.0.1 单元楼长
+
+| 维度 | 说明 |
+| --- | --- |
+| 身份标识 | 楼长为**「住户 + 楼长」复合身份**：`residents.role` **始终保持 `resident`**，楼长身份由 `building_leaders` 表存在 `status='active'` 记录判定（`GET /auth/profile` 返回 `isBuildingLeader`/`buildingLeaderId`）。**不替换住户角色**，因此社区论坛等住户功能不受影响 |
+| 与活动组关系 | **无关**，楼长是与「小区 + 楼栋」绑定的独立推广角色 |
+| 绑定粒度 | 小区 `communityId` + 楼栋 `building`；同一小区同一楼栋**同一时刻仅一名 active 楼长**（历史记录保留，撤销后可重指派） |
+| 分成比例 | 任命时**按人单独设置** `commissionRate` ∈ (0,1]，默认 `0.1000`；表示占「物业公司分成」的比例 |
+| 分成来源 | 从**物业公司分成 `property_share` 中定向扣除**；`property_share` 相应减少，**总额守恒**，不影响统筹/板块/个体链路 |
+| 绑定时机 | **订单创建那一刻**快照 `orders.building_leader_id` / `orders.building_leader_rate`。分成定向从订单产生那一刻绑定，后续修改/撤销楼长**不会**把分成改判给新楼长 |
+| 结算口径 | 结算严格以**订单快照**为准；无快照或快照比例不合法（≤0 或 >1）则不产生楼长分成 |
+| 身份授予/回收 | 任命**不修改** `residents.role`；撤销仅置 `building_leaders.status='inactive'`，住户角色始终不变。`building_leader` 作为历史遗留 role 由 `RoleGuard` 归一化为 `resident` 兜底（存量令牌仍可用） |
+| 管理权限 | 物业公司可**选定 / 添加 / 删除**该角色；权限码 `buildingLeader.read` / `buildingLeader.manage`（未入库时回退管理员校验：`platform_admin` 全通、`property_admin` 限本物业） |
+
+**分成公式**（沿用现有 `buildShareBreakdown` 口径，仅新增楼长一段）：
+
+```
+building_leader_share = property_share × building_leader_rate
+property_share        = property_share − building_leader_share
+```
+
+- 有统筹：`property_share = 可分配金额 × propertyRate(默认 0.30)`，再扣楼长分成。
+- 无统筹：`property_share = 可分配金额`（全额），再扣楼长分成。
+
+### 99.0.2 业主卖货钱包
+
+| 维度 | 说明 |
+| --- | --- |
+| 用途 | 业主商城（业主商户上架商品）成交差价收益的**独立钱包**，**仅可提现、不可消费** |
+| 是否进入物业币 | **否**。业主卖货收益**不进个人物业币**，只进该独立钱包，只能提现（对应前端反馈问题） |
+| 入账时机 | 订单完成（确认收货）→ 生成 `resident_merchant_settlements`（`status='settled'`），其 `reseller_profit` 计入钱包 |
+| 可提现余额 | `累计 reseller_profit − 已完成提现 − 在途提现(pending+approved)` |
+| 提现类型 | `withdrawal_records.withdrawal_type='resident_seller'`，复用管理端多角色提现审核（§70） |
+| 实现方式 | 实时聚合（不新增余额冗余列），口径与提现校验一致 |
+
+### 99.0.3 数据表变更（V18）
+
+| 表 | 变更 |
+| --- | --- |
+| `building_leaders` | **新建表**：`id`(`bl_`)/`resident_id`/`property_company_id`/`community_id`/`building`/`commission_rate`/`description`/`status`/`created_at`/`updated_at`；索引 `idx_bl_building(community_id,building,status)`、`idx_bl_resident`、`idx_bl_property` |
+| `orders` | 新增列 `building_leader_id`（`VARCHAR(32)`）、`building_leader_rate`（`DECIMAL(5,4)`），下单时写入的快照 |
+| `distribution_records` | 新增列 `building_leader_share`（`DECIMAL(10,2) NOT NULL DEFAULT 0`）、`building_leader_id`、`building_leader_rate`；索引 `idx_dr_building_leader(building_leader_id)` |
+| `withdrawal_records` | `withdrawal_type` 扩展支持 `building_leader` / `resident_seller`（列宽不变，仅刷新注释） |
+| `residents` | **数据修正**：`UPDATE residents SET role='resident' WHERE role='building_leader'`（历史误改写回滚；楼长身份由 `building_leaders` 表判定） |
+
+---
+
+## 99.1 管理端 — 单元楼长管理
+
+**Roles**：`property_admin`、`platform_admin`（`property_admin` 仅限本物业，跨物业隔离）
+
+### 99.1.1 GET `/admin/building-leaders` — 单元楼长列表
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `Integer` | ❌ | 默认 1 |
+| `pageSize` | `Integer` | ❌ | 默认 20，最大 100 |
+| `keyword` | `String` | ❌ | 住户姓名/手机号模糊搜索 |
+| `status` | `String` | ❌ | `active`/`inactive` |
+| `communityId` | `String` | ❌ | 小区过滤 |
+| `building` | `String` | ❌ | 楼栋过滤 |
+| `propertyCompanyId` | `String` | ❌ | 仅 `platform_admin` 可用，`property_admin` 强制本物业 |
+
+**响应**：`PageResponse<BuildingLeaderListItemResponse>`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String` | 楼长 ID（`bl_` 前缀） |
+| `residentId` | `String` | 住户 ID（`res_`） |
+| `residentName` / `residentPhone` | `String` | 住户姓名 / 手机号 |
+| `phone` | `String` | 手机号（旧字段，值同 `residentPhone`） |
+| `propertyCompanyId` / `propertyCompanyName` | `String` | 物业公司 |
+| `communityId` / `communityName` | `String` | 小区 |
+| `building` | `String` | 楼栋 |
+| `commissionRate` | `BigDecimal` | 楼长分成比例（占物业分成，0~1） |
+| `description` | `String` | 备注 |
+| `totalEarning` | `BigDecimal` | 累计楼长分成 |
+| `status` | `String` | `active`/`inactive` |
+| `createdAt` / `appointedAt` | `String` | 任命时间（ISO8601 UTC） |
+
+### 99.1.2 POST `/admin/building-leaders` — 指定单元楼长
+
+**请求体**（`AppointBuildingLeaderRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `residentId` | `String` | ✅ | 住户 ID（`res_` 前缀） |
+| `communityId` | `String` | ❌ | 不传取住户所属小区；住户未关联小区时必填 |
+| `building` | `String` | ❌ | 不传取住户所属楼栋；住户未关联楼栋时必填 |
+| `commissionRate` | `BigDecimal` | ❌ | 占物业分成的比例，(0,1]，默认 `0.1000` |
+| `description` | `String` | ❌ | 备注 |
+| `status` | `String` | ❌ | `active`（默认）/`inactive` |
+
+**校验**：住户存在且属本物业；该小区+楼栋**已存在 active 楼长** → 报错；该住户**已是 active 楼长** → 报错。
+
+**副作用**：新增一条 `building_leaders`（`status='active'`）记录；**不修改** `residents.role`（住户身份保留，楼长身份叠加）。
+
+**响应**：`BuildingLeaderDetailResponse`（结构同 §99.1.1 列表项）
+
+### 99.1.3 GET `/admin/building-leaders/{id}` — 单元楼长详情
+
+**Path**：`id` 楼长 ID（`bl_` 前缀）
+
+**响应**：`BuildingLeaderDetailResponse`
+
+### 99.1.4 PUT `/admin/building-leaders/{id}` — 更新单元楼长
+
+**请求体**（`UpdateBuildingLeaderRequest`，字段全可选）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `commissionRate` | `BigDecimal` | 楼长分成比例，(0,1] |
+| `description` | `String` | 备注 |
+| `status` | `String` | `active`/`inactive` |
+
+> 更新仅影响**后续订单**；已产生订单按快照结算，不受影响。
+
+**响应**：`BuildingLeaderDetailResponse`
+
+### 99.1.5 DELETE `/admin/building-leaders/{id}` — 撤销单元楼长
+
+**Path**：`id` 楼长 ID（`bl_` 前缀）
+**Query**：`reason`（可选，撤销原因，落库到 `description`）
+
+**行为**：置 `status='inactive'`；**不修改** `residents.role`（住户身份自始至终保持 `resident`）。
+
+**响应**：`BuildingLeaderDetailResponse`
+
+---
+
+## 99.2 楼长工作台
+
+**Roles**：`resident`（登录用户须为该楼栋**启用中的楼长**，否则返回 `91004`）
+
+> 说明：楼长登录后 `role=resident`，前端通过 `GET /auth/profile`.`isBuildingLeader` 判断是否展示楼长工作台入口；工作台接口内部按 `building_leaders` 表校验楼长身份。
+
+### 99.2.1 GET `/building-leaders/my` — 当前楼长信息
+
+**响应**：`BuildingLeaderMyResponse`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `buildingLeaderId` | `String` | 楼长 ID |
+| `residentId` / `residentName` | `String` | 住户信息 |
+| `propertyCompanyId` | `String` | 物业公司 |
+| `communityId` / `communityName` | `String` | 小区 |
+| `building` | `String` | 楼栋 |
+| `commissionRate` | `BigDecimal` | 分成比例 |
+| `status` | `String` | `active`/`inactive` |
+| `totalEarning` | `BigDecimal` | 累计分成 |
+| `withdrawnAmount` | `BigDecimal` | 已提现（completed） |
+| `pendingAmount` | `BigDecimal` | 在途提现（pending+approved） |
+| `withdrawableAmount` | `BigDecimal` | 可提现余额 = `totalEarning − withdrawnAmount − pendingAmount` |
+
+### 99.2.2 GET `/building-leaders/my/distribution-records` — 我的分成明细
+
+**Query**：`page`（默认 1）、`pageSize`（默认 20，最大 100）
+
+**响应**：`PageResponse<DistributionRecordItemResponse>`（见 §99.4，含 `buildingLeaderShare` 等字段）
+
+### 99.2.3 POST `/building-leaders/{id}/withdrawals` — 楼长申请提现
+
+**Path**：`id` 楼长 ID（`bl_`，需与当前登录楼长一致）
+**请求体**：`{ "amount": 100.00 }`（>0）
+
+**校验**：`amount ≤ 可提现余额`；住户未被阻止提现。
+**响应**：`RoleWithdrawalItemResponse`（见 §70）
+
+### 99.2.4 GET `/building-leaders/{id}/withdrawals` — 楼长提现记录
+
+**Query**：`page`/`pageSize`/`auditStatus`(pending/approved/rejected/completed)/`startDate`/`endDate`
+
+**响应**：`PageResponse<RoleWithdrawalItemResponse>`
+
+---
+
+## 99.3 业主卖货钱包
+
+**Roles**：`resident`
+
+### 99.3.1 GET `/resident-merchants/seller-wallet` — 钱包概览
+
+**响应**：`SellerWalletResponse`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `residentId` | `String` | 住户 ID |
+| `totalProfit` | `BigDecimal` | 累计卖货收益（已结算订单差额汇总，`reseller_profit`） |
+| `withdrawnAmount` | `BigDecimal` | 已提现金额（completed） |
+| `pendingAmount` | `BigDecimal` | 在途金额（pending+approved） |
+| `withdrawableAmount` | `BigDecimal` | 可提现余额 = `totalProfit − withdrawnAmount − pendingAmount` |
+
+> 钱包金额**仅可用于提现**，不可消费、不可转物业币。
+
+### 99.3.2 POST `/resident-merchants/seller-wallet/withdrawals` — 钱包提现申请
+
+**请求体**：`{ "amount": 100.00 }`（>0）
+
+**校验**：`amount ≤ 可提现余额`（累计卖货收益 − 已提现 − 在途）；住户未被阻止提现。
+**响应**：`RoleWithdrawalItemResponse`，进入管理端提现审核（`withdrawal_type=resident_seller`，见 §70.5/§70.7）
+
+### 99.3.3 GET `/resident-merchants/seller-wallet/withdrawals` — 钱包提现记录
+
+**Query**：`page`/`pageSize`/`auditStatus`/`startDate`/`endDate`
+
+**响应**：`PageResponse<RoleWithdrawalItemResponse>`
+
+---
+
+## 99.4 分成记录字段变更
+
+### 99.4.1 响应新增字段
+
+| 接口 | 新增字段 | 说明 |
+| --- | --- | --- |
+| `GET /distribution/records`（§21.1）、`GET /admin/distribution-records`（§21.4） | `buildingLeaderShare`、`buildingLeaderId`、`buildingLeaderName` | 楼长分成金额 / 楼长 ID / 楼长姓名 |
+| `GET /distribution/stats`（§21.2）、`GET /admin/distribution/statistics`（§21.5） | `summary.buildingLeaderAmount` | 楼长分成合计 |
+| `GET /distribution/calculate`（§21.3） | `buildingLeaderShare`、`buildingLeaderId` | 试算时的楼长分成分项（按住户当前楼栋实时解析） |
+| `GET /deliveries/pending`（§9.1）、`/deliveries/my`（§9.3）、`POST /deliveries/{id}/grab`（§9.4）、`POST /deliveries/{id}/complete`（§9.5） | `fee`、`originalDeliveryFee`、`deliverySubsidySponsor`、`deliverySubsidyAmount`、`deliverySettlementBase`、`platformDeliveryShare`、`courierEarning`、`courierShare`、`settlementStatus`、`carrierType`、`merchantDeliveryFeeShare` | v8.9 配送侧结算链字段（A1） |
+
+### 99.4.2 订单快照
+
+`orders` 新增 `building_leader_id` / `building_leader_rate`，在下单（创建订单 / 业主上架订单）时写入，不对外暴露为响应字段。
+
+`orders` 新增 `original_delivery_fee` / `delivery_subsidy_sponsor` / `delivery_subsidy_amount`（v8.9，满额配送费减免快照，结算时读取快照不重算）。
+
+### 99.4.3 配送口径（v8.9，A1）
+
+`courierEarning = deliverySettlementBase × (1 − platform_delivery_share_rate)`，`deliverySettlementBase = 实付配送费 + 配送补贴`；
+`delivery_rules.courier_per_order` 等固定每单金额列保留但不再参与分账；`courierShare` 恒等于 `courierEarning`。
+
+---
+
+## 99.5 错误码
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `91004` | 404 | 楼长不存在 / 当前用户不是楼长（`BUILDING_LEADER_NOT_FOUND`） |
+| `10001` | 400 | 参数缺失（如住户未关联小区/楼栋且未指定 `communityId`/`building`） |
+| `10002` | 400 | 参数格式错误（如 `commissionRate` 不在 (0,1]、`status` 非法、该楼栋已存在 active 楼长、该住户已是 active 楼长） |
+| `30001` | 404 | 业主不存在（`RESIDENT_NOT_FOUND`） |
+| `97001` | 404 | 物业公司不存在（`PROPERTY_COMPANY_NOT_FOUND`） |
+| `94003` | 400 | 提现申请不允许操作（可提现余额不足，`MERCHANT_WITHDRAWAL_INVALID`） |
+| `94005` | 400 | 提现已被冻结（`WITHDRAWAL_BLOCKED`） |
+| `20004` | 403 | 权限不足（`PERMISSION_DENIED`，楼长操作他人 / 角色不符） |
+
+---
+
+## 99.6 认证响应新增字段（前端识别「住户 + 楼长」身份）
+
+楼长登录后 `role` 仍为 `resident`，前端需通过下述标志识别楼长身份：
+
+| 接口 | 新增字段 | 说明 |
+| --- | --- | --- |
+| `GET /auth/profile`（§3.x） | `isBuildingLeader` | 是否为**启用中**的单元楼长 |
+| `GET /auth/profile`（§3.x） | `buildingLeaderId` | 楼长 ID（`bl_`）；非楼长为 `null` |
+| 登录响应 `resident`（`/auth/wechat-login`、`/auth/admin-login`） | `isBuildingLeader` | 同上，供登录后立即渲染入口 |
+
+> **存量数据迁移提示**：历史曾把楼长 `residents.role` 误写为 `building_leader`。执行 V18 脚本中的 `UPDATE residents SET role='resident' WHERE role='building_leader'` 后即为 `resident`。此前签发的旧令牌由 `RoleGuard` 将 `building_leader` 归一化为 `resident` 兜底，住户功能可正常使用；**建议楼长用户重新登录**以获取带 `isBuildingLeader` 的最新 profile。

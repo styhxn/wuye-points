@@ -18,6 +18,9 @@ public interface ActivityGroupSubscriptionRepository extends JpaRepository<Activ
 
     List<ActivityGroupSubscription> findByGroupId(String groupId);
 
+    List<ActivityGroupSubscription> findByGroupIdAndResidentIdAndStatus(
+            String groupId, String residentId, String status);
+
     void deleteByGroupId(String groupId);
 
     Page<ActivityGroupSubscription> findByResidentId(String residentId, Pageable pageable);

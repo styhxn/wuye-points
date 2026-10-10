@@ -91,6 +91,7 @@ public enum ErrorCode {
     COORDINATOR_NOT_FOUND(91001, "统筹不存在", 404),
     SECTOR_LEADER_NOT_FOUND(91002, "板块负责人不存在", 404),
     INDIVIDUAL_LEADER_NOT_FOUND(91003, "个体负责人不存在", 404),
+    BUILDING_LEADER_NOT_FOUND(91004, "楼长不存在", 404),
 
     // 权限 92xxx
     PERMISSION_NOT_FOUND(92001, "权限项不存在", 404),
@@ -154,6 +155,7 @@ public enum ErrorCode {
     // 商家扩展 60xxx
     RESIDENT_MERCHANT_DEPOSIT_INVALID(60010, "商家保证金不合法", 400),
     MERCHANT_AD_QUOTA_INSUFFICIENT(60011, "广告额度不足", 400),
+    MERCHANT_AD_NOT_FOUND(60012, "广告不存在", 404),
 
     // 提现 94xxx
     WITHDRAWAL_BLOCKED(94005, "提现已被冻结", 400),

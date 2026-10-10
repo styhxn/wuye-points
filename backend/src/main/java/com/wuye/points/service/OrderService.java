@@ -59,6 +59,7 @@ import com.wuye.points.repository.OrderItemRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.DistributorProductRepository;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.OrderSpecifications;
@@ -105,6 +106,7 @@ public class OrderService {
     private final MerchantRepository merchantRepository;
     private final MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     private final ProductRepository productRepository;
+    private final ProductStockService productStockService;
     private final ResidentRepository residentRepository;
     private final PointService pointService;
     private final PropertyCoinService propertyCoinService;
@@ -117,6 +119,7 @@ public class OrderService {
     private final DistributorProductRepository distributorProductRepository;
     private final ResidentMerchantListingRepository listingRepository;
     private final ResidentMerchantSettlementService residentMerchantSettlementService;
+    private final OrderCompletionService orderCompletionService;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final PropertyCoinMallRuleService propertyCoinMallRuleService;
     private final CanteenService canteenService;
@@ -128,6 +131,7 @@ public class OrderService {
     private final EcommerceSplitProperties ecommerceSplitProperties;
     private final MerchantWechatAccountRepository merchantWechatAccountRepository;
     private final CouponService couponService;
+    private final BuildingLeaderRepository buildingLeaderRepository;
 
     @Transactional
     public CreateOrderResponse createOrder(CreateOrderRequest request) {
@@ -146,6 +150,9 @@ public class OrderService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal deliveryFee = calculateDeliveryFee(merchant, subtotal);
         BigDecimal totalAmount = subtotal;
+        // 配送满额减免快照（规范§7.6）：减免额与承担方在下单时固定，结算不得按最新配置重算
+        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
+        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
 
         if (StringUtils.hasText(request.getFamilyId())) {
             if (!request.getFamilyId().equals(resident.getFamilyId())) {
@@ -163,6 +170,9 @@ public class OrderService {
         order.setOrderStatus("pending");
         order.setTotalAmount(totalAmount);
         order.setDeliveryFee(deliveryFee);
+        order.setOriginalDeliveryFee(originalDeliveryFee);
+        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "merchant" : "none");
+        order.setDeliverySubsidyAmount(deliveryWaiverAmount);
         order.setPointUsed(0);
         order.setCoinUsed(BigDecimal.ZERO);
         order.setCashAmount(BigDecimal.ZERO);
@@ -172,6 +182,7 @@ public class OrderService {
         order.setAddress(StringUtils.hasText(request.getAddress()) ? request.getAddress() : buildDefaultAddress(resident));
         order.setContactPhone(StringUtils.hasText(request.getContactPhone()) ? request.getContactPhone() : resident.getPhone());
         order.setRemark(request.getRemark());
+        applyBuildingLeaderBinding(order, resident);
         applyFulfillmentRoutingAtCreation(order, merchant, preparedItems);
         orderRepository.save(order);
 
@@ -237,6 +248,9 @@ public class OrderService {
         BigDecimal unitPrice = defaultDecimal(listing.getRetailPrice());
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
         BigDecimal deliveryFee = calculateDeliveryFee(merchant, totalAmount);
+        // 配送满额减免快照（规范§7.6）
+        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
+        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
 
         Order order = new Order();
         order.setId(idGenerator.generateId("ord"));
@@ -249,6 +263,9 @@ public class OrderService {
         order.setOrderStatus("pending");
         order.setTotalAmount(totalAmount);
         order.setDeliveryFee(deliveryFee);
+        order.setOriginalDeliveryFee(originalDeliveryFee);
+        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "merchant" : "none");
+        order.setDeliverySubsidyAmount(deliveryWaiverAmount);
         order.setPointUsed(0);
         order.setCoinUsed(BigDecimal.ZERO);
         order.setCashAmount(BigDecimal.ZERO);
@@ -264,6 +281,7 @@ public class OrderService {
         // 业主商户上架商品：走常规配送履约链路（支付后进入 pending_choice）
         order.setRequiresDelivery(Boolean.TRUE);
         order.setFulfillmentMode(null);
+        applyBuildingLeaderBinding(order, resident);
         orderRepository.save(order);
 
         OrderItem item = new OrderItem();
@@ -291,6 +309,26 @@ public class OrderService {
                 .orderStatus(order.getOrderStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(order.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 下单时绑定单元楼长：按住户所属「小区 + 楼栋」解析启用中的楼长，
+     * 并将楼长ID与分成比例快照写入订单。分成定向从订单产生那一刻算绑定关系，
+     * 后续修改/撤销楼长不会影响本单分成归属。
+     */
+    private void applyBuildingLeaderBinding(Order order, Resident resident) {
+        if (resident == null
+                || !StringUtils.hasText(resident.getCommunityId())
+                || !StringUtils.hasText(resident.getBuilding())) {
+            return;
+        }
+        buildingLeaderRepository
+                .findFirstByCommunityIdAndBuildingAndStatusOrderByCreatedAtDesc(
+                        resident.getCommunityId(), resident.getBuilding(), "active")
+                .ifPresent(leader -> {
+                    order.setBuildingLeaderId(leader.getId());
+                    order.setBuildingLeaderRate(leader.getCommissionRate());
+                });
     }
 
     @Transactional
@@ -496,9 +534,9 @@ public class OrderService {
                     "订单消费抵扣物业币", null, false);
         }
 
-        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        deductStock(items);
-
+        // 库存已在预下单（payOrder → initiateChannelPayment）预占扣减，此处严禁再扣一次：
+        // 重复扣减在库存充足时会静默超卖，末件商品时抛「商品库存不足」使 finalize 永久失败，
+        // 造成「钱已收、订单永久 pending」。超时未支付由 PendingPaymentScheduler 归还预占库存。
         List<OrderItem> channelItems = orderItemRepository.findByOrderId(order.getId());
         MerchantPropertyConfig channelConfig = merchantPropertyConfigRepository
                 .findByMerchantIdAndPropertyCompanyId(merchant.getId(), order.getPropertyCompanyId())
@@ -637,7 +675,11 @@ public class OrderService {
         int refundPoint = 0;
         BigDecimal refundAmount = BigDecimal.ZERO;
 
-        if ("paid".equals(order.getOrderStatus())
+        // pending（含已微信预下单、库存已预占但未付款）也在内：不归还预占库存会永久泄漏
+        // 库存（PendingPaymentScheduler 仅在订单仍为 pending 时补归还，此处订单已 cancelled 便不再补）。
+        // 未支付订单的退款/返奖分支均为空操作（point/coin/cash 为 0，refundCashIfAny 直接 return）。
+        if ("pending".equals(order.getOrderStatus())
+                || "paid".equals(order.getOrderStatus())
                 || "delivering".equals(order.getOrderStatus())
                 || "pending_verification".equals(order.getOrderStatus())
                 || "verified".equals(order.getOrderStatus())) {
@@ -1262,7 +1304,8 @@ public class OrderService {
      * <ul>
      *   <li>社区食堂单 → {@code completed}（购买即结束，不配送、不核实、不生成配送单）；</li>
      *   <li>团购单 → {@code pending_verification}（商家核实，见 §8.6.1a）；</li>
-     *   <li>其它 → {@code paid} + {@code pending_choice} + 30 分钟选择时限 + 生成待抢配送单。</li>
+     *   <li>其它 → {@code paid} + {@code pending_choice} + 30 分钟选择时限（此时<b>不</b>生成配送单，
+     *       待商家选择 {@code merchant_self}/{@code courier_hall} 或超时兜底时才生成）。</li>
      * </ul>
      */
     private void applyPostPaymentRouting(Order order,
@@ -1298,8 +1341,8 @@ public class OrderService {
         order.setFulfillmentMode(FulfillmentConstants.FULFILLMENT_MODE_PENDING_CHOICE);
         order.setFulfillmentDeadline(LocalDateTime.now()
                 .plusMinutes(FulfillmentConstants.FULFILLMENT_CHOICE_TIMEOUT_MINUTES));
-        // 保持既有「支付后自动发布到待抢大厅」行为：生成 courier 承运的 pending 配送单
-        deliveryService.createDeliveryForPaidOrder(order, merchant);
+        // 支付后进入「待商家选择」阶段：此时不生成配送单，配送单在商家选择
+        // merchant_self / courier_hall（或超时兜底）时才创建，避免未选择的订单提前出现在抢单大厅。
     }
 
     private boolean isCanteenMerchant(Merchant merchant) {
@@ -1343,13 +1386,8 @@ public class OrderService {
             throw new BizException(ErrorCode.ORDER_CONFLICT);
         }
 
-        // 确认收货时生成分成记录
-        Merchant merchant = merchantRepository.findById(order.getMerchantId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
-        MerchantPropertyConfig config = loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
-        distributionService.calculateAndSave(order, resident, config);
-        // 业主商户卖货：生成卖货明细并自动下架
-        residentMerchantSettlementService.settleOnOrderCompleted(order);
+        // 确认收货：生成分成记录（含楼长分成）与业主卖货明细
+        orderCompletionService.settleOnCompleted(order);
 
         return ConfirmOrderResponse.builder()
                 .orderId(order.getId())
@@ -1383,9 +1421,9 @@ public class OrderService {
             throw new BizException(ErrorCode.ORDER_CONFLICT);
         }
 
-        // 商家/快递员置为已完成时，若来自业主商户上架则结算并自动下架
+        // 商家/快递员置为已完成时，同样必须生成分成记录（含楼长分成）并结算业主卖货明细
         if ("completed".equals(order.getOrderStatus())) {
-            residentMerchantSettlementService.settleOnOrderCompleted(order);
+            orderCompletionService.settleOnCompleted(order);
         }
 
         return UpdateOrderStatusResponse.builder()
@@ -1552,42 +1590,29 @@ public class OrderService {
         return fee;
     }
 
+    /**
+     * 商城库存扣减：统一委托 {@link ProductStockService}（行锁 + @Version 乐观锁，防并发超卖）。
+     * 业主上架货源商品（dpr_）不占用商城库存：拿货名额在上架/取消上架时已处理，
+     * 下单后仅卖一次并自动下架，故先过滤掉。
+     */
     private void deductStock(List<OrderItem> items) {
-        for (OrderItem item : items) {
-            // 业主上架货源商品（dpr_）不占用商城库存：拿货名额在上架/取消上架时已处理，
-            // 下单后仅卖一次并自动下架，故跳过商城库存扣减。
-            if (isListingSourcedItem(item)) {
-                continue;
-            }
-            Product product = productRepository.findById(item.getProductId())
-                    .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
-            int stock = defaultStock(product);
-            if (stock < item.getQuantity()) {
-                throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "商品库存不足");
-            }
-            int remaining = stock - item.getQuantity();
-            product.setStock(remaining);
-            if (remaining <= 0) {
-                product.setStatus("sold_out");
-            }
-            productRepository.save(product);
-        }
+        productStockService.deductAll(listingSourcedExcluded(items));
     }
 
+    /**
+     * 商城库存恢复（取消 / 超时关单 / 退货）：同样统一委托 {@link ProductStockService}。
+     * 业主上架货源商品（dpr_）无商城库存结转，退货不恢复商城库存。
+     */
     private void restoreStock(List<OrderItem> items) {
-        for (OrderItem item : items) {
-            // 业主上架货源商品（dpr_）无商城库存结转，退货不恢复商城库存。
-            if (isListingSourcedItem(item)) {
-                continue;
-            }
-            productRepository.findById(item.getProductId()).ifPresent(product -> {
-                product.setStock(defaultStock(product) + item.getQuantity());
-                if ("sold_out".equals(product.getStatus())) {
-                    product.setStatus("active");
-                }
-                productRepository.save(product);
-            });
+        productStockService.restoreAll(listingSourcedExcluded(items));
+    }
+
+    /** 过滤掉业主上架货源商品（dpr_），仅保留占用商城库存的商品明细。 */
+    private List<OrderItem> listingSourcedExcluded(List<OrderItem> items) {
+        if (items == null) {
+            return List.of();
         }
+        return items.stream().filter(item -> !isListingSourcedItem(item)).toList();
     }
 
     /** 是否业主上架货源商品（OrderItem 记录的一级经销商商品 id，前缀 dpr_）。 */

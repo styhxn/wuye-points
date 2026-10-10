@@ -1,5 +1,6 @@
 package com.wuye.points.dto.service;
 
+import com.wuye.points.payment.WechatJsPayParams;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -38,9 +39,15 @@ public class SubscribeServiceResponse {
     @Schema(description = "是否自动续订", example = "true")
     private Boolean autoRenew;
 
-    @Schema(description = "状态", example = "生效中")
+    @Schema(description = "状态：pending_payment 待支付 / active 生效 / expired 已过期 / cancelled 已取消", example = "生效中")
     private String status;
 
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;
+
+    @Schema(description = "支付流水ID（含现金部分且已微信预下单时返回）")
+    private String paymentRecordId;
+
+    @Schema(description = "微信小程序调起支付参数（含现金部分时返回，前端原样透传 wx.requestPayment）")
+    private WechatJsPayParams payParams;
 }

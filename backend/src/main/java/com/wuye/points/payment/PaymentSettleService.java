@@ -6,7 +6,6 @@ import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PaymentSettleOutboxRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import com.wuye.points.payment.WechatSplitApiService;
-import com.wuye.points.payment.WechatSplitProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -47,7 +46,6 @@ public class PaymentSettleService {
     private final WechatSplitService wechatSplitService;
     private final PaymentBizDispatcher bizDispatcher;
     private final WechatSplitApiService wechatSplitApiService;
-    private final WechatSplitProperties wechatSplitProperties;
 
     /** 事务提交后异步触发（由 PaymentCompletionService 发布）。 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -93,7 +91,7 @@ public class PaymentSettleService {
         try {
             // 先冻结分账（幂等：已冻结则跳过）。按物业公司灰度：仅白名单内且全局开启时执行分账。
             try {
-                if (wechatSplitApiService.isEnabled() && wechatSplitProperties.isEnabledForProperty(record.getPropertyCompanyId())) {
+                if (wechatSplitApiService.isEnabled() && wechatSplitService.isEnabledForProperty(record.getPropertyCompanyId())) {
                     wechatSplitService.freezeOnPaymentSuccess(record);
                 }
             } catch (Exception e) {

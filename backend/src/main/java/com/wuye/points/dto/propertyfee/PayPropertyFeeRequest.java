@@ -35,4 +35,7 @@ public class PayPropertyFeeRequest {
 
     @Schema(description = "家庭ID", example = "fam_k3j8n2")
     private String familyId;
+
+    @Schema(description = "用户openid（wechat/mixed 含现金部分时使用；不传则取用户绑定openid）", example = "oGX3Z5Xx...")
+    private String openid;
 }

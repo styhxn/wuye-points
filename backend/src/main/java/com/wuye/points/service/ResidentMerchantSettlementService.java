@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.residentmerchant.ResidentMerchantSettlementItemResponse;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.residentmerchant.SellerWalletResponse;
 import com.wuye.points.entity.DistributorProduct;
 import com.wuye.points.entity.Order;
 import com.wuye.points.entity.ResidentMerchantListing;
@@ -12,6 +13,7 @@ import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.DistributorProductRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentMerchantSettlementRepository;
+import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -42,9 +44,13 @@ public class ResidentMerchantSettlementService {
     private final ResidentMerchantSettlementRepository settlementRepository;
     private final ResidentMerchantListingRepository listingRepository;
     private final DistributorProductRepository distributorProductRepository;
+    private final WithdrawalRecordRepository withdrawalRecordRepository;
     private final PlatformSettingService platformSettingService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+
+    /** 业主卖货钱包提现类型（与 RoleWithdrawalService.WITHDRAWAL_TYPE_RESIDENT_SELLER 保持一致） */
+    private static final String WITHDRAWAL_TYPE_RESIDENT_SELLER = "resident_seller";
 
     /**
      * 订单完成时调用：幂等，非 listing 订单直接跳过。
@@ -113,6 +119,34 @@ public class ResidentMerchantSettlementService {
                 .map(this::toItem)
                 .toList();
         return PageResponse.of(list, page, pageSize, result.getTotalElements());
+    }
+
+    /**
+     * 业主卖货独立钱包概览：钱包金额来源于业主商城卖货收益，仅可用于提现。
+     * 可提现余额 = 累计已结算卖货收益 − 已完成提现 − 在途提现（待审核+已通过），口径与提现校验保持一致。
+     */
+    @Transactional(readOnly = true)
+    public SellerWalletResponse getSellerWallet() {
+        roleGuard.requireAnyRole("resident");
+        String residentId = UserContext.currentUserId();
+
+        BigDecimal totalProfit = defaultAmount(settlementRepository.sumResellerProfitByResidentId(residentId));
+        BigDecimal withdrawn = defaultAmount(withdrawalRecordRepository
+                .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, "completed"));
+        BigDecimal pending = defaultAmount(withdrawalRecordRepository
+                .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, "pending"))
+                .add(defaultAmount(withdrawalRecordRepository
+                        .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, "approved")));
+        BigDecimal withdrawable = totalProfit.subtract(withdrawn).subtract(pending)
+                .max(BigDecimal.ZERO);
+
+        return SellerWalletResponse.builder()
+                .residentId(residentId)
+                .totalProfit(totalProfit)
+                .withdrawnAmount(withdrawn)
+                .pendingAmount(pending)
+                .withdrawableAmount(withdrawable)
+                .build();
     }
 
     private ResidentMerchantSettlementItemResponse toItem(ResidentMerchantSettlement s) {

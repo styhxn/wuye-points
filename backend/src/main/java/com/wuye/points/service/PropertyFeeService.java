@@ -22,9 +22,13 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.PayChannel;
+import com.wuye.points.payment.PaymentBizType;
+import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.FamilyRepository;
 import com.wuye.points.repository.MessageRepository;
+import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PointRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.PropertyFeeRepository;
@@ -64,6 +68,8 @@ import java.util.stream.Collectors;
 public class PropertyFeeService {
 
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
+    /** 重新发起支付时，作废超过该时长的旧 pending 流水（即时重试窗口，兜底于 PendingPaymentScheduler） */
+    private static final int STALE_PENDING_MINUTES = 5;
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "dueDate", "amount", "period");
     private static final List<String> DEFAULT_REMINDER_CHANNELS = List.of("in_app", "wechat");
     private static final Set<String> REMINDER_CHANNELS = Set.of("in_app", "wechat");
@@ -82,6 +88,8 @@ public class PropertyFeeService {
     private final SnowflakeIdGenerator idGenerator;
     private final ArrearsReminderStateStore arrearsReminderStateStore;
     private final MessageRepository messageRepository;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final PayChannel wechatPayService;
 
     @Transactional(readOnly = true)
     public PageResponse<PropertyFeeListItemResponse> listPropertyFees(
@@ -249,6 +257,13 @@ public class PropertyFeeService {
         FeePaymentBreakdown breakdown = resolvePaymentBreakdown(
                 request, request.getAmount(), pointToFeeRate);
 
+        // 含现金部分（wechat/mixed）：走微信预下单，账单保持未缴，由回调 completeChannelPayment 落账。
+        // 严禁在此直接置为已缴——否则未收到钱也会把物业费标记缴清（历史资损漏洞）。
+        if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return initiateChannelPayment(fee, resident, request, breakdown, useFamilyPool);
+        }
+
+        // 纯积分/物业币抵扣：即时到账（无现金部分，不涉及微信通道）
         if (breakdown.pointUsed() > 0) {
             pointService.spendPoints(
                     resident,
@@ -295,6 +310,87 @@ public class PropertyFeeService {
                 .cashAmount(breakdown.cashAmount())
                 .paidAt(DateTimeUtil.toIsoUtc(fee.getPaidAt()))
                 .build();
+    }
+
+    /**
+     * 含现金部分（wechat/mixed）的物业费缴纳：微信小程序预下单，账单保持未缴，
+     * 由微信回调 {@link #completeChannelPayment(PaymentRecord)} 落账（幂等）。
+     *
+     * <p>fail-closed：微信支付未配置时直接拒绝，绝不回退为「直接置已缴」；
+     * 单笔积分/物业币抵扣以支付流水快照为准，与同步路径口径一致。</p>
+     */
+    private PayPropertyFeeResponse initiateChannelPayment(PropertyFee fee, Resident resident,
+                                                          PayPropertyFeeRequest request,
+                                                          FeePaymentBreakdown breakdown,
+                                                          boolean useFamilyPool) {
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "在线支付未开通，请联系物业线下缴纳后由管理端确认到账");
+        }
+        // 落账口径一致：把「使用家庭积分池」的决策固化到账单上，供回调 completeChannelPayment 还原
+        if (useFamilyPool && StringUtils.hasText(resident.getFamilyId())
+                && !resident.getFamilyId().equals(fee.getFamilyId())) {
+            fee.setFamilyId(resident.getFamilyId());
+            propertyFeeRepository.save(fee);
+        }
+        // 作废该账单超时未支付的旧流水，避免用户被永久卡在「支付处理中」
+        closeStalePendingFeePayments(fee.getId());
+        // 防重复提交：同一账单已有待支付流水时拒绝，避免重复扣款
+        if (!paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
+                PaymentBizType.PROPERTY_FEE, fee.getId(), "pending").isEmpty()) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "物业费支付处理中，请勿重复提交");
+        }
+        // 前置校验 openid：缺失时不落任何数据
+        String openId = resolveOpenId(request.getOpenid(), resident);
+        PaymentRecord record = wechatPayService.createIntent(
+                PaymentBizType.PROPERTY_FEE, fee.getId(), resident.getId(),
+                fee.getPropertyCompanyId(), request.getPaymentMethod(), request.getAmount(),
+                breakdown.pointUsed(), breakdown.coinUsed(), breakdown.cashAmount());
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "物业费缴纳");
+        return PayPropertyFeeResponse.builder()
+                .propertyFeeId(fee.getId())
+                .paidAmount(BigDecimal.ZERO)
+                .totalPaidAmount(propertyFeeConverter.defaultPaidAmount(fee))
+                .remainingAmount(remainingAmount(fee))
+                .paymentStatus(fee.getPaymentStatus())
+                .paymentMethod(request.getPaymentMethod())
+                .pointUsed(breakdown.pointUsed())
+                .coinUsed(breakdown.coinUsed())
+                .cashAmount(breakdown.cashAmount())
+                .paymentRecordId(record.getId())
+                .payParams(payParams)
+                .build();
+    }
+
+    /**
+     * 作废该账单下超时未支付的预下单流水，让用户可立即重新发起支付。
+     * 兜底于 {@code PendingPaymentScheduler}（30 分钟），这里给出更短的即时重试窗口。
+     */
+    private void closeStalePendingFeePayments(String feeId) {
+        List<PaymentRecord> stale = paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
+                        PaymentBizType.PROPERTY_FEE, feeId, "pending").stream()
+                .filter(r -> r.getCreatedAt() != null
+                        && r.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES)))
+                .toList();
+        for (PaymentRecord record : stale) {
+            record.setStatus("closed");
+            record.setErrorMsg("重新发起支付，原流水作废");
+            paymentRecordRepository.save(record);
+        }
+        if (!stale.isEmpty()) {
+            log.info("作废超时物业费支付流水 feeId={} count={}", feeId, stale.size());
+        }
+    }
+
+    /** 解析微信小程序 openid：请求显式传入优先，否则取用户绑定 openid，两者皆无则报错。 */
+    private String resolveOpenId(String requestOpenId, Resident resident) {
+        if (StringUtils.hasText(requestOpenId)) {
+            return requestOpenId;
+        }
+        if (StringUtils.hasText(resident.getOpenid())) {
+            return resident.getOpenid();
+        }
+        throw new BizException(ErrorCode.PARAM_MISSING, "openid不能为空（微信小程序支付需要）");
     }
 
     /**
@@ -516,13 +612,14 @@ public class PropertyFeeService {
 
         int pointUsed = record.getPointUsed() != null ? record.getPointUsed() : 0;
         BigDecimal coinUsed = record.getCoinUsed() != null ? record.getCoinUsed() : BigDecimal.ZERO;
+        boolean useFamilyPool = resolveUseFamilyPool(null, fee, resident);
         if (pointUsed > 0) {
             pointService.spendPoints(resident, pointUsed, "fee_deduct", fee.getId(),
-                    "积分抵扣物业费", null, false);
+                    "积分抵扣物业费", null, useFamilyPool);
         }
         if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
             propertyCoinService.spendCoins(resident, coinUsed, "property_fee", fee.getId(),
-                    "物业币缴纳物业费", null, false);
+                    "物业币缴纳物业费", null, useFamilyPool);
         }
 
         BigDecimal payAmount = record.getAmount() != null ? record.getAmount() : BigDecimal.ZERO;

@@ -28,11 +28,15 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.PayChannel;
+import com.wuye.points.payment.PaymentBizType;
+import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.repository.ActivityGroupMemberRepository;
 import com.wuye.points.repository.ActivityGroupPricingTierRepository;
 import com.wuye.points.repository.ActivityGroupRepository;
 import com.wuye.points.repository.ActivityGroupSubscriptionRepository;
 import com.wuye.points.repository.CommunityRepository;
+import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.ActivityGroupSpecifications;
@@ -40,6 +44,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -61,12 +66,15 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ActivityGroupService {
 
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "memberCount", "name");
+    /** 重新发起订阅支付时，作废超过该时长的旧 pending 订阅（即时重试窗口，兜底于 PendingPaymentScheduler） */
+    private static final int STALE_PENDING_MINUTES = 5;
 
     private final ActivityGroupRepository activityGroupRepository;
     private final ActivityGroupMemberRepository activityGroupMemberRepository;
@@ -80,6 +88,8 @@ public class ActivityGroupService {
     private final PropertyCoinService propertyCoinService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final PayChannel wechatPayService;
 
     @Transactional(readOnly = true)
     public PageResponse<ActivityGroupListItemResponse> listActivityGroups(
@@ -585,23 +595,15 @@ public class ActivityGroupService {
             throw new BizException(ErrorCode.PARAM_INVALID, "该活动组无需订阅");
         }
 
+        // 微信支付：先落 pending_payment 订阅，微信回调确认后才生效（严禁未收款即生效）
+        if ("wechat".equals(request.getPaymentMethod())) {
+            return initiateChannelSubscription(resident, group, amount, request);
+        }
+
         executeSubscriptionPayment(resident, group, amount, request.getPaymentMethod());
 
-        LocalDate startDate = today;
-        LocalDate endDate = "yearly".equals(request.getSubType())
-                ? startDate.plusYears(1)
-                : startDate.plusMonths(1);
-
-        ActivityGroupSubscription subscription = new ActivityGroupSubscription();
-        subscription.setId(idGenerator.generateId("ags"));
-        subscription.setGroupId(group.getId());
-        subscription.setResidentId(resident.getId());
-        subscription.setPropertyCompanyId(resident.getPropertyCompanyId());
-        subscription.setSubType(request.getSubType());
-        subscription.setAmount(amount);
-        subscription.setStartDate(startDate);
-        subscription.setEndDate(endDate);
-        subscription.setStatus("active");
+        ActivityGroupSubscription subscription = buildSubscription(
+                resident, group, amount, request.getSubType(), "active");
         activityGroupSubscriptionRepository.save(subscription);
 
         if (!activityGroupMemberRepository.existsByGroupIdAndResidentIdAndStatus(
@@ -613,21 +615,120 @@ public class ActivityGroupService {
     }
 
     /**
-     * 微信支付回调确认后活动组订阅生效（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
-     * 订阅在 subscribe 时已落 active，回调仅作最终态兜底确认。
+     * 微信支付回调确认后活动组订阅生效并加入成员（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
+     * 订阅在 {@link #initiateChannelSubscription} 时已以 pending_payment 落库，收到款项回调才置 active。
      */
     @Transactional
     public void completeChannelPayment(PaymentRecord record) {
         ActivityGroupSubscription subscription = activityGroupSubscriptionRepository
                 .findById(record.getBizId())
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
+        if ("active".equals(subscription.getStatus())) {
+            return; // 幂等：已生效
+        }
         if ("cancelled".equals(subscription.getStatus())) {
-            return;
+            return; // 已取消（超时收尾），不再激活
         }
-        if (!"active".equals(subscription.getStatus())) {
-            subscription.setStatus("active");
+        subscription.setStatus("active");
+        activityGroupSubscriptionRepository.save(subscription);
+
+        ActivityGroup group = activityGroupRepository.findById(subscription.getGroupId()).orElse(null);
+        if (group != null && !activityGroupMemberRepository.existsByGroupIdAndResidentIdAndStatus(
+                group.getId(), subscription.getResidentId(), "active")) {
+            addMember(group, subscription.getResidentId(), "member");
+        }
+    }
+
+    /**
+     * 付费订阅（微信）预下单：订阅先以 pending_payment 落库（不生效、不加成员、不占额度），
+     * 微信回调 {@link #completeChannelPayment(PaymentRecord)} 确认后才置 active 并加入成员。
+     * fail-closed：微信支付未配置直接拒绝，绝不回退为「直接生效」。
+     */
+    private SubscribeActivityGroupResponse initiateChannelSubscription(Resident resident, ActivityGroup group,
+                                                                      BigDecimal amount,
+                                                                      SubscribeActivityGroupRequest request) {
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
+        }
+        // 作废超时未支付的旧 pending 订阅，允许用户立即重新发起
+        closeStalePendingSubscriptions(group.getId(), resident.getId());
+        // 防重复提交：同一住户同一活动组已有待支付订阅时拒绝，避免重复扣款
+        if (!activityGroupSubscriptionRepository.findByGroupIdAndResidentIdAndStatus(
+                group.getId(), resident.getId(), "pending_payment").isEmpty()) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "订阅支付处理中，请勿重复提交");
+        }
+        ActivityGroupSubscription subscription = buildSubscription(
+                resident, group, amount, request.getSubType(), "pending_payment");
+        activityGroupSubscriptionRepository.save(subscription);
+
+        String openId = resolveOpenId(request.getOpenid(), resident);
+        PaymentRecord record = wechatPayService.createIntent(
+                PaymentBizType.ACTIVITY_SUBSCRIPTION, subscription.getId(), resident.getId(),
+                resident.getPropertyCompanyId(), "wechat", amount,
+                0, BigDecimal.ZERO, amount);
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "活动组订阅");
+
+        SubscribeActivityGroupResponse response = activityGroupConverter.toSubscribeResponse(
+                subscription, group, request.getAutoRenew());
+        response.setPaymentRecordId(record.getId());
+        response.setPayParams(payParams);
+        return response;
+    }
+
+    private ActivityGroupSubscription buildSubscription(Resident resident, ActivityGroup group,
+                                                        BigDecimal amount, String subType, String status) {
+        LocalDate startDate = LocalDate.now();
+        LocalDate endDate = "yearly".equals(subType)
+                ? startDate.plusYears(1)
+                : startDate.plusMonths(1);
+        ActivityGroupSubscription subscription = new ActivityGroupSubscription();
+        subscription.setId(idGenerator.generateId("ags"));
+        subscription.setGroupId(group.getId());
+        subscription.setResidentId(resident.getId());
+        subscription.setPropertyCompanyId(resident.getPropertyCompanyId());
+        subscription.setSubType(subType);
+        subscription.setAmount(amount);
+        subscription.setStartDate(startDate);
+        subscription.setEndDate(endDate);
+        subscription.setStatus(status);
+        return subscription;
+    }
+
+    /**
+     * 作废该住户在该活动组下超时未支付的 pending_payment 订阅及其流水，让用户可立即重新发起。
+     * 兜底于 {@code PendingPaymentScheduler}（30 分钟），这里给出更短的即时重试窗口。
+     */
+    private void closeStalePendingSubscriptions(String groupId, String residentId) {
+        List<ActivityGroupSubscription> stale = activityGroupSubscriptionRepository
+                .findByGroupIdAndResidentIdAndStatus(groupId, residentId, "pending_payment").stream()
+                .filter(s -> s.getCreatedAt() != null
+                        && s.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES)))
+                .toList();
+        for (ActivityGroupSubscription subscription : stale) {
+            subscription.setStatus("cancelled");
             activityGroupSubscriptionRepository.save(subscription);
+            for (PaymentRecord record : paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
+                    PaymentBizType.ACTIVITY_SUBSCRIPTION, subscription.getId(), "pending")) {
+                record.setStatus("closed");
+                record.setErrorMsg("重新发起支付，原流水作废");
+                paymentRecordRepository.save(record);
+            }
         }
+        if (!stale.isEmpty()) {
+            log.info("[活动组订阅] 作废超时支付订阅 groupId={} residentId={} count={}",
+                    groupId, residentId, stale.size());
+        }
+    }
+
+    /** 解析微信小程序 openid：请求显式传入优先，否则取用户绑定 openid，两者皆无则报错。 */
+    private String resolveOpenId(String requestOpenId, Resident resident) {
+        if (StringUtils.hasText(requestOpenId)) {
+            return requestOpenId;
+        }
+        if (StringUtils.hasText(resident.getOpenid())) {
+            return resident.getOpenid();
+        }
+        throw new BizException(ErrorCode.PARAM_MISSING, "openid不能为空（微信小程序支付需要）");
     }
 
     private PageResponse<ActivityGroupListItemResponse> buildListPage(Page<ActivityGroup> groupPage,

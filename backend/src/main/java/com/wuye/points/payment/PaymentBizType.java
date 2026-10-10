@@ -29,6 +29,9 @@ public final class PaymentBizType {
     /** 社区食堂-主商家购买充值额度 */
     public static final String QUOTA_PURCHASE = "quota_purchase";
 
+    /** 商家广告位购买 */
+    public static final String AD_PURCHASE = "ad_purchase";
+
     private PaymentBizType() {
     }
 }

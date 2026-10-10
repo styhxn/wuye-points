@@ -33,7 +33,8 @@ spring:
   # baseline-on-migrate：存量库首次接入时被标记为 V1，不会重复执行 V1 建表脚本，
   # 因此该配置对已有生产库是零风险的；全新库则由 V1 完成建表。
   flyway:
-    enabled: false
+    # 由环境变量 FLYWAY_ENABLED 控制，fail-safe 默认 false（prod profile 内另硬编码 false，生产恒不启用）
+    enabled: ${FLYWAY_ENABLED:false}
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 1
@@ -81,9 +82,13 @@ wechat:
     app-id: ${WECHAT_PAY_APP_ID:wxf7230afd38275659}
     notify-url: ${WECHAT_PAY_NOTIFY_URL:}
     refund-notify-url: ${WECHAT_PAY_REFUND_NOTIFY_URL:}
+    # 微信 APIv3 HTTP 超时（毫秒）：防止微信侧无响应时连接/线程被无限占用（RestTemplate 默认无超时）
+    connect-timeout-ms: ${WECHAT_PAY_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${WECHAT_PAY_READ_TIMEOUT_MS:20000}
     platform-sub-mch-id: ${WECHAT_PAY_PLATFORM_SUB_MCH_ID:}
     sub-mch-ids: ${WECHAT_PAY_SUB_MCH_IDS:}
-    profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:true}
+    # 分账标识开关（资金链路，fail-closed）：默认 false，启用须显式置 WECHAT_PAY_PROFIT_SHARING=true
+    profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:false}
     # 二级商户余额提现的出款账户类型（电商微信支付分账 withdraw 接口 account_type）：BASIC/FEES/OPERATION
     account-type: ${WECHAT_PAY_ACCOUNT_TYPE:BASIC}
     # 提现结果异步通知地址（提现成功/失败/退票/关单回调，须 HTTPS）
@@ -95,22 +100,22 @@ wechat:
 # 微信支付分账（普通分账 / profit sharing）配置，前缀 wechat-split。
 # 资金分账已走微信官方支付分账（WechatSplitApiService），以下为分账业务参数（不含第三方聚合支付配置）。
 wechat-split:
-  # 是否启用微信分账（默认 true）
-  enabled: ${WECHAT_SPLIT_ENABLED:true}
-  # 配送员是否改走微信冻结腿（送达触发冻结，不再入平台内部钱包），默认 true
-  courier-split-enabled: ${WECHAT_SPLIT_COURIER_SPLIT_ENABLED:true}
+  # 是否启用微信分账（资金链路总开关，fail-closed）：默认 false，启用须显式置 WECHAT_SPLIT_ENABLED=true
+  enabled: ${WECHAT_SPLIT_ENABLED:false}
   # 是否允许用户主动发起订单退款，默认 false
   user-refund-enabled: ${WECHAT_SPLIT_USER_REFUND_ENABLED:false}
-  # Path B 自动提现（普通分账下收款方在自身微信商户平台提现，此处仅作开关占位），默认 true
-  auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:true}
+  # Path B 自动提现开关，fail-closed 默认 false。
+  # 生效范围：仅「电商收付通」模式有真实资金动作；「普通分账」模式下收款方自行在微信商户平台提现，
+  # 开启本开关仅推进本地状态位 withdraw_status，不代表平台自动打款。
+  auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:false}
   # 归集户余额监控阈值(元)，留空=不监控
   collect-balance-alert-threshold: ${WECHAT_SPLIT_COLLECT_ALERT_THRESHOLD:}
   # 灰度白名单(物业公司ID列表)，空=全部启用(受全局 enabled 约束)；非空=仅名单内启用分账
   enabled-property-companies: []
-  # 分账异步回调地址（对应 /api/v1/payment/wechat-split/split/notify）
-  notify-url: ${WECHAT_SPLIT_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/wechat-split/split/notify}
-  # 提现异步回调地址（普通分账无平台代提，占位）
-  notify-url-withdraw: ${WECHAT_SPLIT_NOTIFY_URL_WITHDRAW:https://test.yuanxusoftware.top/api/v1/payment/wechat-split/withdraw/notify}
+  # 说明：微信「普通分账」(/v3/profitsharing/orders) 请求体不含 notify_url，微信也不推送分账/提现结果异步通知，
+  # 故此处不再保留 notify-url / notify-url-withdraw —— 原先配置的地址既无代码读取、也无接收控制器，
+  # 属「死回调路径」，易被误认为已接入。分账/提现结果一律由 SplitWindowScheduler / ReverseFailedScheduler /
+  # SplitFailureScheduler 主动查询兜底（对账周期见 §96.5）。
 
 # 微信电商收付通（平台收付通）配置，前缀 wechat-ecommerce。
 # 用户付款直进「订单商家二级商户号」，平台通过 /v3/ecommerce/profitsharing/* 主动分账
@@ -138,9 +143,10 @@ wechat-ecommerce:
 
 app:
   payment:
-    # 模拟支付开关（保证金/食堂额度等场景直接到账）。
-    # 生产必须为 false：开启后任何人可零成本拿到业主商户资格、食堂额度。默认跟随环境，prod 显式置 false。
-    mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:true}
+    # 模拟支付开关（保证金/食堂额度等场景直接到账），fail-closed 默认 false。
+    # 仅开发/联调环境显式置 true（application-dev.yml 已开）；生产必须保持 false，
+    # 否则任何人可零成本拿到业主商户资格、食堂额度。
+    mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:false}
   wechat:
     skip-api: ${APP_WECHAT_SKIP_API:true}
   upload:

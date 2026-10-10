@@ -11,17 +11,20 @@ import com.wuye.points.dto.auth.ResidentAuthSummaryResponse;
 import com.wuye.points.dto.auth.TokenResponse;
 import com.wuye.points.dto.auth.WechatLoginRequest;
 import com.wuye.points.entity.Community;
+import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.JwtUtil;
 import com.wuye.points.util.PhoneUtil;
+import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import cn.hutool.crypto.digest.BCrypt;
 import io.jsonwebtoken.Claims;
@@ -44,6 +47,7 @@ public class AuthService {
     private final ResidentRepository residentRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final CommunityRepository communityRepository;
+    private final BuildingLeaderRepository buildingLeaderRepository;
     private final JwtUtil jwtUtil;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -84,7 +88,7 @@ public class AuthService {
 
         assertAccountActive(resident);
 
-        String role = resident.getRole();
+        String role = RoleGuard.normalizeRole(resident.getRole());
         if ("resident".equals(role) || "tenant".equals(role)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "该账号无管理端登录权限");
         }
@@ -139,7 +143,7 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public ProfileResponse getProfile() {
-        String role = UserContext.currentRole();
+        String role = RoleGuard.normalizeRole(UserContext.currentRole());
         if (role == null || !PROFILE_ROLES.contains(role)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED);
         }
@@ -250,6 +254,7 @@ public class AuthService {
     }
 
     private ResidentAuthSummaryResponse toAuthSummary(Resident resident, boolean newUser) {
+        BuildingLeader leader = findActiveBuildingLeader(resident);
         return ResidentAuthSummaryResponse.builder()
                 .id(resident.getId())
                 .name(resident.getName())
@@ -260,12 +265,14 @@ public class AuthService {
                 .communityId(resident.getCommunityId())
                 .familyId(resident.getFamilyId())
                 .wechatBound(Boolean.TRUE.equals(resident.getWechatBound()))
+                .isBuildingLeader(leader != null)
                 .newUser(newUser)
                 .status(resident.getStatus())
                 .build();
     }
 
     private ProfileResponse toProfile(Resident resident, String propertyName, String communityName) {
+        BuildingLeader leader = findActiveBuildingLeader(resident);
         return ProfileResponse.builder()
                 .id(resident.getId())
                 .openid(resident.getOpenid())
@@ -292,10 +299,26 @@ public class AuthService {
                 .coinFrozen(Boolean.TRUE.equals(resident.getCoinFrozen()))
                 .coinHidden(Boolean.TRUE.equals(resident.getCoinHidden()))
                 .wechatBound(Boolean.TRUE.equals(resident.getWechatBound()))
+                .isBuildingLeader(leader != null)
+                .buildingLeaderId(leader != null ? leader.getId() : null)
                 .status(resident.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(resident.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(resident.getUpdatedAt()))
                 .build();
+    }
+
+    /**
+     * 楼长身份为「住户 + 楼长」复合身份：住户 role 保持 resident，
+     * 是否楼长由 building_leaders 表存在 active 记录判定。
+     */
+    private BuildingLeader findActiveBuildingLeader(Resident resident) {
+        if (!StringUtils.hasText(resident.getPropertyCompanyId())) {
+            return null;
+        }
+        return buildingLeaderRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                        resident.getId(), resident.getPropertyCompanyId(), "active")
+                .orElse(null);
     }
 
     private void requireRole(String... allowedRoles) {

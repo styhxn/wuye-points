@@ -99,6 +99,33 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
             """)
     BigDecimal sumIndividualLeaderShareByIndividualLeaderId(@Param("individualLeaderId") String individualLeaderId);
 
+    org.springframework.data.domain.Page<DistributionRecord> findByBuildingLeaderIdOrderByCreatedAtDesc(
+            String buildingLeaderId, org.springframework.data.domain.Pageable pageable);
+
+    @Query("""
+            SELECT COALESCE(SUM(d.buildingLeaderShare), 0) FROM DistributionRecord d
+            WHERE d.buildingLeaderId = :buildingLeaderId
+            """)
+    BigDecimal sumBuildingLeaderShareByBuildingLeaderId(@Param("buildingLeaderId") String buildingLeaderId);
+
+    @Query("""
+            SELECT d.buildingLeaderId, COALESCE(SUM(d.buildingLeaderShare), 0)
+            FROM DistributionRecord d
+            WHERE d.buildingLeaderId IN :buildingLeaderIds
+            GROUP BY d.buildingLeaderId
+            """)
+    List<Object[]> sumBuildingLeaderShareGrouped(@Param("buildingLeaderIds") java.util.Collection<String> buildingLeaderIds);
+
+    @Query("""
+            SELECT COALESCE(SUM(d.buildingLeaderShare), 0) FROM DistributionRecord d
+            WHERE (:propertyCompanyId IS NULL OR d.propertyCompanyId = :propertyCompanyId)
+              AND (:startDate IS NULL OR d.createdAt >= :startDate)
+              AND (:endDate IS NULL OR d.createdAt < :endDate)
+            """)
+    BigDecimal sumBuildingLeaderShare(@Param("propertyCompanyId") String propertyCompanyId,
+                                      @Param("startDate") LocalDateTime startDate,
+                                      @Param("endDate") LocalDateTime endDate);
+
     @Query("SELECT COALESCE(SUM(d.totalAmount - " +
            "(CASE WHEN d.propertyShare IS NULL THEN 0 ELSE d.propertyShare END) - " +
            "(CASE WHEN d.coordinatorShare IS NULL THEN 0 ELSE d.coordinatorShare END) - " +

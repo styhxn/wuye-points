@@ -90,4 +90,7 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
     List<Order> findByOrderStatusAndFreezeEndDateBefore(String orderStatus, LocalDateTime deadline);
 
     List<Order> findByFulfillmentModeAndFulfillmentDeadlineBefore(String fulfillmentMode, LocalDateTime deadline);
+
+    /** 超期自动确认收货：已送达且超过售后窗口期仍处于 delivering 的订单 */
+    List<Order> findByOrderStatusAndDeliveredAtBefore(String orderStatus, LocalDateTime cutoff);
 }

@@ -31,4 +31,7 @@ public class BookServiceRequest {
 
     @Schema(description = "使用物业币（mixed时可选）", example = "30")
     private java.math.BigDecimal coinUsed;
+
+    @Schema(description = "用户openid（paymentMethod=wechat/mixed 时使用；不传则取用户绑定openid）", example = "oGX3Z5Xx...")
+    private String openid;
 }

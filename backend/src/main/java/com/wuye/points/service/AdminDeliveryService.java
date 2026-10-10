@@ -1,9 +1,11 @@
 package com.wuye.points.service;
 
+import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.delivery.AdminDeliveryOverviewResponse;
 import com.wuye.points.dto.delivery.AdminDeliveryOverviewResponse.CourierItem;
 import com.wuye.points.dto.delivery.AdminDeliveryOverviewResponse.RecentDelivery;
 import com.wuye.points.dto.delivery.AdminDeliveryOverviewResponse.TodayStats;
+import com.wuye.points.dto.delivery.CourierOptionResponse;
 import com.wuye.points.dto.delivery.DeliveryCapacityResponse;
 import com.wuye.points.entity.Delivery;
 import com.wuye.points.entity.Order;
@@ -42,6 +44,14 @@ public class AdminDeliveryService {
     private final OrderRepository orderRepository;
     private final AdminSupport adminSupport;
     private final RoleGuard roleGuard;
+    private final DeliveryService deliveryService;
+
+    @Transactional(readOnly = true)
+    public PageResponse<CourierOptionResponse> listCouriers(
+            String requestedPropertyCompanyId, int page, int pageSize) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        return deliveryService.listCouriers(page, pageSize, requestedPropertyCompanyId);
+    }
 
     @Transactional(readOnly = true)
     public AdminDeliveryOverviewResponse getOverview(String requestedPropertyCompanyId) {

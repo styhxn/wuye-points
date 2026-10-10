@@ -4,6 +4,7 @@ import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.rolewithdrawal.ApplyRoleWithdrawalRequest;
 import com.wuye.points.dto.rolewithdrawal.RoleWithdrawalItemResponse;
+import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.CourierManager;
 import com.wuye.points.entity.IndividualLeader;
@@ -13,11 +14,13 @@ import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.entity.WithdrawalRecord;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.CourierManagerRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.ResidentMerchantSettlementRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
@@ -53,6 +56,8 @@ public class RoleWithdrawalService {
     private static final String WITHDRAWAL_TYPE_COURIER = "courier";
     private static final String WITHDRAWAL_TYPE_COORDINATOR = "coordinator";
     private static final String WITHDRAWAL_TYPE_SECTOR_LEADER = "sector_leader";
+    private static final String WITHDRAWAL_TYPE_BUILDING_LEADER = "building_leader";
+    private static final String WITHDRAWAL_TYPE_RESIDENT_SELLER = "resident_seller";
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
@@ -61,7 +66,9 @@ public class RoleWithdrawalService {
     private final CourierManagerRepository courierManagerRepository;
     private final CoordinatorRepository coordinatorRepository;
     private final SectorLeaderRepository sectorLeaderRepository;
+    private final BuildingLeaderRepository buildingLeaderRepository;
     private final DistributionRecordRepository distributionRecordRepository;
+    private final ResidentMerchantSettlementRepository settlementRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
     private final WithdrawableService withdrawableService;
@@ -227,6 +234,93 @@ public class RoleWithdrawalService {
                 current.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
     }
 
+    // ============== 单元楼长提现 ==============
+
+    @Transactional
+    public RoleWithdrawalItemResponse applyForBuildingLeader(
+            String buildingLeaderId, ApplyRoleWithdrawalRequest request) {
+        roleGuard.requireAnyRole("resident");
+        BuildingLeader current = getCurrentBuildingLeader();
+        if (!current.getId().equals(buildingLeaderId)) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他楼长");
+        }
+        assertNotBlocked(current.getResidentId());
+
+        BigDecimal earned = defaultDecimal(distributionRecordRepository
+                .sumBuildingLeaderShareByBuildingLeaderId(current.getId()));
+        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
+                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, null));
+        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        if (request.getAmount().compareTo(withdrawable) > 0) {
+            throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
+        }
+
+        return buildAndSave(current.getId(), current.getResidentId(), current.getPropertyCompanyId(),
+                WITHDRAWAL_TYPE_BUILDING_LEADER, request.getAmount());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RoleWithdrawalItemResponse> listForBuildingLeader(
+            String buildingLeaderId,
+            int page,
+            int pageSize,
+            String auditStatus,
+            String startDate,
+            String endDate) {
+        roleGuard.requireAnyRole("resident");
+        BuildingLeader current = getCurrentBuildingLeader();
+        if (!current.getId().equals(buildingLeaderId)) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他楼长");
+        }
+        return listByType(WITHDRAWAL_TYPE_BUILDING_LEADER, current.getId(),
+                current.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
+    }
+
+    // ============== 业主卖货钱包提现 ==============
+
+    /**
+     * 业主卖货钱包提现申请：可提现余额 = 累计卖货收益（reseller_profit）− 已占用提现。
+     * 钱包金额仅可用于提现，不可消费。
+     */
+    @Transactional
+    public RoleWithdrawalItemResponse applyForResidentSeller(ApplyRoleWithdrawalRequest request) {
+        roleGuard.requireAnyRole("resident");
+        String residentId = UserContext.currentUserId();
+        assertNotBlocked(residentId);
+
+        Resident resident = residentRepository.findById(residentId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!StringUtils.hasText(resident.getPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND);
+        }
+
+        BigDecimal earned = defaultDecimal(settlementRepository.sumResellerProfitByResidentId(residentId));
+        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
+                .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, null));
+        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        if (request.getAmount().compareTo(withdrawable) > 0) {
+            throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
+        }
+
+        return buildAndSave(residentId, residentId, resident.getPropertyCompanyId(),
+                WITHDRAWAL_TYPE_RESIDENT_SELLER, request.getAmount());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RoleWithdrawalItemResponse> listForResidentSeller(
+            int page,
+            int pageSize,
+            String auditStatus,
+            String startDate,
+            String endDate) {
+        roleGuard.requireAnyRole("resident");
+        String residentId = UserContext.currentUserId();
+        Resident resident = residentRepository.findById(residentId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        return listByType(WITHDRAWAL_TYPE_RESIDENT_SELLER, residentId,
+                resident.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
+    }
+
     // ============== 快递员提现 ==============
 
     @Transactional
@@ -299,6 +393,14 @@ public class RoleWithdrawalService {
         return coordinatorRepository
                 .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(userId, propertyCompanyId, "active")
                 .orElseThrow(() -> new BizException(ErrorCode.COORDINATOR_NOT_FOUND, "当前用户不是统筹"));
+    }
+
+    private BuildingLeader getCurrentBuildingLeader() {
+        String userId = UserContext.currentUserId();
+        String propertyCompanyId = UserContext.currentPropertyCompanyId();
+        return buildingLeaderRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(userId, propertyCompanyId, "active")
+                .orElseThrow(() -> new BizException(ErrorCode.BUILDING_LEADER_NOT_FOUND, "当前用户不是楼长"));
     }
 
     private SectorLeader getCurrentSectorLeader() {

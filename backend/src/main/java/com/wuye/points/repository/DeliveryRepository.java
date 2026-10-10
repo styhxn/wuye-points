@@ -25,6 +25,8 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
 
     Optional<Delivery> findByOrderIdAndPropertyCompanyId(String orderId, String propertyCompanyId);
 
+    List<Delivery> findByOrderIdIn(java.util.Collection<String> orderIds);
+
     @Query("""
             SELECT d FROM Delivery d
             WHERE d.status = 'pending' AND d.createdAt < :cutoff
@@ -37,13 +39,15 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
                 d.courierId = :courierId,
                 d.status = 'accepted',
                 d.acceptedAt = :acceptedAt,
-                d.courierEarning = :courierEarning
+                d.courierEarning = :courierEarning,
+                d.platformEarning = :platformEarning
             WHERE d.id = :id AND d.status = 'pending'
             """)
     int grabIfPending(@Param("id") String id,
                       @Param("courierId") String courierId,
                       @Param("acceptedAt") LocalDateTime acceptedAt,
-                      @Param("courierEarning") BigDecimal courierEarning);
+                      @Param("courierEarning") BigDecimal courierEarning,
+                      @Param("platformEarning") BigDecimal platformEarning);
 
     long countByPropertyCompanyIdAndCreatedAtBetween(
             String propertyCompanyId, LocalDateTime start, LocalDateTime end);
@@ -57,7 +61,7 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
     long countByCourierIdAndStatusAndDeliveredAtBetween(
             String courierId, String status, LocalDateTime start, LocalDateTime end);
 
-    @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d WHERE d.courierId = :courierId AND d.status = 'delivered' AND d.deliveredAt >= :start AND d.deliveredAt < :end")
+    @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d WHERE d.courierId = :courierId AND d.status = 'completed' AND d.deliveredAt >= :start AND d.deliveredAt < :end")
     BigDecimal sumCourierEarningByCourierIdAndDeliveredAtBetween(
             @Param("courierId") String courierId,
             @Param("start") LocalDateTime start,
@@ -73,7 +77,7 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
             String propertyCompanyId, LocalDateTime start, LocalDateTime end);
 
     @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d " +
-           "WHERE d.courierId IN :courierIds AND d.status = 'delivered'")
+           "WHERE d.courierId IN :courierIds AND d.status = 'completed'")
     BigDecimal sumDeliveredEarningByCourierIds(@Param("courierIds") List<String> courierIds);
 
     @Query("SELECT COALESCE(SUM(d.platformEarning), 0) FROM Delivery d " +

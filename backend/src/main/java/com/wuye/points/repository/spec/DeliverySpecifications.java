@@ -47,13 +47,15 @@ public final class DeliverySpecifications {
     }
 
     /**
-     * 待抢单（v6.6）：匹配两类订单的 {@code pending} 配送单
-     * <ol>
-     *   <li>{@code order.orderStatus = paid}：已支付，商家尚未选择履约方式；</li>
-     *   <li>{@code order.orderStatus = delivering AND order.fulfillmentMode = courier_hall}：
-     *       商家已选择平台配送，等待骑手抢单。</li>
-     * </ol>
-     * 同时排除商家自配单（{@code carrier_type = merchant}）。
+     * 待抢单：仅匹配「商家已选择平台配送」的 {@code pending} 配送单。
+     *
+     * <p>条件：{@code order.orderStatus = delivering AND order.fulfillmentMode = courier_hall}，
+     * 即商家已选择 {@code courier_hall} 或超时兜底后生成的配送单，等待骑手抢单。
+     *
+     * <p>支付后仍处于 {@code pending_choice}（{@code order_status = paid}）的订单<b>不</b>进入待抢大厅：
+     * 该阶段尚未生成配送单，须等商家选择后再发布，避免「商家选择自配 / 发布抢单大厅」形同虚设。
+     *
+     * <p>同时排除商家自配单（{@code carrier_type = merchant}）。
      */
     public static Specification<Delivery> pendingPaidOrders(String propertyCompanyId, String communityId) {
         return (root, query, cb) -> {
@@ -78,11 +80,9 @@ public final class DeliverySpecifications {
         Subquery<String> subquery = query.subquery(String.class);
         Root<Order> orderRoot = subquery.from(Order.class);
         subquery.select(orderRoot.get("id"));
-        subquery.where(cb.or(
-                cb.equal(orderRoot.get("orderStatus"), "paid"),
-                cb.and(
-                        cb.equal(orderRoot.get("orderStatus"), "delivering"),
-                        cb.equal(orderRoot.get("fulfillmentMode"), "courier_hall"))));
+        subquery.where(
+                cb.equal(orderRoot.get("orderStatus"), "delivering"),
+                cb.equal(orderRoot.get("fulfillmentMode"), "courier_hall"));
         return subquery;
     }
 

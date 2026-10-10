@@ -11,7 +11,6 @@ import java.math.RoundingMode;
 import java.security.PublicKey;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 微信官方「普通分账 / profit sharing」API 封装（/{@code v3/profitsharing/*}）。
@@ -117,14 +116,11 @@ public class WechatSplitApiService {
     }
 
     /**
-     * 微信提现（applycash）。真实字段（接收方结算卡 / 微信账户、cash_type 等）待微信提供参数与测试环境后补全，
-     * 当前抛异常由 {@code AutoWithdrawalService} 捕获并回退人工凭证流程。
+     * 微信提现（applycash）未对接：真实字段（接收方结算卡 / 微信账户、cash_type 等）依赖微信提供参数与测试环境。
+     * 原 {@code applyCash} 占位方法与唯一调用方 {@code AutoWithdrawalService} 均无实际资金链路，
+     * 已一并移除，避免「看起来已接入提现」的误导。Path B 自动提现实际走
+     * {@code WechatSplitService#maybeAutoWithdraw}（电商收付通商家转账）。
      */
-    public Map<String, Object> applyCash(Map<String, Object> biz) {
-        throw new WechatPayException("WECHAT_APICASH_NOT_IMPL",
-                "微信提现(applycash)待对接真实参数，暂不可用", JSONUtil.toJsonStr(biz));
-    }
-
     private static String resolveReceiverType(String account) {
         if (account == null) {
             return "PERSONAL_OPENID";

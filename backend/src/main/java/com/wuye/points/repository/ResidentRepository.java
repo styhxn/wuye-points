@@ -2,6 +2,8 @@ package com.wuye.points.repository;
 
 import com.wuye.points.entity.Resident;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
@@ -31,6 +33,8 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
     long countByPropertyCompanyId(String propertyCompanyId);
 
     List<Resident> findByPropertyCompanyIdAndRole(String propertyCompanyId, String role);
+
+    Page<Resident> findByPropertyCompanyIdAndRole(String propertyCompanyId, String role, Pageable pageable);
 
     Optional<Resident> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 

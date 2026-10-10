@@ -4,15 +4,21 @@ import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.coinwithdrawal.AuditCoinWithdrawalRequest;
 import com.wuye.points.dto.admin.coinwithdrawal.AuditCoinWithdrawalResponse;
 import com.wuye.points.dto.admin.coinwithdrawal.CoinWithdrawalListItemResponse;
+import com.wuye.points.dto.admin.coinwithdrawal.CoinWithdrawalSummaryResponse;
+import com.wuye.points.dto.coinwithdrawal.BlockWithdrawalRequest;
+import com.wuye.points.dto.coinwithdrawal.UpdateWithdrawalSettingsRequest;
+import com.wuye.points.dto.coinwithdrawal.WithdrawalSettingsResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.CoinWithdrawal;
 import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.CoinType;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.CoinWithdrawalRepository;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.CoinWithdrawalSpecifications;
 import com.wuye.points.util.AdminSupport;
@@ -25,6 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -39,14 +46,17 @@ public class AdminCoinWithdrawalService {
 
     private static final Set<String> AUDIT_RESULTS = Set.of("approved", "rejected", "completed");
     private static final Set<String> AUDIT_STATUS = Set.of("pending", "approved", "rejected", "completed");
+    private static final int DEFAULT_AUTO_WITHDRAWAL_PERIOD_DAYS = 7;
 
     private final CoinWithdrawalRepository coinWithdrawalRepository;
     private final MerchantRepository merchantRepository;
     private final ResidentRepository residentRepository;
+    private final PropertyCompanyRepository propertyCompanyRepository;
     private final PropertyCoinService propertyCoinService;
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final OperationLogService operationLogService;
+    private final PlatformSettingService platformSetting;
 
     @Transactional(readOnly = true)
     public PageResponse<CoinWithdrawalListItemResponse> listWithdrawals(
@@ -133,6 +143,109 @@ public class AdminCoinWithdrawalService {
                 .auditedAt(DateTimeUtil.nowIsoUtc())
                 .auditorId(UserContext.currentUserId())
                 .build();
+    }
+
+    @Transactional(readOnly = true)
+    public CoinWithdrawalSummaryResponse getSummary(String propertyCompanyId) {
+        permissionGuard.requirePermission("coin.audit");
+        String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        LocalDateTime todayEnd = LocalDate.now().plusDays(1).atStartOfDay();
+
+        return CoinWithdrawalSummaryResponse.builder()
+                .pendingCount(coinWithdrawalRepository.countByStatuses(
+                        scopedPropertyCompanyId, List.of("pending")))
+                .pendingAmount(nz(coinWithdrawalRepository.sumActualAmountByStatuses(
+                        scopedPropertyCompanyId, List.of("pending"))))
+                .todayCompletedCount(coinWithdrawalRepository.countCompletedBetween(
+                        scopedPropertyCompanyId, todayStart, todayEnd))
+                .todayCompletedAmount(nz(coinWithdrawalRepository.sumCompletedBetween(
+                        scopedPropertyCompanyId, todayStart, todayEnd)))
+                .approvedCount(coinWithdrawalRepository.countByStatuses(
+                        scopedPropertyCompanyId, List.of("approved", "completed")))
+                .approvedAmount(nz(coinWithdrawalRepository.sumActualAmountByStatuses(
+                        scopedPropertyCompanyId, List.of("approved", "completed"))))
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public WithdrawalSettingsResponse getSettings(String propertyCompanyId) {
+        permissionGuard.requirePermission("coin.audit");
+        String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+        if (!StringUtils.hasText(scopedPropertyCompanyId)) {
+            return WithdrawalSettingsResponse.builder()
+                    .propertyCompanyId(null)
+                    .autoEnabled(false)
+                    .periodDays(DEFAULT_AUTO_WITHDRAWAL_PERIOD_DAYS)
+                    .feeRate(platformSetting.resolveWithdrawalFeeRate(
+                            null, PlatformSettingService.FEE_CATEGORY_PROPERTY))
+                    .build();
+        }
+        PropertyCompany company = propertyCompanyRepository.findById(scopedPropertyCompanyId)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+        return WithdrawalSettingsResponse.builder()
+                .propertyCompanyId(company.getId())
+                .autoEnabled(Boolean.TRUE.equals(company.getAutoWithdrawalEnabled()))
+                .periodDays(company.getAutoWithdrawalPeriodDays() != null
+                        ? company.getAutoWithdrawalPeriodDays() : DEFAULT_AUTO_WITHDRAWAL_PERIOD_DAYS)
+                .feeRate(platformSetting.resolveWithdrawalFeeRate(
+                        company.getWithdrawalFeeRate(), PlatformSettingService.FEE_CATEGORY_PROPERTY))
+                .build();
+    }
+
+    @Transactional
+    public WithdrawalSettingsResponse updateSettings(String propertyCompanyId, UpdateWithdrawalSettingsRequest request) {
+        permissionGuard.requirePermission("coin.audit");
+        String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+        if (!StringUtils.hasText(scopedPropertyCompanyId)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "propertyCompanyId不能为空");
+        }
+        PropertyCompany company = propertyCompanyRepository.findById(scopedPropertyCompanyId)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+        company.setAutoWithdrawalEnabled(request.getAutoEnabled());
+        company.setAutoWithdrawalPeriodDays(request.getPeriodDays());
+        propertyCompanyRepository.save(company);
+        operationLogService.log("property_company", "update_withdrawal_settings",
+                "property_company", company.getId(), null, request);
+        return WithdrawalSettingsResponse.builder()
+                .propertyCompanyId(company.getId())
+                .autoEnabled(Boolean.TRUE.equals(company.getAutoWithdrawalEnabled()))
+                .periodDays(company.getAutoWithdrawalPeriodDays())
+                .feeRate(platformSetting.resolveWithdrawalFeeRate(
+                        company.getWithdrawalFeeRate(), PlatformSettingService.FEE_CATEGORY_PROPERTY))
+                .build();
+    }
+
+    /** 阻止/解阻止居民（住户）提现（§80.3），仅影响其提现资格，不影响其他功能。 */
+    @Transactional
+    public void blockResident(String residentId, BlockWithdrawalRequest request) {
+        permissionGuard.requirePermission("coin.audit");
+        adminSupport.validateIdPrefix(residentId, "res");
+        Resident resident = residentRepository.findById(residentId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        adminSupport.assertSameProperty(resident.getPropertyCompanyId());
+        resident.setWithdrawalBlocked(request.getBlocked());
+        residentRepository.save(resident);
+        operationLogService.log("resident", request.getBlocked() ? "block_withdrawal" : "unblock_withdrawal",
+                "resident", residentId, null, request);
+    }
+
+    /** 阻止/解阻止商家提现（§80.4），仅影响其提现资格，不影响其他功能。 */
+    @Transactional
+    public void blockMerchant(String merchantId, BlockWithdrawalRequest request) {
+        permissionGuard.requirePermission("coin.audit");
+        adminSupport.validateIdPrefix(merchantId, "mch");
+        Merchant merchant = merchantRepository.findById(merchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        adminSupport.assertSameProperty(merchant.getPropertyCompanyId());
+        merchant.setWithdrawalBlocked(request.getBlocked());
+        merchantRepository.save(merchant);
+        operationLogService.log("merchant", request.getBlocked() ? "block_withdrawal" : "unblock_withdrawal",
+                "merchant", merchantId, null, request);
+    }
+
+    private BigDecimal nz(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     private void refundCoins(CoinWithdrawal withdrawal) {

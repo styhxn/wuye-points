@@ -55,4 +55,7 @@ public class TargetedMerchantAdRequest {
             requiredMode = Schema.RequiredMode.REQUIRED, example = "coin",
             allowableValues = {"free", "coin", "point", "wechat", "mock"})
     private String paymentMethod;
+
+    @Schema(description = "用户openid（paymentMethod=wechat 时使用；不传则取用户绑定openid）", example = "oGX3Z5Xx...")
+    private String openid;
 }

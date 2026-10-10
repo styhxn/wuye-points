@@ -62,6 +62,9 @@ public class DistributionRecordItemResponse {
     @Schema(description = "个人负责人份额", example = "92.00")
     private BigDecimal individualLeaderShare;
 
+    @Schema(description = "单元楼长份额（从物业公司分成中扣除）", example = "46.00")
+    private BigDecimal buildingLeaderShare;
+
     @Schema(description = "协调员ID", example = "coord_abc123")
     private String coordinatorId;
 
@@ -80,6 +83,94 @@ public class DistributionRecordItemResponse {
     @Schema(description = "个人负责人姓名", example = "赵六")
     private String individualLeaderName;
 
+    @Schema(description = "单元楼长ID", example = "bl_abc123")
+    private String buildingLeaderId;
+
+    @Schema(description = "单元楼长姓名", example = "钱七")
+    private String buildingLeaderName;
+
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;
+
+    // ---------- 规范§21.1 商品分账链补充字段 ----------
+
+    @Schema(description = "商品金额（不含配送费，已扣优惠券）", example = "100.00")
+    private BigDecimal productAmount;
+
+    @Schema(description = "抽佣基础额 = 商品金额 × 抽佣率", example = "10.00")
+    private BigDecimal commissionBaseAmount;
+
+    @Schema(description = "兼容旧字段，等价于 commissionBaseAmount", example = "10.00")
+    private BigDecimal productCommission;
+
+    @Schema(description = "商品实付 = 商品金额 − 积分成本 − 物业币成本", example = "100.00")
+    private BigDecimal productBase;
+
+    @Schema(description = "成本击穿差额", example = "0.00")
+    private BigDecimal deficitAmount;
+
+    @Schema(description = "击穿差额承担方，默认 property", example = "property")
+    private String deficitSponsor;
+
+    @Schema(description = "公司平台盘比例快照", example = "0.1000")
+    private BigDecimal platformShareRate;
+
+    @Schema(description = "公司商品平台盘收入", example = "1.00")
+    private BigDecimal platformShare;
+
+    @Schema(description = "管理盘 = 平台盘 − 平台 − 物业", example = "2.99")
+    private BigDecimal managementPoolAmount;
+
+    @Schema(description = "板块毛额 = 管理盘 × sectorLeaderRate", example = "1.79")
+    private BigDecimal sectorGrossAmount;
+
+    // ---------- 规范§21.1 配送分账链补充字段 ----------
+
+    @Schema(description = "满额减免前基础配送费", example = "10.00")
+    private BigDecimal originalDeliveryFee;
+
+    @Schema(description = "实付配送费", example = "10.00")
+    private BigDecimal deliveryFee;
+
+    @Schema(description = "兼容旧字段，等价于 deliveryFee", example = "10.00")
+    private BigDecimal effectiveDeliveryFee;
+
+    @Schema(description = "满额减免金额", example = "0.00")
+    private BigDecimal deliveryWaiverAmount;
+
+    @Schema(description = "减免承担方 none/merchant/property/platform", example = "none")
+    private String deliverySubsidySponsor;
+
+    @Schema(description = "配送补贴金额", example = "0.00")
+    private BigDecimal deliverySubsidyAmount;
+
+    @Schema(description = "配送结算基数 = 实付配送费 + 配送补贴", example = "10.00")
+    private BigDecimal deliverySettlementBase;
+
+    @Schema(description = "商家商品实得 = 商品金额 − 抽佣基础额", example = "90.00")
+    private BigDecimal merchantGoodsShare;
+
+    @Schema(description = "商家承担的配送补贴", example = "0.00")
+    private BigDecimal merchantDeliverySubsidy;
+
+    @Schema(description = "商家调整额（退款/补差/冲账）", example = "0.00")
+    private BigDecimal merchantAdjustmentAmount;
+
+    @Schema(description = "商家最终实得 = 商家商品实得 − 商家配送补贴 + 调整额", example = "90.00")
+    private BigDecimal merchantShare;
+
+    @Schema(description = "公司配送收入", example = "1.00")
+    private BigDecimal platformDeliveryShare;
+
+    @Schema(description = "配送员最终收入", example = "9.00")
+    private BigDecimal courierEarning;
+
+    @Schema(description = "兼容旧字段，等价于 courierEarning", example = "9.00")
+    private BigDecimal courierShare;
+
+    @Schema(description = "计算版本", example = "distribution_b_v1")
+    private String calculationVersion;
+
+    @Schema(description = "记录状态 pending/distributed/reversed/partially_reversed", example = "distributed")
+    private String status;
 }

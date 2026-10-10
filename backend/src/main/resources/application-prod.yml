@@ -1,0 +1,28 @@
+# 生产环境配置
+app:
+  wechat:
+    skip-api: false
+  payment:
+    # 生产禁用模拟支付：保证金必须经微信支付或物业线下确认收款（fail-closed，此处再显式声明一次）
+    mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:false}
+
+wechat:
+  pay:
+    # 生产默认关闭分账标识；确需分账时显式置 WECHAT_PAY_PROFIT_SHARING=true（fail-closed）
+    profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:false}
+
+# 分账链路总开关：生产默认关闭，避免「未确认业务口径即自动分账划款」
+wechat-split:
+  enabled: ${WECHAT_SPLIT_ENABLED:false}
+  auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:false}
+
+# 结构管理现状（2026-09 决策）：
+# - Flyway 暂不启用：存量生产库由 wuye_points_latest.sql 导入，与迁移脚本对不齐，启用会触发 DDL 冲突。
+# - 结构变更走「手工执行 db/migration 下编号脚本 + 部署清单」流程，ddl-auto=none 防止启动期误自动改表。
+# - 后续若要恢复 Flyway：先对存量库执行一次性 flyway baseline（版本=当前结构），再置 enabled=true。
+spring:
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: none

@@ -103,8 +103,8 @@ public class ResidentShopService {
     @Value("${app.share.base-url:https://test.yuanxusoftware.top/h5/shop}")
     private String shareBaseUrl;
 
-    /** 模拟支付开关：生产必须关闭，否则任何人可零成本获得业主商户资格。 */
-    @Value("${app.payment.mock-enabled:true}")
+    /** 模拟支付开关：生产必须关闭，否则任何人可零成本获得业主商户资格（fail-closed 默认 false）。 */
+    @Value("${app.payment.mock-enabled:false}")
     private boolean mockPayEnabled;
 
     @Transactional

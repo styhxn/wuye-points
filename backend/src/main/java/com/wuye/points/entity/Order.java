@@ -149,4 +149,24 @@ public class Order extends BaseEntity {
     /** 优惠券抵扣金额（由商家承担；佣金基数按 totalAmount - couponAmount 计算） */
     @Column(name = "coupon_amount", precision = 10, scale = 2)
     private BigDecimal couponAmount;
+
+    /** 下单时绑定的单元楼长ID（快照，订单产生即固定，后续变更楼长不影响本单） */
+    @Column(name = "building_leader_id", length = 32)
+    private String buildingLeaderId;
+
+    /** 下单时楼长分成比例快照（占物业公司分成的比例） */
+    @Column(name = "building_leader_rate", precision = 5, scale = 4)
+    private BigDecimal buildingLeaderRate;
+
+    /** 满额减免前基础配送费快照（规范§7.6：结算不得读取最新配置重算） */
+    @Column(name = "original_delivery_fee", precision = 10, scale = 2)
+    private BigDecimal originalDeliveryFee;
+
+    /** 配送费减免承担方快照：none/merchant/property/platform（规范§7.6，默认 merchant） */
+    @Column(name = "delivery_subsidy_sponsor", length = 20)
+    private String deliverySubsidySponsor;
+
+    /** 配送补贴金额快照（= 满额减免额，注入配送结算链路） */
+    @Column(name = "delivery_subsidy_amount", precision = 10, scale = 2)
+    private BigDecimal deliverySubsidyAmount;
 }

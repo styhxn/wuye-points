@@ -18,10 +18,15 @@ import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.ServiceOrder;
 import com.wuye.points.entity.ServiceSubscription;
+import com.wuye.points.enums.CoinType;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.PayChannel;
+import com.wuye.points.payment.PaymentBizType;
+import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.repository.CommunityServiceRepository;
+import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.ServiceOrderRepository;
@@ -31,6 +36,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -51,6 +57,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CommunityServiceService {
@@ -58,6 +65,8 @@ public class CommunityServiceService {
     private static final ZoneId ZONE_SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "rankOrder", "price", "name");
+    /** 重新发起预约/订阅支付时，作废超过该时长的旧 pending 单（即时重试窗口，兜底于 PendingPaymentScheduler） */
+    private static final int STALE_PENDING_MINUTES = 5;
 
     private final CommunityServiceRepository communityServiceRepository;
     private final ServiceOrderRepository serviceOrderRepository;
@@ -70,6 +79,8 @@ public class CommunityServiceService {
     private final MerchantBindingService merchantBindingService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final PayChannel wechatPayService;
 
     @Transactional(readOnly = true)
     public PageResponse<CommunityServiceListItemResponse> listServices(
@@ -186,6 +197,60 @@ public class CommunityServiceService {
             throw new BizException(ErrorCode.PARAM_INVALID, "该服务暂不可预约");
         }
 
+        PaymentBreakdown breakdown = resolvePaymentBreakdown(
+                request.getPaymentMethod(), amount, request.getPointUsed(), request.getCoinUsed(),
+                resident.getPropertyCompanyId());
+
+        // 含现金部分（wechat / mixed 有余款）：先落 pending 预约单 + 微信预下单，
+        // 回调 completeBookChannelPayment 确认后才置 confirmed。
+        // 严禁在此直接置为 confirmed——否则未收到钱也会把预约单确认（历史资损漏洞）。
+        if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return initiateBookChannelPayment(service, resident, request, amount, breakdown);
+        }
+
+        // 纯积分 / 物业币：同步抵扣并确认
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务预约");
+        ServiceOrder order = buildServiceOrder(service, resident, request, amount, "confirmed");
+        serviceOrderRepository.save(order);
+        return toOrderDetail(order, service, resident, loadProvider(service.getProviderId()));
+    }
+
+    /**
+     * 含现金部分的服务预约：先以 pending 落库（积分/物业币部分当场抵扣），再发起微信预下单。
+     * 微信回调 {@link #completeBookChannelPayment(PaymentRecord)} 确认后才置 confirmed。
+     * fail-closed：微信支付未配置直接拒绝，绝不回退为「直接确认」。
+     */
+    private ServiceOrderDetailResponse initiateBookChannelPayment(CommunityService service, Resident resident,
+                                                                 BookServiceRequest request, BigDecimal amount,
+                                                                 PaymentBreakdown breakdown) {
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
+        }
+        closeStalePendingOrders(service.getId(), resident.getId());
+        if (!serviceOrderRepository.findByServiceIdAndResidentIdAndOrderStatus(
+                service.getId(), resident.getId(), "pending").isEmpty()) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "预约支付处理中，请勿重复提交");
+        }
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务预约");
+        ServiceOrder order = buildServiceOrder(service, resident, request, amount, "pending");
+        serviceOrderRepository.save(order);
+
+        String openId = resolveOpenId(request.getOpenid(), resident);
+        PaymentRecord record = wechatPayService.createIntent(
+                PaymentBizType.SERVICE_ORDER, order.getId(), resident.getId(),
+                resident.getPropertyCompanyId(), request.getPaymentMethod(), amount,
+                breakdown.pointUsed(), breakdown.coinUsed(), breakdown.cashAmount());
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "服务预约");
+
+        ServiceOrderDetailResponse response =
+                toOrderDetail(order, service, resident, loadProvider(service.getProviderId()));
+        response.setPaymentRecordId(record.getId());
+        response.setPayParams(payParams);
+        return response;
+    }
+
+    private ServiceOrder buildServiceOrder(CommunityService service, Resident resident,
+                                           BookServiceRequest request, BigDecimal amount, String orderStatus) {
         ServiceOrder order = new ServiceOrder();
         order.setId(idGenerator.generateId("so"));
         order.setServiceId(service.getId());
@@ -198,18 +263,85 @@ public class CommunityServiceService {
         order.setAddress(request.getAddress().trim());
         order.setContactPhone(request.getContactPhone().trim());
         order.setRemark(StringUtils.hasText(request.getRemark()) ? request.getRemark().trim() : null);
-        order.setOrderStatus("pending");
+        order.setOrderStatus(orderStatus);
+        return order;
+    }
 
-        PaymentBreakdown breakdown = resolvePaymentBreakdown(
-                request.getPaymentMethod(), amount, request.getPointUsed(), request.getCoinUsed(),
-                resident.getPropertyCompanyId());
-        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务预约");
-        if (!"wechat".equals(request.getPaymentMethod()) || breakdown.cashAmount().compareTo(BigDecimal.ZERO) == 0) {
-            order.setOrderStatus("confirmed");
+    /**
+     * 作废该住户在该服务下超时未支付的 pending 预约单及其流水（含退回已抵扣的积分/物业币），
+     * 让用户可立即重新预约。兜底于 {@code PendingPaymentScheduler}（30 分钟）。
+     */
+    private void closeStalePendingOrders(String serviceId, String residentId) {
+        List<ServiceOrder> stale = serviceOrderRepository
+                .findByServiceIdAndResidentIdAndOrderStatus(serviceId, residentId, "pending").stream()
+                .filter(o -> o.getCreatedAt() != null
+                        && o.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES)))
+                .toList();
+        for (ServiceOrder order : stale) {
+            order.setOrderStatus("cancelled");
+            serviceOrderRepository.save(order);
+            closePendingRecords(PaymentBizType.SERVICE_ORDER, order.getId(), "重新发起支付，原预约单作废");
         }
+        if (!stale.isEmpty()) {
+            log.info("[服务预约] 作废超时支付预约单 serviceId={} residentId={} count={}",
+                    serviceId, residentId, stale.size());
+        }
+    }
 
-        serviceOrderRepository.save(order);
-        return toOrderDetail(order, service, resident, loadProvider(service.getProviderId()));
+    /** 关闭某业务单下的 pending 支付流水，并退回该流水快照中已抵扣的积分/物业币（幂等）。 */
+    private void closePendingRecords(String bizType, String bizId, String reason) {
+        for (PaymentRecord record : paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
+                bizType, bizId, "pending")) {
+            record.setStatus("closed");
+            record.setErrorMsg(reason);
+            paymentRecordRepository.save(record);
+            refundPendingBreakdown(record);
+        }
+    }
+
+    /**
+     * 退回某笔 pending 流水快照中已抵扣的积分/物业币（现金部分未收款，无需退）。
+     *
+     * <p>由本模块的即时重试窗口（{@link #closeStalePendingOrders}）与
+     * {@code PendingPaymentScheduler} 超时收尾共同调用，须保证幂等——调用方在退回前已将流水置 closed。
+     */
+    @Transactional
+    public void refundPendingBreakdown(PaymentRecord record) {
+        if (record == null || !StringUtils.hasText(record.getResidentId())) {
+            return;
+        }
+        int pointUsed = record.getPointUsed() != null ? record.getPointUsed() : 0;
+        BigDecimal coinUsed = record.getCoinUsed() != null ? record.getCoinUsed() : BigDecimal.ZERO;
+        if (pointUsed <= 0 && coinUsed.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        Resident resident = residentRepository.findById(record.getResidentId()).orElse(null);
+        if (resident == null) {
+            log.warn("支付超时退回积分/物业币失败：住户不存在 residentId={} recordId={}",
+                    record.getResidentId(), record.getId());
+            return;
+        }
+        if (pointUsed > 0) {
+            pointService.earnPoints(resident, pointUsed, "service_timeout_refund", record.getBizId(),
+                    "服务支付超时退回积分", null);
+        }
+        if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.earnCoins(resident, coinUsed, CoinType.earn.name(),
+                    "service_timeout_refund", record.getBizId(), "服务支付超时退回物业币", null);
+        }
+        log.info("服务支付超时退回积分/物业币 recordId={} point={} coin={}",
+                record.getId(), pointUsed, coinUsed);
+    }
+
+    /** 解析微信小程序 openid：请求显式传入优先，否则取用户绑定 openid，两者皆无则报错。 */
+    private String resolveOpenId(String requestOpenId, Resident resident) {
+        if (StringUtils.hasText(requestOpenId)) {
+            return requestOpenId;
+        }
+        if (StringUtils.hasText(resident.getOpenid())) {
+            return resident.getOpenid();
+        }
+        throw new BizException(ErrorCode.PARAM_MISSING, "openid不能为空（微信小程序支付需要）");
     }
 
     @Transactional
@@ -239,13 +371,63 @@ public class CommunityServiceService {
         PaymentBreakdown breakdown = resolvePaymentBreakdown(
                 request.getPaymentMethod(), amount, request.getPointUsed(), request.getCoinUsed(),
                 resident.getPropertyCompanyId());
-        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务订阅");
 
-        LocalDate startDate = today;
+        // 含现金部分（wechat / mixed 有余款）：先落 pending_payment 订阅 + 微信预下单，
+        // 回调 completeSubscribeChannelPayment 确认后才置 active。
+        // 严禁在此直接置为 active——否则未收到钱也会订阅生效（历史资损漏洞）。
+        if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
+            return initiateSubscribeChannelPayment(service, resident, request, amount, breakdown);
+        }
+
+        // 纯积分 / 物业币：同步抵扣并生效
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务订阅");
+        ServiceSubscription subscription = buildSubscription(service, resident, request, amount, "active");
+        serviceSubscriptionRepository.save(subscription);
+        return buildSubscribeResponse(subscription, service);
+    }
+
+    /**
+     * 含现金部分的服务订阅：先以 pending_payment 落库（积分/物业币部分当场抵扣），再发起微信预下单。
+     * 微信回调 {@link #completeSubscribeChannelPayment(PaymentRecord)} 确认后才置 active。
+     * fail-closed：微信支付未配置直接拒绝，绝不回退为「直接生效」。
+     */
+    private SubscribeServiceResponse initiateSubscribeChannelPayment(CommunityService service, Resident resident,
+                                                                     SubscribeServiceRequest request,
+                                                                     BigDecimal amount,
+                                                                     PaymentBreakdown breakdown) {
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
+        }
+        closeStalePendingSubscriptions(service.getId(), resident.getId());
+        if (serviceSubscriptionRepository.findByServiceIdAndResidentIdAndStatus(
+                service.getId(), resident.getId(), "pending_payment") != null) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "订阅支付处理中，请勿重复提交");
+        }
+        executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务订阅");
+        ServiceSubscription subscription =
+                buildSubscription(service, resident, request, amount, "pending_payment");
+        serviceSubscriptionRepository.save(subscription);
+
+        String openId = resolveOpenId(request.getOpenid(), resident);
+        PaymentRecord record = wechatPayService.createIntent(
+                PaymentBizType.SERVICE_SUBSCRIPTION, subscription.getId(), resident.getId(),
+                resident.getPropertyCompanyId(), request.getPaymentMethod(), amount,
+                breakdown.pointUsed(), breakdown.coinUsed(), breakdown.cashAmount());
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "服务订阅");
+
+        SubscribeServiceResponse response = buildSubscribeResponse(subscription, service);
+        response.setPaymentRecordId(record.getId());
+        response.setPayParams(payParams);
+        return response;
+    }
+
+    private ServiceSubscription buildSubscription(CommunityService service, Resident resident,
+                                                  SubscribeServiceRequest request, BigDecimal amount,
+                                                  String status) {
+        LocalDate startDate = LocalDate.now();
         LocalDate endDate = "yearly".equals(request.getSubType())
                 ? startDate.plusYears(1)
                 : startDate.plusMonths(1);
-
         ServiceSubscription subscription = new ServiceSubscription();
         subscription.setId(idGenerator.generateId("ss"));
         subscription.setServiceId(service.getId());
@@ -255,15 +437,18 @@ public class CommunityServiceService {
         subscription.setAmount(amount);
         subscription.setStartDate(startDate);
         subscription.setEndDate(endDate);
-        subscription.setStatus("active");
+        subscription.setStatus(status);
         subscription.setAutoRenew(Boolean.TRUE.equals(request.getAutoRenew()));
-        serviceSubscriptionRepository.save(subscription);
+        return subscription;
+    }
 
+    private SubscribeServiceResponse buildSubscribeResponse(ServiceSubscription subscription,
+                                                            CommunityService service) {
         return SubscribeServiceResponse.builder()
                 .id(subscription.getId())
                 .serviceId(service.getId())
                 .serviceName(service.getName())
-                .residentId(resident.getId())
+                .residentId(subscription.getResidentId())
                 .subType(subscription.getSubType())
                 .amount(subscription.getAmount())
                 .startDate(subscription.getStartDate().toString())
@@ -272,6 +457,25 @@ public class CommunityServiceService {
                 .status(subscription.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
                 .build();
+    }
+
+    /**
+     * 作废该住户在该服务下超时未支付的 pending_payment 订阅及其流水（含退回已抵扣的积分/物业币），
+     * 让用户可立即重新订阅。兜底于 {@code PendingPaymentScheduler}（30 分钟）。
+     */
+    private void closeStalePendingSubscriptions(String serviceId, String residentId) {
+        ServiceSubscription pending = serviceSubscriptionRepository
+                .findByServiceIdAndResidentIdAndStatus(serviceId, residentId, "pending_payment");
+        if (pending == null || pending.getCreatedAt() == null
+                || !pending.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES))) {
+            return;
+        }
+        pending.setStatus("cancelled");
+        serviceSubscriptionRepository.save(pending);
+        closePendingRecords(PaymentBizType.SERVICE_SUBSCRIPTION, pending.getId(),
+                "重新发起支付，原订阅作废");
+        log.info("[服务订阅] 作废超时支付订阅 serviceId={} residentId={} subscriptionId={}",
+                serviceId, residentId, pending.getId());
     }
 
     /**
@@ -291,19 +495,20 @@ public class CommunityServiceService {
 
     /**
      * 微信支付回调确认后服务订阅生效（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
-     * 订阅在 subscribe 时已落 active，回调仅作最终态兜底确认。
+     * 订阅在 subscribe 时以 pending_payment 落库，收到款项回调才置 active。
      */
     @Transactional
     public void completeSubscribeChannelPayment(PaymentRecord record) {
         ServiceSubscription subscription = serviceSubscriptionRepository.findById(record.getBizId())
                 .orElseThrow(() -> new BizException(ErrorCode.SERVICE_NOT_FOUND));
+        if ("active".equals(subscription.getStatus())) {
+            return; // 幂等：已生效
+        }
         if ("cancelled".equals(subscription.getStatus())) {
-            return;
+            return; // 已取消（超时收尾），不再激活
         }
-        if (!"active".equals(subscription.getStatus())) {
-            subscription.setStatus("active");
-            serviceSubscriptionRepository.save(subscription);
-        }
+        subscription.setStatus("active");
+        serviceSubscriptionRepository.save(subscription);
     }
 
     @Transactional

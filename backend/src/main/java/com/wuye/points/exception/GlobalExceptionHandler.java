@@ -1,6 +1,7 @@
 package com.wuye.points.exception;
 
 import com.wuye.points.dto.common.ApiResponse;
+import com.wuye.points.payment.WechatPayException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -113,6 +114,18 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ErrorCode.PARAM_INVALID.getCode(),
                         "数据保存失败（数据库约束冲突）: " + rootMessage));
+    }
+
+    /**
+     * 微信支付调用异常：不再落成兜底 99001，改为回传微信侧错误码/信息，便于前端与运维直接定位
+     * （如签名错误、appid/mchid 不匹配、api-v3-key 长度错误等）。
+     */
+    @ExceptionHandler(WechatPayException.class)
+    public ResponseEntity<ApiResponse<Void>> handleWechatPay(WechatPayException e) {
+        log.error("微信支付异常 code={} message={}", e.getCode(), e.getWxMessage(), e);
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiResponse.error(ErrorCode.SYSTEM_ERROR.getCode(),
+                        "微信支付失败[" + e.getCode() + "]：" + e.getWxMessage()));
     }
 
     @ExceptionHandler(Exception.class)

@@ -68,6 +68,18 @@ public class DistributionRecord extends BaseEntity {
     @Column(name = "individual_leader_id", length = 32)
     private String individualLeaderId;
 
+    /** 单元楼长分成（从物业公司分成中定向扣除） */
+    @Column(name = "building_leader_share", precision = 10, scale = 2)
+    private BigDecimal buildingLeaderShare;
+
+    /** 楼长ID（bl_） */
+    @Column(name = "building_leader_id", length = 32)
+    private String buildingLeaderId;
+
+    /** 楼长分成比例快照（占物业分成的比例） */
+    @Column(name = "building_leader_rate", precision = 5, scale = 4)
+    private BigDecimal buildingLeaderRate;
+
     /** 平台分成（金额） */
     @Column(name = "platform_share", precision = 10, scale = 2)
     private BigDecimal platformShare;

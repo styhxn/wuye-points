@@ -6,6 +6,7 @@ import com.wuye.points.dto.admin.merchantaudit.AuditMerchantWithdrawalRequest;
 import com.wuye.points.dto.admin.merchantaudit.AuditMerchantWithdrawalResponse;
 import com.wuye.points.dto.admin.merchantaudit.MerchantPointPurchaseListItemResponse;
 import com.wuye.points.dto.admin.merchantaudit.MerchantWithdrawalListItemResponse;
+import com.wuye.points.dto.admin.merchantaudit.MerchantWithdrawalSummaryResponse;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.service.AdminMerchantAuditService;
@@ -72,5 +73,14 @@ public class AdminMerchantAuditController {
             @Parameter(description = "资源ID") @PathVariable String id,
             @Valid @RequestBody AuditMerchantWithdrawalRequest request) {
         return ApiResponse.success(adminMerchantAuditService.auditWithdrawal(id, request));
+    }
+
+    @Operation(summary = "商家提现审批汇总（看板）",
+            description = "返回待审/今日已审/已通过的笔数与金额汇总。角色: property_admin, platform_admin")
+    @GetMapping("/admin/merchant-withdrawals/summary")
+    public ApiResponse<MerchantWithdrawalSummaryResponse> withdrawalSummary(
+            @Parameter(description = "物业公司ID（platform_admin 可指定，否则取当前）")
+            @RequestParam(required = false) String propertyCompanyId) {
+        return ApiResponse.success(adminMerchantAuditService.getWithdrawalSummary(propertyCompanyId));
     }
 }

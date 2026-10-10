@@ -1,5 +1,6 @@
 package com.wuye.points.dto.merchantad;
 
+import com.wuye.points.payment.WechatJsPayParams;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Data;
@@ -34,5 +35,14 @@ public class MerchantAdListItemResponse {
     @Schema(description = "支付方式: free/coin/point/wechat/mock")
     private String paymentMethod;
 
+    @Schema(description = "状态：pending_payment 待支付 / active 投放中 / cancelled 已取消")
+    private String status;
+
     private String createdAt;
+
+    @Schema(description = "支付流水ID（paymentMethod=wechat 且已预下单时返回，用于查询支付状态）")
+    private String paymentRecordId;
+
+    @Schema(description = "微信小程序调起支付参数（paymentMethod=wechat 时返回，前端原样透传 wx.requestPayment）")
+    private WechatJsPayParams payParams;
 }

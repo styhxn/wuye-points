@@ -24,6 +24,9 @@ public class ResidentAuthSummaryResponse {
     @Schema(description = "用户角色", example = "resident", allowableValues = {"resident", "property_admin", "platform_admin", "merchant", "courier", "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician"})
     private String role;
 
+    @Schema(description = "是否为单元楼长（住户子身份，role 仍为 resident）", example = "false")
+    private Boolean isBuildingLeader;
+
     @Schema(description = "物业公司ID", example = "pc_001")
     private String propertyCompanyId;
 

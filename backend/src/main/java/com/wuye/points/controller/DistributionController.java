@@ -55,16 +55,22 @@ public class DistributionController {
         return ApiResponse.success(distributionService.getStats(startDate, endDate, dimension, propertyCompanyId));
     }
 
-    @Operation(summary = "分成试算预览", description = "试算分成（预览，不落库）")
+    @Operation(summary = "分成试算预览", description = "试算分成（预览，不落库）。支持 orderId 快照试算 / merchantId 假设试算两种模式")
     @GetMapping("/distribution/calculate")
     public ApiResponse<DistributionCalculateResponse> calculatePreview(
-            @Parameter(description = "商家ID") @RequestParam String merchantId,
-            @Parameter(description = "订单总金额") @RequestParam BigDecimal totalAmount,
+            @Parameter(description = "订单ID（传入时读订单快照，忽略其它金额参数）") @RequestParam(required = false) String orderId,
+            @Parameter(description = "商家ID") @RequestParam(required = false) String merchantId,
+            @Parameter(description = "商品金额（不含配送费）") @RequestParam(required = false) BigDecimal productAmount,
+            @Parameter(description = "订单总金额（兼容旧调用 = 商品金额 + 配送费）") @RequestParam(required = false) BigDecimal totalAmount,
+            @Parameter(description = "满额减免前基础配送费") @RequestParam(required = false) BigDecimal originalDeliveryFee,
+            @Parameter(description = "实付配送费") @RequestParam(required = false) BigDecimal deliveryFee,
+            @Parameter(description = "减免承担方 none/merchant/property/platform") @RequestParam(required = false) String deliverySubsidySponsor,
             @Parameter(description = "使用积分数") @RequestParam(required = false) Integer pointUsed,
             @Parameter(description = "使用物业币数") @RequestParam(required = false) BigDecimal coinUsed,
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId) {
         return ApiResponse.success(distributionService.calculatePreview(
-                merchantId, totalAmount, pointUsed, coinUsed, propertyCompanyId));
+                orderId, merchantId, productAmount, totalAmount, originalDeliveryFee,
+                deliveryFee, deliverySubsidySponsor, pointUsed, coinUsed, propertyCompanyId));
     }
 
     @Operation(summary = "管理端分成记录", description = "分成记录查询（管理端路径，对齐 docs/03 16.11）")

@@ -16,7 +16,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -71,6 +70,9 @@ public class WechatPayService implements PayChannel {
         record.setAmount(amount);
         record.setPointUsed(pointUsed);
         record.setCoinUsed(coinUsed);
+        // payment_records.directed_balance_used 为 NOT NULL：必须显式落 0，
+        // 否则 Hibernate 静态 INSERT 写 NULL 触发「Column ... cannot be null」约束冲突。
+        record.setDirectedBalanceUsed(BigDecimal.ZERO);
         record.setCashAmount(cashAmount);
         record.setStatus("pending");
         record.setOutTradeNo(idGenerator.generateId("wxo_"));
@@ -117,10 +119,13 @@ public class WechatPayService implements PayChannel {
         body.put("notify_url", props.getNotifyUrl());
         body.put("amount", amount);
         body.put("payer", payer);
-        // 微信硬规则：需分账的订单下单时必须传 profit_sharing=true，否则后续 /v3/profitsharing 冻结会报
-        // 「非分账订单不支持分账」，导致全部分账冻结失败。
+        // 微信 APIv3 硬规则：分账标识必须放在 settle_info.profit_sharing。
+        // 顶层平铺 profit_sharing 会报 PARAM_ERROR「请求中含有未在API文档中定义的参数」；
+        // 而不带此标识，后续 /v3/profitsharing 冻结又会报「非分账订单不支持分账」，导致全部分账失败。
         if (props.isProfitSharing()) {
-            body.put("profit_sharing", true);
+            LinkedHashMap<String, Object> settleInfo = new LinkedHashMap<>();
+            settleInfo.put("profit_sharing", true);
+            body.put("settle_info", settleInfo);
         }
 
         String resp = httpClient.post(props.getGateway() + "/v3/pay/transactions/jsapi", body);
@@ -154,6 +159,12 @@ public class WechatPayService implements PayChannel {
         body.put("notify_url", props.getNotifyUrl());
         body.put("amount", amount);
         body.put("payer", payer);
+        // 服务商下单同样以 settle_info.profit_sharing 标记分账；缺失会导致后续电商分账报「非分账订单不支持分账」
+        if (props.isProfitSharing()) {
+            LinkedHashMap<String, Object> settleInfo = new LinkedHashMap<>();
+            settleInfo.put("profit_sharing", true);
+            body.put("settle_info", settleInfo);
+        }
 
         String resp = httpClient.post(props.getGateway() + "/v3/pay/partner/transactions/jsapi", body);
         String prepayId = parseField(resp, "prepay_id");
@@ -316,21 +327,6 @@ public class WechatPayService implements PayChannel {
             httpClient.post(props.getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo() + "/close", body);
         }
         record.setStatus("closed");
-        paymentRecordRepository.save(record);
-    }
-
-    @Override
-    public boolean verifyNotify(Map<String, Object> body) {
-        // 微信通道回调由 PaymentCompletionService 统一验签解密，本方法不单独使用
-        return true;
-    }
-
-    @Override
-    public void markPaidFromNotify(Map<String, Object> body, PaymentRecord record) {
-        Object transactionId = body == null ? null : body.get("transaction_id");
-        record.setChannelTradeNo(transactionId == null ? null : String.valueOf(transactionId));
-        record.setStatus("paid");
-        record.setPaidAt(LocalDateTime.now());
         paymentRecordRepository.save(record);
     }
 
