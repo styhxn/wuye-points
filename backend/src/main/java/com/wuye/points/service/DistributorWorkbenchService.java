@@ -4,6 +4,7 @@ import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.residentmerchant.CreateDistributorProductRequest;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.distributor.AdjustDistributorProductStockRequest;
+import com.wuye.points.dto.distributor.DistributorIdentityResponse;
 import com.wuye.points.dto.distributor.DistributorMyProductItemResponse;
 import com.wuye.points.dto.distributor.DistributorPickupItemResponse;
 import com.wuye.points.dto.distributor.UpdateDistributorProductRequest;
@@ -35,8 +36,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 一级经销商手机端工作台
- * 经销商 = merchantLevel=official_certified 且审核通过的商家，以当前登录商家身份操作自己的货源商品。
+ * 一级货源经销商手机端工作台
+ * 资格 = merchants.is_distributor=1（后台开通）且审核通过；已放宽，不再限定 merchant 角色。
+ * 任意已登录、且名下拥有已开通一级代理权限商家载体（merchant）的注册用户，均可操作自己的货源商品。
+ * 非商家角色的一级代理商家载体由注册入口创建（见开通逻辑）。
  */
 @Service
 @RequiredArgsConstructor
@@ -48,18 +51,57 @@ public class DistributorWorkbenchService {
     private final ResidentRepository residentRepository;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final WithdrawableService withdrawableService;
 
     /**
-     * 解析当前登录商家的一级经销商身份。
+     * 解析当前登录用户的一级代理身份：以名下商家 is_distributor=1 判定（后台开通）。
+     * 已去除 merchant 角色限制——任意已登录用户，只要其名下存在已开通一级代理且审核通过的商家载体即可。
      */
     private Merchant resolveCurrentDistributor() {
-        roleGuard.requireAnyRole("merchant");
+        // 放宽：一级代理不再限定 merchant 角色，任意已登录注册用户（其名下有 is_distributor=1 商家载体）均可操作
+        roleGuard.requireAnyRole("resident", "merchant", "courier", "technician",
+                "coordinator", "sector_leader", "individual_leader", "activity_leader",
+                "property_admin", "platform_admin", "community_admin");
         List<Merchant> merchants = merchantRepository.findByResidentId(UserContext.currentUserId());
         return merchants.stream()
-                .filter(m -> "official_certified".equals(m.getMerchantLevel()))
+                .filter(m -> Boolean.TRUE.equals(m.getIsDistributor()))
                 .filter(m -> "approved".equals(m.getAuditStatus()))
                 .findFirst()
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "当前商家不是已认证的一级经销商"));
+                .orElseThrow(() -> new BizException(ErrorCode.DISTRIBUTOR_NOT_ENABLED, "当前商家未开通一级代理权限"));
+    }
+
+    /**
+     * 当前用户一级代理身份查询：不抛 60030，未开通时返回 isDistributor=false（HTTP 200 + code 0）。
+     * 「没有一级代理身份」是正常结果，不是权限错误。
+     */
+    @Transactional(readOnly = true)
+    public DistributorIdentityResponse getMyIdentity() {
+        roleGuard.requireAnyRole("resident", "merchant", "courier", "technician",
+                "coordinator", "sector_leader", "individual_leader", "activity_leader",
+                "property_admin", "platform_admin", "community_admin");
+        String userId = UserContext.currentUserId();
+        if (userId == null) {
+            throw new BizException(ErrorCode.TOKEN_MISSING);
+        }
+        Merchant merchant = merchantRepository.findByResidentId(userId).stream()
+                .filter(m -> Boolean.TRUE.equals(m.getIsDistributor()))
+                .filter(m -> "approved".equals(m.getAuditStatus()))
+                .findFirst()
+                .orElse(null);
+        if (merchant == null) {
+            return DistributorIdentityResponse.builder().isDistributor(false).build();
+        }
+        WithdrawableService.MerchantWithdrawable w = withdrawableService.calcMerchantWithdrawable(merchant);
+        return DistributorIdentityResponse.builder()
+                .isDistributor(true)
+                .distributorMerchantId(merchant.getId())
+                .merchantName(merchant.getName())
+                .auditStatus(merchant.getAuditStatus())
+                .withdrawableAmount(w.withdrawableAmount())
+                .withdrawalBlocked(w.withdrawalBlocked())
+                .totalRevenue(w.totalRevenue())
+                .totalOrders(w.totalOrders())
+                .build();
     }
 
     @Transactional
@@ -240,7 +282,7 @@ public class DistributorWorkbenchService {
     }
 
     /**
-     * 经销商取消某业主商户的拿货：名额释放后其他业主商户可继续拿货。
+     * 经销商取消某业主商户的拿货：仅退回未卖出件数（quantity_remaining）到货源库存，已卖出部分不退。
      */
     @Transactional
     public void cancelMyPickup(String listingId) {
@@ -252,8 +294,11 @@ public class DistributorWorkbenchService {
         if (!distributor.getId().equals(product.getDistributorMerchantId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权取消其他经销商商品的拿货");
         }
-        product.setStock((product.getStock() != null ? product.getStock() : 0) + 1);
-        distributorProductRepository.save(product);
+        int remaining = listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining();
+        if (remaining > 0) {
+            product.setStock((product.getStock() != null ? product.getStock() : 0) + remaining);
+            distributorProductRepository.save(product);
+        }
         listingRepository.delete(listing);
     }
 

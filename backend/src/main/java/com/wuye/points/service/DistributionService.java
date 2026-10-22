@@ -16,6 +16,7 @@ import com.wuye.points.entity.Order;
 import com.wuye.points.entity.PointPool;
 import com.wuye.points.entity.PointPoolRecord;
 import com.wuye.points.entity.PropertyCompany;
+import com.wuye.points.entity.PropertyManager;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.exception.BizException;
@@ -31,6 +32,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PointPoolRecordRepository;
 import com.wuye.points.repository.PointPoolRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.PropertyManagerRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
 import com.wuye.points.repository.spec.DistributionSpecifications;
@@ -93,6 +95,12 @@ public class DistributionService {
     private final DistributionConverter distributionConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final PropertyManagerRepository propertyManagerRepository;
+    private final WalletFlowWriter walletFlowWriter;
+    private final WalletFlowService walletFlowService;
+
+    /** 物业经理抽成流水的钱包类型（ownerType=property_manager，ownerId=经理 residentId） */
+    private static final String ENTRY_PROPERTY_MANAGER_SHARE = "property_manager_share";
 
     @Transactional
     public DistributionRecord calculateAndSave(Order order, Resident resident, MerchantPropertyConfig config) {
@@ -106,12 +114,36 @@ public class DistributionService {
         DistributionRecord record = toRecord(order, resident, config.getCommissionRate(), breakdown);
         distributionRecordRepository.save(record);
 
+        // 物业经理抽成入账（从楼长分成中抽取，楼长落库净额；幂等键按订单+角色唯一）
+        recordManagerShareFlow(record, breakdown);
+
         if (breakdown.distributableAmount().compareTo(BigDecimal.ZERO) < 0) {
             absorbPoolDiff(resident.getPropertyCompanyId(), breakdown.distributableAmount(), order.getId());
         } else if (breakdown.propertyShare().compareTo(BigDecimal.ZERO) > 0) {
             addToPoolFromDistribution(resident.getPropertyCompanyId(), breakdown.propertyShare(), order.getId());
         }
         return record;
+    }
+
+    /**
+     * 物业经理抽成流水：经理收益 = 楼长分成毛额 × 经理比例（快照），写入经理钱包（wallet_flows）。
+     * 楼长落库的 buildingLeaderShare 已是扣除经理抽成后的净额，因此物业/统筹链路总额守恒不变。
+     */
+    private void recordManagerShareFlow(DistributionRecord record, ShareBreakdown breakdown) {
+        if (!StringUtils.hasText(breakdown.managerId())
+                || breakdown.managerShare() == null
+                || breakdown.managerShare().compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        PropertyManager manager = propertyManagerRepository.findById(breakdown.managerId()).orElse(null);
+        if (manager == null || !"active".equals(manager.getStatus())) {
+            return;
+        }
+        walletFlowWriter.write(record.getId(), record.getOrderId(), null,
+                "property_manager", manager.getResidentId(), ENTRY_PROPERTY_MANAGER_SHARE,
+                breakdown.managerShare(), "withdrawable",
+                "distribution:settle:" + record.getOrderId() + ":property_manager_share:"
+                        + manager.getResidentId(), null);
     }
 
     @Transactional
@@ -146,7 +178,31 @@ public class DistributionService {
         reversal.setIndividualLeaderId(original.getIndividualLeaderId());
         reversal.setBuildingLeaderId(original.getBuildingLeaderId());
         reversal.setBuildingLeaderRate(original.getBuildingLeaderRate());
+        reversal.setManagerId(original.getManagerId());
+        reversal.setManagerRate(original.getManagerRate());
         distributionRecordRepository.save(reversal);
+
+        // 钱包流水全主体冲正（P0-2 修复）：对原分账记录下的全部正向流水逐条取负冲回，
+        // 覆盖 merchant/platform/property/coordinator/sector_leader/individual_leader/
+        // property_manager 等所有主体。此前仅冲正物业经理一类，其余主体退款后余额不冲正，
+        // 余额口径与审计账本长期不一致；且 WalletFlowService#recordReversal 无生产调用方。
+        walletFlowService.recordReversal(orderId, original);
+    }
+
+    /** 物业经理抽成（订单快照比例）：经理收益=毛额×比例，楼长实得=毛额−经理抽成；无经理快照时全额归楼长。 */
+    private ManagerCut applyManagerCut(Order order, BigDecimal grossBuildingLeaderShare) {
+        BigDecimal rate = order.getManagerRate();
+        if (!StringUtils.hasText(order.getManagerId()) || rate == null
+                || rate.compareTo(BigDecimal.ZERO) <= 0 || rate.compareTo(BigDecimal.ONE) >= 0) {
+            return new ManagerCut(grossBuildingLeaderShare, BigDecimal.ZERO);
+        }
+        BigDecimal managerShare = money(grossBuildingLeaderShare.multiply(rate));
+        BigDecimal leaderNet = money(grossBuildingLeaderShare.subtract(managerShare));
+        return new ManagerCut(leaderNet, managerShare);
+    }
+
+    /** 经理抽成结果：楼长净额 + 经理抽成 */
+    private record ManagerCut(BigDecimal leaderNet, BigDecimal managerShare) {
     }
 
     @Transactional(readOnly = true)
@@ -161,7 +217,7 @@ public class DistributionService {
             String propertyCompanyId,
             String startDate,
             String endDate) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "platform_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin", "platform_admin");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -218,7 +274,7 @@ public class DistributionService {
             String endDate,
             String dimension,
             String propertyCompanyId) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "platform_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin", "platform_admin");
 
         String scopedPropertyCompanyId = resolveScopedPropertyCompanyId(propertyCompanyId);
         LocalDateTime start = parseIsoDate(startDate);
@@ -362,7 +418,7 @@ public class DistributionService {
                 .build();
     }
 
-    /** 模式②：按住户当前「小区 + 楼栋」解析启用中的楼长（仅预览；正式以订单快照为准） */
+    /** 模式②：按住户当前「小区 + 单元」解析启用中的楼长（仅预览；正式以订单快照为准） */
     private BuildingLeaderSection resolvePreviewBuildingLeader() {
         String userId = UserContext.currentUserId();
         if (!StringUtils.hasText(userId)) {
@@ -378,14 +434,14 @@ public class DistributionService {
                 .orElseGet(() -> new BuildingLeaderSection(null, BigDecimal.ZERO));
     }
 
-    /** 按住户当前所属「小区 + 楼栋」解析启用中的楼长（仅用于预览，正式以订单快照为准） */
+    /** 按住户当前所属「小区 + 单元」解析启用中的楼长（仅用于预览，正式以订单快照为准） */
     private BuildingLeader resolveActiveBuildingLeader(Resident resident) {
-        if (!StringUtils.hasText(resident.getCommunityId()) || !StringUtils.hasText(resident.getBuilding())) {
+        if (!StringUtils.hasText(resident.getCommunityId()) || !StringUtils.hasText(resident.getUnit())) {
             return null;
         }
         return buildingLeaderRepository
-                .findFirstByCommunityIdAndBuildingAndStatusOrderByCreatedAtDesc(
-                        resident.getCommunityId(), resident.getBuilding(), "active")
+                .findFirstByCommunityIdAndUnitAndStatusOrderByCreatedAtDesc(
+                        resident.getCommunityId(), resident.getUnit(), "active")
                 .orElse(null);
     }
 
@@ -423,7 +479,8 @@ public class DistributionService {
                     commissionBaseAmount, deficitAmount,
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                    null, null, null, null, null);
+                    null, null, null, null, null,
+                    BigDecimal.ZERO, null, null);
         }
 
         BigDecimal platformRate = defaultRate(propertyCompany.getPlatformShareRate(), DEFAULT_PLATFORM_SHARE);
@@ -448,10 +505,14 @@ public class DistributionService {
         if (coordinator == null) {
             // 无统筹：物业取得「扣除平台盘后的全部分配额」（保持原有口径），再扣楼长分成
             BigDecimal buildingLeaderShare = BigDecimal.ZERO;
+            BigDecimal managerShare = BigDecimal.ZERO;
             BigDecimal propertyShare = money(distributableAmount.subtract(platformShare));
             if (buildingLeader.rate().compareTo(BigDecimal.ZERO) > 0) {
-                buildingLeaderShare = money(propertyShare.multiply(buildingLeader.rate()));
-                propertyShare = money(propertyShare.subtract(buildingLeaderShare));
+                BigDecimal grossShare = money(propertyShare.multiply(buildingLeader.rate()));
+                propertyShare = money(propertyShare.subtract(grossShare));
+                ManagerCut cut = applyManagerCut(order, grossShare);
+                buildingLeaderShare = cut.leaderNet();
+                managerShare = cut.managerShare();
             }
             return new ShareBreakdown(
                     pointCost, coinCost, distributableAmount,
@@ -460,15 +521,20 @@ public class DistributionService {
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                     buildingLeaderShare,
                     null, null, null,
-                    buildingLeader.id(), buildingLeader.rate());
+                    buildingLeader.id(), buildingLeader.rate(),
+                    managerShare, order.getManagerId(), order.getManagerRate());
         }
 
         // 物业分成（毛）= 平台盘 × 物业比例；楼长分成从物业毛额中定向扣除（净额落库）
         BigDecimal buildingLeaderShare = BigDecimal.ZERO;
+        BigDecimal managerShare = BigDecimal.ZERO;
         BigDecimal propertyShare = propertyGrossShare;
         if (buildingLeader.rate().compareTo(BigDecimal.ZERO) > 0) {
-            buildingLeaderShare = money(propertyGrossShare.multiply(buildingLeader.rate()));
-            propertyShare = money(propertyGrossShare.subtract(buildingLeaderShare));
+            BigDecimal grossShare = money(propertyGrossShare.multiply(buildingLeader.rate()));
+            propertyShare = money(propertyGrossShare.subtract(grossShare));
+            ManagerCut cut = applyManagerCut(order, grossShare);
+            buildingLeaderShare = cut.leaderNet();
+            managerShare = cut.managerShare();
         }
 
         SectorLeader sectorLeader = sectorLeaderRepository
@@ -504,7 +570,8 @@ public class DistributionService {
                 sectorLeader != null ? sectorLeader.getId() : null,
                 individualLeader != null ? individualLeader.getId() : null,
                 buildingLeader.id(),
-                buildingLeader.rate());
+                buildingLeader.rate(),
+                managerShare, order.getManagerId(), order.getManagerRate());
     }
 
     /**
@@ -589,6 +656,9 @@ public class DistributionService {
         record.setBuildingLeaderShare(breakdown.buildingLeaderShare());
         record.setBuildingLeaderId(breakdown.buildingLeaderId());
         record.setBuildingLeaderRate(breakdown.buildingLeaderRate());
+        record.setManagerId(breakdown.managerId());
+        record.setManagerRate(breakdown.managerRate());
+        record.setManagerShare(breakdown.managerShare());
         return record;
     }
 
@@ -1038,7 +1108,10 @@ public class DistributionService {
             String sectorLeaderId,
             String individualLeaderId,
             String buildingLeaderId,
-            BigDecimal buildingLeaderRate) {
+            BigDecimal buildingLeaderRate,
+            BigDecimal managerShare,
+            String managerId,
+            BigDecimal managerRate) {
     }
 
     /** 订单楼长绑定快照（id + 分成比例） */

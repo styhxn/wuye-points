@@ -110,10 +110,8 @@ public class AdminCoordinatorService {
         }
         coordinatorRepository.save(coordinator);
 
-        if (!"platform_admin".equals(resident.getRole())) {
-            resident.setRole("coordinator");
-            residentRepository.save(resident);
-        }
+        // 2026-10-20 负责人标签化：不再改写 residents.role（保持 resident），
+        // 统筹身份由 coordinators 表 active 记录判定，与楼长/物业经理同模式。
 
         return toDetail(coordinator, resident);
     }
@@ -172,7 +170,7 @@ public class AdminCoordinatorService {
         coordinator.setStatus("inactive");
         coordinatorRepository.save(coordinator);
 
-        revertResidentRoleIfNeeded(coordinator.getResidentId(), coordinator.getPropertyCompanyId());
+        // 2026-10-20 负责人标签化：撤销不再回退 residents.role（role 本就是 resident，无需回退）
 
         Resident resident = residentRepository.findById(coordinator.getResidentId()).orElse(null);
         return toDetail(coordinator, resident);
@@ -183,21 +181,6 @@ public class AdminCoordinatorService {
                 .orElseThrow(() -> new BizException(ErrorCode.COORDINATOR_NOT_FOUND));
         adminSupport.assertSameProperty(coordinator.getPropertyCompanyId());
         return coordinator;
-    }
-
-    private void revertResidentRoleIfNeeded(String residentId, String propertyCompanyId) {
-        Resident resident = residentRepository.findById(residentId).orElse(null);
-        if (resident == null || "platform_admin".equals(resident.getRole())) {
-            return;
-        }
-        boolean hasActiveCoordinator = coordinatorRepository
-                .findByResidentIdAndPropertyCompanyId(residentId, propertyCompanyId)
-                .map(item -> "active".equals(item.getStatus()))
-                .orElse(false);
-        if (!hasActiveCoordinator && "coordinator".equals(resident.getRole())) {
-            resident.setRole("resident");
-            residentRepository.save(resident);
-        }
     }
 
     private BigDecimal resolveCommissionRate(BigDecimal requestedRate, PropertyCompany company) {

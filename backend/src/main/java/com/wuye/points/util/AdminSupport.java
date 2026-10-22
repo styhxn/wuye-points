@@ -28,7 +28,8 @@ public class AdminSupport {
     public String resolvePropertyCompanyId(String requestedPropertyCompanyId) {
         // 2026-09-07 前端问题 C：统筹只读查看本物业数据，平台/物业可管理；
         // coordinator 非本物业 ID 的过滤参数会被下方强制忽略为本人所属物业，天然越权防护
-        roleGuard.requireAnyRole("platform_admin", "property_admin", "coordinator");
+        // 2026-10-20 负责人标签化：coordinator 身份改由 coordinators 表 active 记录判定
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("platform_admin", "property_admin", "coordinator");
         if (roleGuard.isPlatformAdmin()) {
             if (StringUtils.hasText(requestedPropertyCompanyId)
                     && !requestedPropertyCompanyId.startsWith("pc_")) {

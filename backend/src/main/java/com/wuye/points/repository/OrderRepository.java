@@ -93,4 +93,12 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
 
     /** 超期自动确认收货：已送达且超过售后窗口期仍处于 delivering 的订单 */
     List<Order> findByOrderStatusAndDeliveredAtBefore(String orderStatus, LocalDateTime cutoff);
+
+    /** 业主小店上架是否存在未完成订单（取消上架前校验）：未完成 = 非 completed/cancelled/refunded */
+    @Query("""
+            SELECT COUNT(o) FROM Order o
+            WHERE o.listingId = :listingId
+              AND o.orderStatus NOT IN ('completed', 'cancelled', 'refunded')
+            """)
+    long countUnfinishedByListingId(@Param("listingId") String listingId);
 }

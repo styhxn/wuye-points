@@ -60,7 +60,7 @@ public class SectorLeaderWorkbenchService {
 
     @Transactional(readOnly = true)
     public SectorLeaderMyResponse getMyInfo() {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
 
         String userId = UserContext.currentUserId();
         String propertyCompanyId = UserContext.currentPropertyCompanyId();
@@ -111,7 +111,9 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional
     public MerchantUploadResponse auditMerchantJoin(String coordinatorId, AuditMerchantJoinRequest request) {
-        roleGuard.requireAnyRole("coordinator");
+        // 2026-10-20 负责人标签化：本方法原门为纯 coordinator 角色且无表内归属校验，
+        // 改用「统筹身份」混合门严格保持原行为（不放行普通住户/其他负责人）。
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator");
 
         Merchant merchant = merchantRepository.findById(request.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
@@ -158,7 +160,7 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public List<SectorLeaderMerchantItemResponse> listMyMerchants() {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         Set<String> merchantIds = distributionRecordRepository.findBySectorLeaderId(leader.getId()).stream()
                 .map(DistributionRecord::getMerchantId)
@@ -182,7 +184,7 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public SectorLeaderEarningsResponse getMyEarnings() {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         List<DistributionRecord> records = distributionRecordRepository.findBySectorLeaderId(leader.getId());
         BigDecimal total = records.stream()
@@ -216,7 +218,7 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public List<PriceApprovalResponse> listMyApprovals() {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         Set<String> applicantResidentIds = individualLeaderRepository.findBySectorLeaderId(leader.getId()).stream()
                 .map(IndividualLeader::getResidentId)
@@ -240,7 +242,7 @@ public class SectorLeaderWorkbenchService {
     @Transactional
     public SectorLeaderMerchantItemResponse auditMerchantJoinByLeader(
             String merchantId, boolean approved, String remark) {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         Set<String> myIlIds = individualLeaderRepository.findBySectorLeaderId(leader.getId()).stream()
                 .map(IndividualLeader::getId)
@@ -264,7 +266,7 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional
     public Object auditMerchantDistribution(String approvalId, boolean approved, String remark) {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         return priceApprovalService.auditAsSectorLeader(approvalId, leader.getId(), approved, remark);
     }
@@ -274,7 +276,7 @@ public class SectorLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public List<SectorLeaderMerchantRevenueItemResponse> listMyMerchantRevenues() {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader leader = resolveCurrentLeader();
         List<DistributionRecord> records = distributionRecordRepository.findBySectorLeaderId(leader.getId());
         Map<String, Merchant> merchantMap = resolveMerchantMap(records);

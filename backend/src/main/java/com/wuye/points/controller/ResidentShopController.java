@@ -15,6 +15,7 @@ import com.wuye.points.dto.residentmerchant.ResidentMerchantListingItemResponse;
 import com.wuye.points.dto.residentmerchant.SellerWalletResponse;
 import com.wuye.points.dto.residentmerchant.ShareListingResponse;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantListingRequest;
+import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantShopRequest;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantVisibilityRequest;
 import com.wuye.points.dto.rolewithdrawal.ApplyRoleWithdrawalRequest;
 import com.wuye.points.dto.rolewithdrawal.RoleWithdrawalItemResponse;
@@ -74,6 +75,14 @@ public class ResidentShopController {
     public ApiResponse<MyResidentMerchantResponse> updateVisibility(
             @Valid @RequestBody UpdateResidentMerchantVisibilityRequest request) {
         return ApiResponse.success(residentShopService.updateVisibility(request));
+    }
+
+    @Operation(summary = "修改我的小店店铺资料",
+            description = "店主修改店名/简介/营业时间/联系电话/封面（对齐普通商家店铺资料）。需登录，角色：resident（营业中业主商户）；未传字段不修改，同步更新店铺主体")
+    @PutMapping("/my/shop")
+    public ApiResponse<MyResidentMerchantResponse> updateMyShop(
+            @Valid @RequestBody UpdateResidentMerchantShopRequest request) {
+        return ApiResponse.success(residentShopService.updateShop(request));
     }
 
     @Operation(summary = "公开橱窗列表", description = "公开接口（无需登录）：返回对外(public)且营业中(active)的业主商户")

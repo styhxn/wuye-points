@@ -71,6 +71,9 @@ public class PendingDeliveryItemResponse {
     @Schema(description = "配送状态", example = "pending", allowableValues = {"pending", "accepted", "delivering", "completed", "failed", "property_fallback"})
     private String status;
 
+    @Schema(description = "配送状态中文（后端下发）", example = "待抢单")
+    private String statusLabel;
+
     @Schema(description = "承运类型 courier(平台配送员)/merchant(商家自配)", example = "courier")
     private String carrierType;
 

@@ -24,12 +24,23 @@ public class RoleGuard {
             Set.of("property_leader", "property_operator");
 
     /**
-     * 住户子角色：单元楼长本质是「特殊住户 + 楼长」，其住户身份不应丢失。
-     * 存量数据/令牌中 role 可能仍为 building_leader，此处归一化为 resident，
+     * 住户子角色：本质是「特殊住户 + 子身份」，其住户身份不应丢失。
+     * 存量数据/令牌中 role 可能仍为这些值，此处归一化为 resident，
      * 保证所有 requireAnyRole("resident") 的住户功能继续可用；
-     * 楼长身份改由 building_leaders 表的 active 记录判定。
+     * 子身份改由各业务表的 active 记录判定（楼长→building_leaders，
+     * 统筹/板块负责人/个体负责人→coordinators/sector_leaders/individual_leaders，
+     * 活动组组长→activity_leader_identities，
+     * 2026-10-20 负责人标签化、2026-10-21 组长标签化，与 V18 楼长改造同模式）。
      */
-    private static final Set<String> RESIDENT_SUB_ROLES = Set.of("building_leader");
+    private static final Set<String> RESIDENT_SUB_ROLES = Set.of(
+            "building_leader", "coordinator", "sector_leader", "individual_leader",
+            "activity_leader");
+
+    private final LeaderIdentityGuard leaderIdentityGuard;
+
+    public RoleGuard(LeaderIdentityGuard leaderIdentityGuard) {
+        this.leaderIdentityGuard = leaderIdentityGuard;
+    }
 
     /** JWT role 归一化：历史物业子账号角色视为 property_admin；住户子角色视为 resident */
     public static String normalizeRole(String role) {
@@ -77,7 +88,8 @@ public class RoleGuard {
     }
 
     public boolean isCoordinator() {
-        return "coordinator".equals(UserContext.currentRole());
+        // 2026-10-20 负责人标签化：身份改由 coordinators 表 active 记录判定（兼容存量 JWT role 值）
+        return leaderIdentityGuard.isCurrentCoordinator();
     }
 
     /**
@@ -85,7 +97,7 @@ public class RoleGuard {
      * coordinator 为只读下级角色，仅可查看本物业（2026-09-07 前端问题 C）。
      */
     public String resolveListPropertyCompanyId(String requestedPropertyCompanyId) {
-        requireAnyRole("property_admin", "platform_admin", "coordinator");
+        requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         if (isPlatformAdmin()) {
             return requestedPropertyCompanyId;
         }
@@ -95,6 +107,44 @@ public class RoleGuard {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权查看其他物业公司数据");
         }
         return UserContext.currentPropertyCompanyId();
+    }
+
+    /**
+     * 混合鉴权门（2026-10-20 负责人标签化）：允许名单内角色（管理员等）通过；
+     * 或「住户 + 任意一种启用中的负责人身份（统筹/板块/个体）」通过。
+     * 用于原 {@code requireAnyRole(..., "coordinator", "sector_leader", "individual_leader")}
+     * 的混合门改造——负责人角色值已归一化为 resident，身份按业务表 active 记录判定。
+     */
+    public void requireAnyRoleOrLeaderIdentity(String... allowedRoles) {
+        if (matchesRole(allowedRoles)) {
+            return;
+        }
+        if ("resident".equals(normalizeRole(UserContext.currentRole()))
+                && leaderIdentityGuard.hasAnyLeaderIdentity(
+                        UserContext.currentUserId(), UserContext.currentPropertyCompanyId())) {
+            return;
+        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED);
+    }
+
+    /**
+     * 混合鉴权门（2026-10-20 负责人标签化）：仅放行「统筹」这一种负责人身份
+     * （原门中负责人角色只含 coordinator 时使用，严格保持原有行为，不放行板块/个体负责人）。
+     */
+    public void requireAnyRoleOrCoordinatorIdentity(String... allowedRoles) {
+        if (matchesRole(allowedRoles)) {
+            return;
+        }
+        if ("resident".equals(normalizeRole(UserContext.currentRole()))
+                && leaderIdentityGuard.isCurrentCoordinator()) {
+            return;
+        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED);
+    }
+
+    private boolean matchesRole(String... allowedRoles) {
+        String role = normalizeRole(UserContext.currentRole());
+        return role != null && Arrays.stream(allowedRoles).anyMatch(role::equals);
     }
 
     public void assertSamePropertyOrPlatform(String targetPropertyCompanyId) {
@@ -157,8 +207,17 @@ public class RoleGuard {
             "refunding", "refunded", "refund_rejected");
     public static final Set<String> PAYMENT_METHODS = Set.of(
             "property_coin", "point", "wechat", "mixed");
+    /**
+     * 配送单状态合法值（含内部态与历史兼容值）。
+     *
+     * <ul>
+     *   <li>{@code merchant_self} / {@code merchant_delivering}：商家自配内部态（骑手不可见）</li>
+     *   <li>{@code delivered}：历史部署遗留完成态，读写均归一为 {@code completed}（见 DisplayLabelUtil#normalizeDeliveryStatus）</li>
+     * </ul>
+     */
     public static final Set<String> DELIVERY_STATUS = Set.of(
-            "pending", "accepted", "delivering", "completed", "failed", "property_fallback");
+            "pending", "accepted", "delivering", "completed", "failed", "property_fallback",
+            "merchant_self", "merchant_delivering", "delivered");
     public static final Set<String> DELIVERY_RULE_STATUS = Set.of("active", "inactive");
     public static final Set<String> ANNOUNCEMENT_TYPES = Set.of(
             "property", "community", "platform", "system", "merchant", "activity");
@@ -193,14 +252,16 @@ public class RoleGuard {
 
     /**
      * 可被管理端直接写入 residents.role 的角色白名单。
-     * 注意：不含 building_leader —— 楼长是住户的叠加身份（由 building_leaders 表判定），
-     * 不允许通过改 role 的方式授予，否则会破坏该住户的住户功能（社区论坛等）。
+     * 注意：不含 building_leader / coordinator / sector_leader / individual_leader /
+     * activity_leader —— 楼长、三类负责人、活动组组长都是住户的叠加身份
+     * （由各自业务表判定），不允许通过改 role 的方式授予，否则会破坏该住户的住户功能
+     * （社区论坛等）。
+     * （2026-10-20 负责人标签化：coordinator/sector_leader/individual_leader 移出白名单；
+     *  2026-10-21 组长标签化：activity_leader 移出白名单，改走任命/申请流程）
      */
     public static final Set<String> VALID_ROLES = Set.of(
             "platform_admin", "property_admin", "community_admin",
-            "resident", "merchant", "courier", "technician",
-            "coordinator", "sector_leader", "individual_leader",
-            "activity_leader");
+            "resident", "merchant", "courier", "technician");
 
     public static final Set<String> VALID_COMMUNITY_SERVICE_CATEGORIES = Set.of(
             "cleaning_repair", "canteen", "tutoring", "elderly_care", "medical",
@@ -211,15 +272,36 @@ public class RoleGuard {
     }
 
     public boolean isActivityLeader() {
-        return "activity_leader".equals(UserContext.currentRole());
+        // 2026-10-21 组长标签化：身份改由 activity_leader_identities 表 active 记录判定
+        // （兼容存量 JWT role=activity_leader）
+        return leaderIdentityGuard.isCurrentActivityLeader();
+    }
+
+    /**
+     * 混合鉴权门（2026-10-21 组长标签化）：允许名单内角色（merchant/technician 等）通过；
+     * 或「住户 + 启用中的活动组组长身份」通过。
+     * 用于原 {@code requireAnyRole(..., "activity_leader")} 中不含 resident 的门
+     * （如商家端商品管理、组长公告发布）——组长角色值已归一化为 resident，身份按业务表判定。
+     */
+    public void requireAnyRoleOrActivityLeaderIdentity(String... allowedRoles) {
+        if (matchesRole(allowedRoles)) {
+            return;
+        }
+        if ("resident".equals(normalizeRole(UserContext.currentRole()))
+                && leaderIdentityGuard.isCurrentActivityLeader()) {
+            return;
+        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED);
     }
 
     public boolean isSectorLeader() {
-        return "sector_leader".equals(UserContext.currentRole());
+        // 2026-10-20 负责人标签化：身份改由 sector_leaders 表 active 记录判定（兼容存量 JWT role 值）
+        return leaderIdentityGuard.isCurrentSectorLeader();
     }
 
     public boolean isIndividualLeader() {
-        return "individual_leader".equals(UserContext.currentRole());
+        // 2026-10-20 负责人标签化：身份改由 individual_leaders 表 active 记录判定（兼容存量 JWT role 值）
+        return leaderIdentityGuard.isCurrentIndividualLeader();
     }
 
     /**

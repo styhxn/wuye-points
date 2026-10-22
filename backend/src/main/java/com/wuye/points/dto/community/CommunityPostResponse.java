@@ -45,6 +45,9 @@ public class CommunityPostResponse {
     @Schema(description = "当前用户是否已点赞")
     private boolean likedByMe;
 
+    @Schema(description = "影子封禁标记（仅管理端列表返回；被禁作者的内容对其他人不可见）")
+    private Boolean shadowBanned;
+
     @Schema(description = "创建时间(ISO8601)")
     private String createdAt;
 

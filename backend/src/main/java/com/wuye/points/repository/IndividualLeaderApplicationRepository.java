@@ -14,5 +14,8 @@ public interface IndividualLeaderApplicationRepository extends JpaRepository<Ind
     Optional<IndividualLeaderApplication> findFirstByResidentIdAndPropertyCompanyIdAndAuditStatusOrderByCreatedAtDesc(
             String residentId, String propertyCompanyId, String auditStatus);
 
+    Optional<IndividualLeaderApplication> findFirstByResidentIdAndPropertyCompanyIdOrderByCreatedAtDesc(
+            String residentId, String propertyCompanyId);
+
     long countByPropertyCompanyIdAndAuditStatus(String propertyCompanyId, String auditStatus);
 }

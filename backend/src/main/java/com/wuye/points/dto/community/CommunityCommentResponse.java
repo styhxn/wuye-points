@@ -43,6 +43,9 @@ public class CommunityCommentResponse {
     @Schema(description = "状态 published/deleted")
     private String status;
 
+    @Schema(description = "影子封禁标记（仅管理端列表返回；被禁作者的内容对其他人不可见）")
+    private Boolean shadowBanned;
+
     @Schema(description = "创建时间(ISO8601)")
     private String createdAt;
 }

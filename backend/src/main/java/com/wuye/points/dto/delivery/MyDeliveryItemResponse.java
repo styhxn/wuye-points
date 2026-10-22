@@ -72,6 +72,17 @@ public class MyDeliveryItemResponse {
     @Schema(description = "配送状态", example = "delivering", allowableValues = {"pending", "accepted", "delivering", "completed", "failed", "property_fallback"})
     private String status;
 
+    @Schema(description = "配送状态中文（后端下发）", example = "配送中")
+    private String statusLabel;
+
+    @Schema(description = "订单业务状态（配送完成 ≠ 订单完成：平台配送单配送完成后订单仍为 delivering，"
+            + "待居民确认收货或超期自动确认后置 completed）",
+            example = "delivering", allowableValues = {"pending", "paid", "delivering", "completed", "cancelled", "refunding", "refunded"})
+    private String orderStatus;
+
+    @Schema(description = "订单业务状态中文", example = "配送中")
+    private String orderStatusLabel;
+
     @Schema(description = "承运类型 courier(平台配送员)/merchant(商家自配)", example = "courier")
     private String carrierType;
 

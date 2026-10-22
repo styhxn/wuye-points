@@ -92,6 +92,10 @@ public enum ErrorCode {
     SECTOR_LEADER_NOT_FOUND(91002, "板块负责人不存在", 404),
     INDIVIDUAL_LEADER_NOT_FOUND(91003, "个体负责人不存在", 404),
     BUILDING_LEADER_NOT_FOUND(91004, "楼长不存在", 404),
+    PROPERTY_MANAGER_NOT_FOUND(91005, "物业经理不存在", 404),
+    PROPERTY_MANAGER_ALREADY_EXISTS(91006, "该物业公司已存在在职物业经理", 400),
+    PROPERTY_MANAGER_NOT_ACTIVE(91007, "物业经理身份已停用", 403),
+    PROPERTY_MANAGER_SELF_RATE_FORBIDDEN(91008, "物业经理不可修改自己的分成比例", 403),
 
     // 权限 92xxx
     PERMISSION_NOT_FOUND(92001, "权限项不存在", 404),
@@ -139,6 +143,16 @@ public enum ErrorCode {
     COMMUNITY_REPORT_ALREADY_HANDLED(96017, "举报已处理", 400),
     COMMUNITY_FORBIDDEN_WORD(96018, "包含敏感词", 400),
 
+    // 论坛禁言（影子封禁）97050-97052
+    FORUM_BAN_ALREADY_ACTIVE(97050, "该用户已被禁言，无需重复操作", 400),
+    FORUM_BAN_NOT_FOUND(97051, "禁言记录不存在", 404),
+
+    // 活动组组长申请/身份 97060-97063
+    ACTIVITY_LEADER_APPLICATION_NOT_FOUND(97060, "组长申请不存在", 404),
+    ACTIVITY_LEADER_APPLICATION_ALREADY_AUDITED(97061, "该申请已审核，不可重复审核", 400),
+    ACTIVITY_LEADER_APPLICATION_PENDING_EXISTS(97062, "您已有待审核的组长申请或已是组长，请勿重复提交", 400),
+    ACTIVITY_LEADER_IDENTITY_NOT_FOUND(97063, "该用户没有生效中的组长身份", 404),
+
     // 服务工单 96xxx
     SERVICE_REQUEST_TIMEOUT(96020, "服务工单已超时", 400),
 
@@ -178,6 +192,14 @@ public enum ErrorCode {
     CANTEEN_BINDING_NOT_FOUND(60027, "绑定关系不存在", 404),
     RESIDENT_MERCHANT_HAS_ORDERS(60028, "该住户商家已有订单", 400),
     RESIDENT_MERCHANT_NOT_PUBLIC(60029, "住户商家未公开", 400),
+    DISTRIBUTOR_NOT_ENABLED(60030, "该商家未开通一级代理权限", 403),
+    DISTRIBUTOR_MERCHANT_NOT_APPROVED(60037, "仅审核通过的商家可管理一级代理权限", 400),
+    DISTRIBUTOR_PRODUCT_MERCHANT_REQUIRED(60031, "必须指定一级代理商家（distributorMerchantId）", 400),
+    LISTING_QUANTITY_INVALID(60032, "拿货件数必须为不小于1的整数", 400),
+    DISTRIBUTOR_STOCK_INSUFFICIENT(60033, "一级代理货源库存不足", 400),
+    LISTING_NOT_CANCELLABLE(60034, "该上架存在未完成订单，不可取消", 400),
+    LISTING_STOCK_INSUFFICIENT(60035, "可售件数不足", 400),
+    SHOP_MERCHANT_NOT_FOUND(60036, "业主小店店铺主体不存在", 404),
 
     // 物业币商城 96xxx 扩展
     COIN_MALL_DISABLED(96030, "物业币商城未开启", 400),
@@ -196,6 +218,12 @@ public enum ErrorCode {
     // 个体负责人申请 9703x（2026-09-08 前端问题：申请列表 / 审核路由）
     INDIVIDUAL_LEADER_APPLICATION_NOT_FOUND(97030, "个体负责人申请不存在", 404),
     INDIVIDUAL_LEADER_APPLICATION_ALREADY_AUDITED(97031, "该申请已审核，不可重复审核", 400),
+
+    // 一级代理申请 9704x（2026-10-20 一级代理申请能力）
+    DISTRIBUTOR_APPLICATION_NOT_FOUND(97040, "一级代理申请不存在", 404),
+    DISTRIBUTOR_APPLICATION_ALREADY_AUDITED(97041, "该申请已审核，不可重复审核", 400),
+    DISTRIBUTOR_APPLICATION_PENDING_EXISTS(97042, "你已有待审核的一级代理申请，请勿重复提交", 400),
+    DISTRIBUTOR_ALREADY_ENABLED(97043, "你已是一级代理，无需重复申请", 400),
 
     // 物业公司关联数据拦截 97033（2026-09-08 前端问题：硬删除需明确关联原因）
     PROPERTY_COMPANY_HAS_RELATED_DATA(97033, "该物业公司存在关联数据，不可删除", 400),
@@ -228,6 +256,8 @@ public enum ErrorCode {
     TRANSFER_NOT_FOUND(99011, "转账单不存在", 404),
     TRANSFER_AMOUNT_INVALID(99012, "转账金额不合法", 400),
     RECOVERY_NOT_FOUND(99013, "待追回台账记录不存在", 404),
+    SPLIT_REVERSE_INCOMPLETE(99014, "订单分账尚未全部回退完成，暂不能发起退款", 409),
+    REFUND_NOT_ENABLED(99015, "当前未开放用户主动申请退款，如有问题请联系物业", 400),
 
     // 优惠券 60xxx
     COUPON_TEMPLATE_NOT_FOUND(60040, "优惠券模板不存在", 404),

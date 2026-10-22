@@ -80,6 +80,18 @@ public class DistributionRecord extends BaseEntity {
     @Column(name = "building_leader_rate", precision = 5, scale = 4)
     private BigDecimal buildingLeaderRate;
 
+    /** 物业经理ID快照（pm_ 前缀，抽取楼长分成） */
+    @Column(name = "manager_id", length = 32)
+    private String managerId;
+
+    /** 物业经理抽成比例快照（占楼长分成的比例） */
+    @Column(name = "manager_rate", precision = 5, scale = 4)
+    private BigDecimal managerRate;
+
+    /** 物业经理抽成金额（从楼长分成毛额中抽取；2026-10-18 新增，历史数据为 null） */
+    @Column(name = "manager_share", precision = 10, scale = 2)
+    private BigDecimal managerShare;
+
     /** 平台分成（金额） */
     @Column(name = "platform_share", precision = 10, scale = 2)
     private BigDecimal platformShare;

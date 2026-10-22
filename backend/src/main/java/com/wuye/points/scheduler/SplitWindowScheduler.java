@@ -59,15 +59,20 @@ public class SplitWindowScheduler {
         }
     }
 
+    /**
+     * 售后窗口是否到期。基准优先取分账记录自身创建时间（订单完成 = 分账发起时点），
+     * 回退支付流水创建时间；两者都缺失时保守视为到期（由完结/补偿链路兜底）。
+     */
     private boolean windowExpired(WechatSplitRecord split) {
-        if (split.getPaymentRecordId() == null) {
+        LocalDateTime base = split.getCreatedAt();
+        if (base == null && split.getPaymentRecordId() != null) {
+            PaymentRecord record = paymentRecordRepository.findById(split.getPaymentRecordId()).orElse(null);
+            base = record != null ? record.getCreatedAt() : null;
+        }
+        if (base == null) {
             return true;
         }
-        PaymentRecord record = paymentRecordRepository.findById(split.getPaymentRecordId()).orElse(null);
-        if (record == null || record.getCreatedAt() == null) {
-            return true;
-        }
-        return record.getCreatedAt().plusDays(wechatSplitProperties.getAfterSaleDays()).isBefore(LocalDateTime.now());
+        return base.plusDays(wechatSplitProperties.getAfterSaleDays()).isBefore(LocalDateTime.now());
     }
 
     /** 重试提现失败的分账（Path B 兜底）：对 withdraw_status=withdraw_failed 且已完结的记录重提 */
@@ -101,8 +106,9 @@ public class SplitWindowScheduler {
     }
 
     /**
-     * 每日资金对账（HTML ③-a，内部侧）：统计未完成/失败-待补记录，发现需人工介入项即告警。
-     * 外部核对（本地流水 vs 微信实际划账）依赖微信对账文件/接口，待对接后补充 {@code fetchSaobeiReconciliation()}。
+     * 每日资金对账（内部侧）：统计未完成/失败-待补记录，发现需人工介入项即告警。
+     * 逐笔外部核对（本地状态/金额 vs 微信实际划账）已由 {@link SplitReconcileScheduler}
+     * 定时查单实现；完整的微信对账文件下载比对仍未实现，待对接后补充。
      */
     @Scheduled(cron = "0 10 3 * * ?")
     @SchedulerLock(name = "split_reconcile_daily", lockAtMostFor = "PT1H", lockAtLeastFor = "PT1M")
@@ -122,7 +128,7 @@ public class SplitWindowScheduler {
             log.warn("[微信对账] 存在需人工介入记录 {} 条，splitNo 示例: {}",
                     failedCount, failedRecords.stream().limit(20).map(WechatSplitRecord::getSplitNo).toList());
         }
-        // TODO(外部对账): 拉取微信对账文件/接口，比对本地 freezeAmount 与微信实际划账，差异写入告警。
+        // TODO(外部对账-账单文件): 下载微信每日对账文件做全量金额比对；逐笔状态/金额核对已由 SplitReconcileScheduler 覆盖。
     }
 
     /**

@@ -47,7 +47,7 @@ public class RegionalLeaderService {
     @Transactional(readOnly = true)
     public List<RegionalLeaderListItemResponse> listRegionalLeaders(String propertyCompanyId,
                                                                     String sectorLeaderId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader");
         String scopedPropertyCompanyId = resolveScopedPropertyCompanyId(propertyCompanyId);
         String scopedSectorLeaderId = resolveScopedSectorLeaderId(sectorLeaderId);
 
@@ -69,7 +69,7 @@ public class RegionalLeaderService {
 
     @Transactional(readOnly = true)
     public RegionalLeaderDetailResponse getRegionalLeader(String id) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader");
         validateIdPrefix(id, "rl_");
         RegionalLeader leader = getAccessibleRegionalLeader(id);
         return toDetail(leader);
@@ -90,7 +90,7 @@ public class RegionalLeaderService {
 
     @Transactional
     public RegionalLeaderDetailResponse createRegionalLeader(CreateRegionalLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(request.getResidentId(), "res_");
         if (StringUtils.hasText(request.getSectorLeaderId())) {
             validateIdPrefix(request.getSectorLeaderId(), "sl_");
@@ -135,7 +135,7 @@ public class RegionalLeaderService {
 
     @Transactional
     public RegionalLeaderDetailResponse updateRegionalLeader(String id, UpdateRegionalLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(id, "rl_");
         if (StringUtils.hasText(request.getSectorLeaderId())) {
             validateIdPrefix(request.getSectorLeaderId(), "sl_");
@@ -174,7 +174,7 @@ public class RegionalLeaderService {
 
     @Transactional
     public void deleteRegionalLeader(String id) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(id, "rl_");
         RegionalLeader leader = getAccessibleRegionalLeader(id);
         // 软删除：置为 inactive

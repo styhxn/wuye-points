@@ -61,6 +61,7 @@ public class MerchantConverter {
                 .status(merchant.getStatus())
                 .isRecommended(Boolean.TRUE.equals(merchant.getIsRecommended()))
                 .recommendedSort(merchant.getRecommendedSort())
+                .isDistributor(Boolean.TRUE.equals(merchant.getIsDistributor()))
                 .createdAt(DateTimeUtil.toIsoUtc(merchant.getCreatedAt()));
 
         if (config != null) {
@@ -111,6 +112,7 @@ public class MerchantConverter {
                 .rankOrder(base.getRankOrder())
                 .auditStatus(base.getAuditStatus())
                 .status(base.getStatus())
+                .isDistributor(base.getIsDistributor())
                 .createdAt(base.getCreatedAt())
                 .updatedAt(DateTimeUtil.toIsoUtc(merchant.getUpdatedAt()))
                 .products(productItems)

@@ -21,6 +21,14 @@ public class CompleteDeliveryResponse {
     @Schema(description = "配送状态", example = "completed", allowableValues = {"pending", "accepted", "delivering", "completed", "failed", "property_fallback"})
     private String status;
 
+    @Schema(description = "订单业务状态（配送完成 ≠ 订单完成：平台配送单完成后订单仍为 delivering，"
+            + "待居民确认收货或超期自动确认后置 completed；商家自配单确认送达时订单直接 completed）",
+            example = "delivering", allowableValues = {"paid", "delivering", "completed", "cancelled", "refunding", "refunded"})
+    private String orderStatus;
+
+    @Schema(description = "订单业务状态中文", example = "配送中")
+    private String orderStatusLabel;
+
     @Schema(description = "配送员收入", example = "5.00")
     private BigDecimal courierEarning;
 

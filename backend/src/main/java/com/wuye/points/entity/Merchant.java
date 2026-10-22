@@ -108,17 +108,21 @@ public class Merchant extends BaseEntity {
     @Column(name = "delivery_scope", length = 100)
     private String deliveryScope;
 
-    /** 商家类型（canteen 等） */
-    @Column(name = "merchant_type", length = 30)
-    private String merchantType;
+    /**
+     * 商家类型（goods/technician/group_leader/canteen）。
+     * 以下三列 DB 均为 NOT NULL DEFAULT，但 Hibernate 会显式写入 NULL（不触发 DB 默认值），
+     * 实体侧给出与 DB 一致的初始值，避免各建店路径漏赋值时插入失败。
+     */
+    @Column(name = "merchant_type", length = 30, nullable = false)
+    private String merchantType = "goods";
 
     /** 是否社区食堂主商家 */
-    @Column(name = "is_canteen_main_merchant")
-    private Boolean isCanteenMainMerchant;
+    @Column(name = "is_canteen_main_merchant", nullable = false)
+    private Boolean isCanteenMainMerchant = false;
 
     /** 是否服务全部社区 */
-    @Column(name = "serve_all_communities")
-    private Boolean serveAllCommunities;
+    @Column(name = "serve_all_communities", nullable = false)
+    private Boolean serveAllCommunities = true;
 
     /** 提现是否被冻结 */
     @Column(name = "withdrawal_blocked")
@@ -139,6 +143,10 @@ public class Merchant extends BaseEntity {
     /** 归属个体负责人ID（个体负责人新增/关联的商家） */
     @Column(name = "individual_leader_id", length = 32)
     private String individualLeaderId;
+
+    /** 是否一级代理（后台开通，可维护货源商品并接收业主小店货款） */
+    @Column(name = "is_distributor", nullable = false)
+    private Boolean isDistributor = false;
 
     /** 个体负责人与商家的分成比例(0~1)，经审批后生效 */
     @Column(name = "individual_leader_rate", precision = 5, scale = 4)

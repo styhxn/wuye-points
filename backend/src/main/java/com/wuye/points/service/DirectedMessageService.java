@@ -80,7 +80,7 @@ public class DirectedMessageService {
     @Transactional
     public CreateDirectedMessageResponse createAndSend(CreateDirectedMessageRequest request) {
         permissionGuard.requirePermissionOrAdmin("directed_message.send");
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
 
         String propertyCompanyId = resolvePropertyCompanyId(request.getPropertyCompanyId());
         adminSupport.assertSameProperty(propertyCompanyId);
@@ -176,7 +176,7 @@ public class DirectedMessageService {
             String officialSenderType,
             String propertyCompanyId) {
         permissionGuard.requirePermissionOrAdmin("directed_message.read");
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
 
         String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
         LocalDateTime start = StringUtils.hasText(startDate)
@@ -202,7 +202,7 @@ public class DirectedMessageService {
     @Transactional(readOnly = true)
     public DirectedMessageDetailResponse getTask(String id) {
         permissionGuard.requirePermissionOrAdmin("directed_message.read");
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         adminSupport.validateIdPrefix(id, "dmt_");
 
         DirectedMessageTask task = getAccessibleTask(id);
@@ -219,7 +219,7 @@ public class DirectedMessageService {
             String gender,
             String ageBracketId) {
         permissionGuard.requirePermissionOrAdmin("directed_message.read");
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         adminSupport.validateIdPrefix(taskId, "dmt_");
 
         DirectedMessageTask task = getAccessibleTask(taskId);
@@ -249,7 +249,7 @@ public class DirectedMessageService {
     @Transactional(readOnly = true)
     public AgeBracketListResponse listAgeBrackets() {
         // 统筹发定向推送时需读取年龄段筛选项；写入仍仅限物业/平台
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         String propertyCompanyId = roleGuard.isPlatformAdmin()
                 ? null : UserContext.currentPropertyCompanyId();
 

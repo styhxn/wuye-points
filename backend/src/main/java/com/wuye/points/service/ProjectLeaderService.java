@@ -68,7 +68,7 @@ public class ProjectLeaderService {
 
     @Transactional(readOnly = true)
     public ProjectLeaderDetailResponse getProjectLeader(String id) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader");
         validateIdPrefix(id, "pl_");
         ProjectLeader leader = getAccessibleProjectLeader(id);
         return toDetail(leader);
@@ -89,7 +89,7 @@ public class ProjectLeaderService {
 
     @Transactional
     public ProjectLeaderDetailResponse createProjectLeader(CreateProjectLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(request.getResidentId(), "res_");
         if (StringUtils.hasText(request.getRegionalLeaderId())) {
             validateIdPrefix(request.getRegionalLeaderId(), "rl_");
@@ -129,7 +129,7 @@ public class ProjectLeaderService {
 
     @Transactional
     public ProjectLeaderDetailResponse updateProjectLeader(String id, UpdateProjectLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(id, "pl_");
         if (StringUtils.hasText(request.getRegionalLeaderId())) {
             validateIdPrefix(request.getRegionalLeaderId(), "rl_");
@@ -162,7 +162,7 @@ public class ProjectLeaderService {
 
     @Transactional
     public void deleteProjectLeader(String id) {
-        roleGuard.requireAnyRole("coordinator", "property_admin", "sector_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("coordinator", "property_admin", "sector_leader");
         validateIdPrefix(id, "pl_");
         ProjectLeader leader = getAccessibleProjectLeader(id);
         // 软删除：置为 inactive

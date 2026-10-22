@@ -133,7 +133,7 @@ public class AnnouncementService {
      */
     @Transactional
     public AnnouncementDetailResponse createActivityAnnouncement(ActivityAnnouncementRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("property_admin", "platform_admin");
 
         String propertyCompanyId = resolvePropertyCompanyId(null);
         validateOptionalId(request.getCommunityId(), "com_");
@@ -205,7 +205,7 @@ public class AnnouncementService {
 
     @Transactional
     public AnnouncementDetailResponse updateAnnouncement(String id, UpdateAnnouncementRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("property_admin", "platform_admin");
         validateAnnouncementId(id);
 
         Announcement announcement = getManageableAnnouncement(id);
@@ -256,7 +256,7 @@ public class AnnouncementService {
 
     @Transactional
     public DeleteAnnouncementResponse deleteAnnouncement(String id) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "activity_leader");
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("property_admin", "platform_admin");
         validateAnnouncementId(id);
 
         Announcement announcement = getManageableAnnouncement(id);

@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,11 +11,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
 
 @DisplayName("RoleGuard 角色校验测试")
 class RoleGuardTest {
 
-    private final RoleGuard roleGuard = new RoleGuard();
+    private final LeaderIdentityGuard leaderIdentityGuard = mock(LeaderIdentityGuard.class);
+    private final RoleGuard roleGuard = new RoleGuard(leaderIdentityGuard);
 
     @AfterEach
     void cleanup() {
@@ -142,5 +145,49 @@ class RoleGuardTest {
         assertTrue(RoleGuard.MERCHANT_LEVELS.contains("official_certified"));
         assertTrue(RoleGuard.ANNOUNCEMENT_TYPES.contains("property"));
         assertEquals(15, RoleGuard.FAMILY_MEMBER_MAX);
+    }
+
+    @Test
+    @DisplayName("负责人/组长标签化 - JWT 误存子身份角色时归一化为 resident")
+    void normalizeRole_shouldMapLeaderRolesToResident() {
+        assertEquals("resident", RoleGuard.normalizeRole("coordinator"));
+        assertEquals("resident", RoleGuard.normalizeRole("sector_leader"));
+        assertEquals("resident", RoleGuard.normalizeRole("individual_leader"));
+        assertEquals("resident", RoleGuard.normalizeRole("building_leader"));
+        // 2026-10-21 组长标签化
+        assertEquals("resident", RoleGuard.normalizeRole("activity_leader"));
+        assertEquals("resident", RoleGuard.normalizeRole("resident"));
+        assertEquals("merchant", RoleGuard.normalizeRole("merchant"));
+    }
+
+    @Test
+    @DisplayName("负责人标签化 - 存量 JWT 负责人角色仍可按 resident 通过住户门")
+    void requireAnyRole_shouldPass_whenJwtRoleIsLeaderRole() {
+        setUserContext("coordinator", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("resident"));
+        setUserContext("sector_leader", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("resident"));
+        setUserContext("individual_leader", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("resident"));
+    }
+
+    @Test
+    @DisplayName("组长标签化 - 存量 JWT role=activity_leader 归一化后仍可通过住户门")
+    void requireAnyRole_shouldPass_whenJwtRoleIsActivityLeader() {
+        setUserContext("activity_leader", "pc_001");
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("resident"));
+    }
+
+    @Test
+    @DisplayName("负责人/组长标签化 - 子身份角色不再属于可写入 role 白名单")
+    void validRoles_shouldExcludeLeaderRoles() {
+        assertFalse(RoleGuard.VALID_ROLES.contains("coordinator"));
+        assertFalse(RoleGuard.VALID_ROLES.contains("sector_leader"));
+        assertFalse(RoleGuard.VALID_ROLES.contains("individual_leader"));
+        assertFalse(RoleGuard.VALID_ROLES.contains("building_leader"));
+        // 2026-10-21 组长标签化：组长只能走任命/申请，不能改 role 授予
+        assertFalse(RoleGuard.VALID_ROLES.contains("activity_leader"));
+        assertTrue(RoleGuard.VALID_ROLES.contains("resident"));
+        assertTrue(RoleGuard.VALID_ROLES.contains("merchant"));
     }
 }

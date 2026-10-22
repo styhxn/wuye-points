@@ -15,6 +15,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SpecialOfferRepository;
 import com.wuye.points.util.AdminSupport;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -74,6 +75,7 @@ public class SpecialOfferService {
     private final ResidentRepository residentRepository;
     private final OrderRepository orderRepository;
     private final RoleGuard roleGuard;
+    private final LeaderIdentityGuard leaderIdentityGuard;
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
@@ -99,7 +101,8 @@ public class SpecialOfferService {
         offer.setTargetTags(specialOfferConverter.toJson(
                 StringUtils.hasText(request.getTargetTags()) ? List.of(request.getTargetTags().split(",")) : null));
         offer.setPublisherId(UserContext.currentUserId());
-        offer.setPublisherRole(UserContext.currentRole());
+        // 2026-10-20 负责人标签化：统筹/板块负责人发布特惠时留痕仍记录负责人角色码（role 已归一为 resident）
+        offer.setPublisherRole(leaderIdentityGuard.currentEffectiveRole());
         offer.setPropertyCompanyId(propertyCompanyId);
         offer.setCommunityId(request.getCommunityId());
         offer.setMerchantId(request.getMerchantId());
@@ -316,7 +319,8 @@ public class SpecialOfferService {
         if (roleGuard.isResident()) {
             return specialOfferConverter.toDetail(getResidentVisibleOffer(id));
         }
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader");
+        // 2026-10-20 负责人标签化：统筹/板块负责人身份由业务表 active 记录判定
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader");
         return specialOfferConverter.toDetail(getManageableOffer(id));
     }
 

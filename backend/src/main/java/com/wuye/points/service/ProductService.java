@@ -135,7 +135,8 @@ public class ProductService {
 
     @Transactional
     public ProductDetailResponse createProduct(CreateProductRequest request) {
-        roleGuard.requireAnyRole("merchant", "activity_leader");
+        // 2026-10-21 组长标签化：组长身份由 activity_leader_identities 表判定（role 归一为 resident）
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("merchant");
         validateCreateRequest(request);
 
         Merchant merchant = resolveTargetMerchant(request.getMerchantId());

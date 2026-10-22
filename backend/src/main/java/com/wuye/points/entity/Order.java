@@ -158,6 +158,14 @@ public class Order extends BaseEntity {
     @Column(name = "building_leader_rate", precision = 5, scale = 4)
     private BigDecimal buildingLeaderRate;
 
+    /** 下单时绑定的物业经理ID快照（pm_ 前缀，来自 property_managers） */
+    @Column(name = "manager_id", length = 32)
+    private String managerId;
+
+    /** 下单时物业经理抽成比例快照（占楼长分成的比例） */
+    @Column(name = "manager_rate", precision = 5, scale = 4)
+    private BigDecimal managerRate;
+
     /** 满额减免前基础配送费快照（规范§7.6：结算不得读取最新配置重算） */
     @Column(name = "original_delivery_fee", precision = 10, scale = 2)
     private BigDecimal originalDeliveryFee;

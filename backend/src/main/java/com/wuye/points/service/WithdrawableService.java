@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.entity.CourierManager;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.Resident;
+import com.wuye.points.payment.WechatSplitOwnerTypes;
 import com.wuye.points.repository.DeliveryRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.MerchantWithdrawalRepository;
@@ -10,6 +11,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.ServiceOrderRepository;
 import com.wuye.points.repository.WalletFlowRepository;
+import com.wuye.points.repository.WechatSplitRecordRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -51,9 +53,59 @@ public class WithdrawableService {
     private final ServiceOrderRepository serviceOrderRepository;
     private final DeliveryRepository deliveryRepository;
     private final WalletFlowRepository walletFlowRepository;
+    private final WechatSplitRecordRepository splitRecordRepository;
+
+    /**
+     * 个人类接收方「已由微信分账真实结算」的状态集合。
+     *
+     * <p>{@code frozen/finished}：资金已从分账方划到接收方账户（到账即终结）；
+     * {@code reverted}：个人 openid 不支持微信侧回退，平台垫付后资金仍留在接收方账户
+     * （应收登记在 split_recovery_records）——三种状态资金都已真实到账，
+     * 内部钱包不得再计可提现，否则一笔钱分两次付。</p>
+     *
+     * <p>商户号类接收方（物业公司 MERCHANT_ID）不适用本集合：其 {@code reverted}
+     * 表示资金已退回分账方，内部余额仍应可提。</p>
+     */
+    private static final List<String> PERSONAL_SPLIT_SETTLED = List.of("frozen", "finished", "reverted");
+
+    /** 商户号类接收方「已由微信分账真实结算」的状态集合（reverted=资金已退回，不计入）。 */
+    private static final List<String> MERCHANT_SPLIT_SETTLED = List.of("frozen", "finished");
+
+    /**
+     * 某主体已由微信分账实时结算的金额（个人类接收方口径）。
+     * 分账未启用的订单不产生分账记录，返回 0，不影响原可提现逻辑。
+     */
+    public BigDecimal calcSplitSettledAmount(String ownerType, String ownerId) {
+        return calcSplitSettledAmount(ownerType, ownerId, PERSONAL_SPLIT_SETTLED);
+    }
+
+    /** 某主体已由微信分账实时结算的金额（可指定计入状态集合）。 */
+    public BigDecimal calcSplitSettledAmount(String ownerType, String ownerId, List<String> statuses) {
+        if (!StringUtils.hasText(ownerType) || !StringUtils.hasText(ownerId)) {
+            return BigDecimal.ZERO;
+        }
+        return defaultDecimal(splitRecordRepository.sumFreezeAmountByOwnerAndStatusIn(ownerType, ownerId, statuses));
+    }
+
+    /** 批量主体已由微信分账实时结算的金额合计（个人类接收方口径）。 */
+    public BigDecimal calcSplitSettledAmountForOwners(String ownerType, List<String> ownerIds) {
+        if (!StringUtils.hasText(ownerType) || ownerIds == null || ownerIds.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        return defaultDecimal(splitRecordRepository.sumFreezeAmountByOwnerIdsAndStatusIn(
+                ownerType, ownerIds, PERSONAL_SPLIT_SETTLED));
+    }
+
+    /** 商户号类接收方（如物业公司）已由微信分账实时结算的金额。 */
+    public BigDecimal calcMerchantSplitSettledAmount(String ownerType, String ownerId) {
+        return calcSplitSettledAmount(ownerType, ownerId, MERCHANT_SPLIT_SETTLED);
+    }
 
     /** 商家自配配送费分成的钱包流水类型（与 WalletFlowService.recordMerchantDelivery 保持一致） */
     private static final String ENTRY_MERCHANT_DELIVERY_FEE_SHARE = "merchant_delivery_fee_share";
+
+    /** 一级代理货款入账的钱包流水类型（业主小店订单完成结算，见 ResidentMerchantSettlementService） */
+    private static final String ENTRY_DISTRIBUTOR_WHOLESALE_INCOME = "distributor_wholesale_income";
 
     /**
      * 计算商家可提现余额及营收统计
@@ -85,6 +137,7 @@ public class WithdrawableService {
         // 商家收入：技师店走服务单营收（不分账记录），其余走分账 merchantShare（B 方案，历史回退 订单金额×(1−抽佣)）
         // 另叠加商家自配配送费分成（wallet_flows 兜底入账部分，entryType=merchant_delivery_fee_share）；
         // 微信 通道成功时该流水不产生，避免双算（资金在 微信 侧，不走内部可提现）
+        // 一级代理另叠加业主小店订单的货款入账（entryType=distributor_wholesale_income，含退款负向冲正）
         boolean technicianSource = "technician".equals(merchant.getMerchantSource());
         BigDecimal merchantIncome = technicianSource
                 ? defaultDecimal(stats.totalRevenue())
@@ -92,6 +145,8 @@ public class WithdrawableService {
                         .sumMerchantIncomeForCompletedOrders(merchant.getId()))
                         .add(defaultDecimal(walletFlowRepository
                                 .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_MERCHANT_DELIVERY_FEE_SHARE)))
+                        .add(defaultDecimal(walletFlowRepository
+                                .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME)))
                         .setScale(2, RoundingMode.HALF_UP);
         // 应收：商家最终实得为负的订单金额合计（进入待偿账户，不进负可提现）
         BigDecimal receivableAmount = technicianSource
@@ -183,8 +238,11 @@ public class WithdrawableService {
                 .sumAmountByApplicant(manager.getId(), "courier", "completed"));
         BigDecimal allWithdrawals = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(manager.getId(), "courier", null));
+        // 微信分账已实时到账的配送报酬不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = calcSplitSettledAmountForOwners(
+                WechatSplitOwnerTypes.COURIER.name(), courierIds);
 
-        BigDecimal withdrawable = totalEarned.subtract(allWithdrawals);
+        BigDecimal withdrawable = totalEarned.subtract(allWithdrawals).subtract(splitSettled);
         if (withdrawable.compareTo(BigDecimal.ZERO) < 0) {
             withdrawable = BigDecimal.ZERO;
         }
@@ -211,8 +269,11 @@ public class WithdrawableService {
                 .sumAmountByApplicant(courierResidentId, "courier", "completed"));
         BigDecimal allWithdrawals = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(courierResidentId, "courier", null));
+        // 微信分账已实时到账的配送报酬不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = calcSplitSettledAmount(
+                WechatSplitOwnerTypes.COURIER.name(), courierResidentId);
 
-        BigDecimal withdrawable = totalEarned.subtract(allWithdrawals);
+        BigDecimal withdrawable = totalEarned.subtract(allWithdrawals).subtract(splitSettled);
         if (withdrawable.compareTo(BigDecimal.ZERO) < 0) {
             withdrawable = BigDecimal.ZERO;
         }

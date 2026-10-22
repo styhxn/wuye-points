@@ -70,7 +70,7 @@ public class ProfileCompletionRewardService {
 
     @Transactional(readOnly = true)
     public RewardConfigListResponse listConfigs(String scope, String scopeId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         // 统筹仅可查看本物业的 coordinator 作用域配置
         final boolean coordinator = roleGuard.isCoordinator();
         final String queryScope = coordinator ? "coordinator" : scope;
@@ -96,7 +96,7 @@ public class ProfileCompletionRewardService {
 
     @Transactional
     public RewardConfigItemResponse createConfig(CreateRewardConfigRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         validateScope(request.getScope());
         if ("platform".equals(request.getScope()) && !roleGuard.isPlatformAdmin()) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "仅平台管理员可创建平台级奖励配置");
@@ -132,7 +132,7 @@ public class ProfileCompletionRewardService {
 
     @Transactional
     public RewardConfigItemResponse updateConfig(String id, UpdateRewardConfigRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         ProfileCompletionReward config = rewardConfigRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PARAM_INVALID, "奖励配置不存在"));
 
@@ -168,7 +168,7 @@ public class ProfileCompletionRewardService {
 
     @Transactional
     public void deleteConfig(String id) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         ProfileCompletionReward config = rewardConfigRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PARAM_INVALID, "奖励配置不存在"));
 
@@ -368,7 +368,7 @@ public class ProfileCompletionRewardService {
      */
     @Transactional(readOnly = true)
     public StatsShareResponse buildStatsShare(String propertyCompanyId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         String scoped = roleGuard.resolveListPropertyCompanyId(propertyCompanyId);
         String query = StringUtils.hasText(scoped) ? "?propertyCompanyId=" + scoped : "";
         String shareUrl = statsShareBaseUrl + query;

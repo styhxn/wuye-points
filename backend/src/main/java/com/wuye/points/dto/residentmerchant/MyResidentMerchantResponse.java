@@ -19,4 +19,19 @@ public class MyResidentMerchantResponse {
     private BigDecimal depositAmount;
     private BigDecimal balance;
     private Long listingCount;
+
+    @Schema(description = "店铺名称")
+    private String shopName;
+
+    @Schema(description = "店铺简介")
+    private String description;
+
+    @Schema(description = "营业时间")
+    private String businessHours;
+
+    @Schema(description = "联系电话（未设置时为空，前端可回退展示店主手机号）")
+    private String contactPhone;
+
+    @Schema(description = "店铺封面图URL")
+    private String coverUrl;
 }

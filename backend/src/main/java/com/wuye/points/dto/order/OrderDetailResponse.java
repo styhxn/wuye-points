@@ -29,6 +29,10 @@ public class OrderDetailResponse extends OrderListItemResponse {
     @Schema(description = "配送单承运类型 courier(平台配送员)/merchant(商家自配)", example = "courier")
     private String carrierType;
 
+    @Schema(description = "配送单送达时间（配送单 delivered_at；配送员完成配送/商家确认送达时落库）",
+            example = "2026-01-01T12:00:00.000Z")
+    private String deliveryDeliveredAt;
+
     @Schema(description = "取消时间", example = "2026-01-01T00:00:00.000Z")
     private String cancelledAt;
 

@@ -1,9 +1,97 @@
 # 物业积分服务系统 — API 接口文档
 
-> **版本**：v8.9
+> **版本**：v8.15
 > **Base URL**：`https://test.yuanxusoftware.top/api/v1`
 > **维护方**：连云港元序软件有限公司
 > **文档说明**：本文件为**当前最新完整接口文档**（已去除历史版本迭代说明，仅保留最新契约）。
+
+## v8.15 补丁摘要（2026-10-22，一级代理/活动组长审核链路修复）
+
+> 前端反馈：① 审核一级代理 `POST /admin/distributor-applications/{id}/audit` 返回 400 `Column 'is_canteen_main_merchant' cannot be null`；② 住户申请活动组长后链路「到申请就结束」，需确认审核及后续处理。
+> 结论：活动组长审核后端**本已存在**（§18.4.1/§101），但审核通过时与一级代理共用同一条商家载体创建路径，被同一个数据库约束问题阻断。本次已在代码层修复并补齐回归测试；**接口路径、入参、出参均无破坏性变更**。
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | **修复审核通过 400**：`merchants.is_canteen_main_merchant` / `merchant_type` / `serve_all_communities` / `is_distributor` 为 NOT NULL 列，JPA 未赋值时会显式写入 NULL（不触发 DB 默认值）。已在实体层补默认值（`goods` / `0` / `1` / `false`）并覆盖全部建店路径，一级代理与活动组长审核通过均可正常创建商家载体 | §60.16.4、§101.2 |
+| 2 | **一级代理「我的申请」修复**：`GET /distributors/my/application` 原先以 `auditStatus=null` 走派生查询，被翻译为 `audit_status IS NULL`，导致恒返回 `none`；现按 `createdAt` 倒序返回本人**最新一条**申请 | §60.16.2 |
+| 3 | **个体负责人「我的申请」同类修复**：`GET /individual-leaders/my-application` 同样改为返回最新一条申请 | §37.7 |
+| 4 | **platform_admin 跨物业列表修复**：`GET /admin/distributor-applications`、`GET /admin/activity-leader-applications` 不传 `propertyCompanyId` 时不再过滤为 `NULL`，正确返回**全部物业**申请（property_admin 仍强制本物业） | §60.16.4、§101.1 |
+| 5 | **明确活动组长审核副作用**：`approved` 同事务创建 active 组长身份 + 自动开通组长小店（`merchant_source=group_leader`、`merchant_type=group_leader`），住户 `role` 始终为 `resident`；重复审核返回 `97061`，驳回不产生身份/小店 | §18.4.1、§101.2 |
+| 6 | **数据库脚本（合并为单个）**：`sql/manual_upgrade_20261022_distributor_leader_audit_fix.sql`（幂等；含 merchants 四列兜底与 NULL 修复、`distributor_applications` 表、活动组长身份/申请表、存量 role 迁移、执行前后检查与回滚说明） | 交付说明 |
+| 7 | **文档订正**：`PUT /residents/{id}` 不再接受 `activity_leader` 等子身份（v8.14 起）；商家审核通过不再改写 `residents.role`；组长小店统一由组长申请审核或管理端创建组长账号时开通 | §2.8、§7.2、§34 |
+
+## v8.14 变更摘要（2026-10-21，业主小店店铺资料 + 组长标签化与申请 + 论坛影子封禁）
+
+> 老板需求：① 业主小店前端页面对齐普通商家（店铺橱窗）；②「我的」页四图标（我的订单/业主小店/活动组组长/一级代理商），已是角色进管理页、否则进申请页；③ 物业可禁止用户论坛发帖/评论（影子封禁：被禁用户无感知、仅自己可见）；④ 角色与客户端对照（见交付 HTML）。
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | **业主小店店铺资料对齐普通商家**：`resident_merchant_applications` 新增 `description`/`business_hours`/`contact_phone`/`cover_url`；申请入参扩展；公开橱窗详情/列表、`GET /resident-merchants/my` 回显 `shopName` 等资料；新增店主改店接口 `PUT /resident-merchants/my/shop`（同步店铺主体） | §60.1、§60.3、§60.9.1、§60.9.2、§60.9.3 |
+| 2 | **活动组组长标签化**：组长从「独立角色」改为「住户子身份（标签）」——`residents.role` 恒为 `resident`，身份由新表 `activity_leader_identities` active 记录判定（与楼长/负责人同模式）；`PUT /residents/{id}` 不再接受 `role=activity_leader`；存量组长账号由 SQL 脚本迁移（建身份 + role 归一化） | §2.8、§18 |
+| 3 | **组长自助申请流程**：C 端 `POST /activity-leader-applications/apply`、`GET /activity-leader-applications/my-application`；管理端 `GET /admin/activity-leader-applications`、`POST /admin/activity-leader-applications/{id}/audit`（通过后同事务建组长身份 + 自动开通组长小店）、`POST /admin/activity-leaders/{residentId}/revoke`（撤销身份） | §18.4.1、§101 |
+| 4 | **「我的」页四图标标签**：`GET /auth/profile`、登录响应 `resident` 摘要、`GET /residents/me` 新增 `isActivityLeader`/`activityLeaderId`、`isResidentMerchant`/`residentMerchantId`、`isDistributor`/`distributorId`（`isDistributor` 原先仅 `/residents/me` 有，本次补齐到 profile 与登录摘要） | §1.6、§2.5、§1.1/§1.2 |
+| 5 | **论坛影子封禁**：管理端 `POST /admin/community/users/{residentId}/forum-ban`（禁言，支持 `expiresAt`，不传=永久）、`DELETE /admin/community/users/{residentId}/forum-ban`（解禁）、`GET /admin/community/forum-bans`（名单）；被禁用户发帖/评论照常成功且本人可见，其他住户不可见（帖子详情对他人按不存在处理）；`comment_count` 只统计对外可见评论；到期由调度器（10 分钟）自动解除 | §17 管理端、§99 |
+| 6 | **补全 `GET /activity-groups/my-led`**：文档原有但服务端缺失的接口本次落地（组长管理页专用；Roles 放宽为「住户 + 组长身份」，不再要求 JWT role） | §18.2.1 |
+| 7 | **新增错误码**：`97050`（该用户已被禁言，无需重复操作）/`97051`（禁言记录不存在）/`97060`–`97063`（组长申请/身份） | 错误码速查表 |
+| 8 | **数据库脚本**：`sql/manual_upgrade_shop_profile_leader_tag_forum_ban_20261021.sql`（幂等，含执行前检查/执行后验证/回滚说明；对应 Flyway V25 留档） | 交付说明 |
+
+## v8.13 变更摘要（2026-10-20，负责人身份标签化：统筹/板块/个体负责人降级为业主住户标签）
+
+> 老板需求：「把负责人也做成业主住户的标签，就跟业主小店、一级代理商似的」。
+> 统筹 / 板块负责人 / 个体负责人不再是「与业主住户互斥的角色字段」，而是「住户 + 负责人」复合身份——`residents.role` 保持 `resident` 不变，身份由各自业务表 active 记录判定（与单元楼长、物业经理同模式，参照 V18 楼长改造先例）。
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | **身份标签化**：任命统筹/个体负责人不再改写 `residents.role`（保持 `resident`）；撤销不再回退 role。板块负责人任命本就未写 role | §37.2、§37.6、§39.2 |
+| 2 | **`GET /auth/profile`、`GET /residents/me`、登录响应 `resident` 摘要新增负责人标签**：`isCoordinator`/`coordinatorId`、`isSectorLeader`/`sectorLeaderIds`、`isIndividualLeader`/`individualLeaderId`（住户子身份，`role` 仍为 `resident`；与 `isBuildingLeader` 同款，供「我的」页渲染负责人工作台入口） | §1.6、§2.5、§1.1/§1.2 |
+| 3 | **负责人工作台鉴权切换**：`/coordinator/*`、`/sector-leaders/my/*`、`/individual-leaders/*` 及负责人提现接口不再要求 JWT role 为负责人角色，改为「登录住户 + 业务表 active 记录」判定（楼长工作台同款）；非负责人调用返回原「当前用户不是xx」错误 | §37.4、§39.6、§62、§96 |
+| 4 | **`PUT /residents/{id}`、`POST /residents` 的 `role` 白名单收紧**：不再接受 `coordinator`/`sector_leader`/`individual_leader`（负责人只能通过任命/申请审核获得，仿楼长） | §2.2、§2.8 |
+| 5 | **存量数据归一化**：`sql/manual_upgrade_leader_identity_tags_20261020.sql`（手工执行；将存量负责人 role 改回 `resident`，无 DDL）。存量 JWT 由 `RoleGuard` 归一化兜底，建议负责人用户重新登录 | §37、§39 |
+| 6 | **权限与消息口径兼容**：负责人角色预设权限改按「有效角色集合」解析（库内角色 ∪ 负责人身份角色码）；按 role 群发的广播消息对负责人按原角色码兼容送达 | §95、§30 |
+| 7 | **数据库脚本**：`sql/manual_upgrade_leader_identity_tags_20261020.sql`（幂等，含执行前检查/执行后验证/回滚说明） | 交付说明 |
+
+## v8.11 变更摘要（一级代理→业主小店件数制 + 物业公司经理）
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | 一级代理标志 `merchants.is_distributor`：管理端开通/取消（`POST /admin/distributors/{merchantId}/enable|disable`） | §60.12 |
+| 2 | 管理端 `POST /admin/distributor-products` 必传 `distributorMerchantId`（错误码 60031）；分销商品列表仅展示已开通一级代理商家的商品 | §60.12 |
+| 3 | 业主小店拿货件数制：`POST /resident-merchants/listings` 新增 `quantity`（≥1，一次性扣一级代理库存）；`DELETE /resident-merchants/listings/{id}` 取消拿货退回未卖出件数；listing 响应新增 `tookQuantity`/`soldQuantity`/`quantityRemaining`/`soldOutUnlisted` | §60.6–§60.7 |
+| 4 | 业主小店下单/试算：`POST /orders/from-listing`、`POST /orders/from-listing/preview` 均支持 `quantity`（默认 1）；**订单归属业主小店店铺主体**（`merchantId`/`merchantName` 为小店店铺，`merchant_source=resident_shop`） | §8.0.0、§60.10.1 |
+| 5 | 件数制结算口径：商品额=零售价×件数；货款=进货价×件数→一级代理商家钱包；平台佣金=商品额×佣金率（默认 10%，后台可配）；差价→店主钱包；卖满自动下架；退款冲正 | §60.15 |
+| 6 | 物业公司经理（新角色，`property_managers` 表，不进 `residents.role`）：管理端 CRUD `/admin/property-managers`；经理工作台 `/property-managers/my/*`；从楼长分成中按比例抽成；提现类型 `property_manager` | §100 |
+| 7 | 新增错误码：60030–60036（件数制）、91005–91008（物业经理） | 错误码速查表 |
+| 8 | **前端约定**：下单/支付时积分入口移除，`pointUsed` 一律传 `0`（后端逻辑保留） | §8.0、§8.0.0、§8.2 |
+
+## v8.11.1 补丁摘要（2026-10-16，前端联调问题修复）
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | `GET /merchants` 列表项（及 `GET /merchants/{id}` 详情）新增返回 `isDistributor`（`Boolean`，取 `merchants.is_distributor`），修复「一级代理商家」开通/取消后状态无法回读、「新建货源商品」一级代理商家下拉恒为空的问题 | §7.1、§7.3 |
+| 2 | 错误码拆分：新增 `60037`「仅审核通过的商家可管理一级代理权限」（开通/取消一级代理、上架货源商品时商家非 `approved`）；`60030` 收敛为仅表示「该商家未开通一级代理权限」 | §60.12、错误码速查表 |
+| 3 | 文档订正：`GET /merchants` 的 `propertyCompanyId` 标注真实规则——**未登录浏览时必填**（不传返回 `10001`），已登录取 Token 物业归属可省略 | §7.1 |
+
+## v8.12.1 补丁摘要（2026-10-20，一级代理申请能力 + 身份查询接口）
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | 🆕 一级代理申请全链路：C 端 `POST /distributors/apply`、`GET /distributors/my/application`、`GET /distributors/my/identity`（未开通返 200+`isDistributor:false`，不返 60030）；管理端 `GET /admin/distributor-applications`、`POST /admin/distributor-applications/{id}/audit`（通过后同事务自动建商家载体并开通 `is_distributor`） | §60.16 |
+| 2 | `GET /residents/me` 响应新增 `isDistributor`（名下有 `is_distributor=1` 且 `approved` 载体为 `true`） | §2 / §60.16 |
+| 3 | 新增错误码 `97040`（申请不存在）/`97041`（已审核）/`97042`（有待审核申请）/`97043`（已是一级代理）；数据表 `distributor_applications` | 错误码速查表、§60.16.5 |
+| 4 | 文档命名消歧：§37.7、§95.8「一级代理申请」实为**个体负责人申请**，已改名并加注，与 §60 货源一级代理明确区分 | §37.7、§95.8 |
+
+## v8.12 变更摘要（2026-10-16，配送完成与订单完成 · 状态口径与结算展示分离）
+
+> 对应前端问题：《配送完成与订单完成-状态口径与结算展示分离说明》（配送员处显示已完成、商家/居民处仍显示配送中）。
+
+| # | 变更 | 涉及章节 |
+| --- | --- | --- |
+| 1 | **订单列表/详情新增配送状态字段**：`deliveryStatusCode`（配送单状态 code，历史值 `delivered` 归一为 `completed`）+ `deliveryStatusLabel`（配送单状态中文，后端下发）。三端据此把「业务状态」与「物流状态」分开展示，修复同一张订单卡片同时出现「配送中」与「已完成」的矛盾 | §8.3、§8.4、§8.5 |
+| 2 | **资金终态收紧**：`PATCH /orders/{id}/status` 不再允许 `courier` 角色置 `completed`（返回 `70002`）。`completed` 是资金终态（触发分成记录生成 + 微信分账冻结，且不再支持线上退货退款），平台配送单的完成权归居民（`POST /orders/{id}/confirm`）或超期自动确认 | §8.8 |
+| 3 | **口径明确**：`POST /deliveries/{id}/complete`（配送员完成配送）**不级联完成订单**——配送单置 `completed`，订单保持 `delivering` 并落 `deliveredAt`（已送达待确认）；响应新增 `orderStatus`/`orderStatusLabel` 供配送员端展示。商家自配单仍由 `POST /deliveries/{id}/merchant-confirm` 直接级联完成订单（不经居民确认） | §9.5、§68.3 |
+| 4 | **配送状态枚举补齐**：正式完成态为 `completed`；`merchant_self`/`merchant_delivering` 为商家自配内部态；`delivered` 为历史遗留完成态（读写归一 `completed`）；`refunded` 为历史遗留退款态（保留展示） | 配送状态枚举表 |
+| 5 | **`/deliveries/my` 兼容增强**：列表项新增 `statusLabel`/`orderStatus`/`orderStatusLabel`；`status` 过滤值传 `delivered` 时自动归一为 `completed` 查询 | §9.3 |
+| 6 | **数据库规范化脚本**：`sql/manual_upgrade_delivery_order_status_20261016.sql`（幂等）——历史 `deliveries.status='delivered'` 归一为 `completed`，无其它 DDL | §68.7 |
 
 # 目录
 
@@ -28,6 +116,7 @@
   - [订单模块](#8-订单模块-orders)
     - [支付试算 `POST /orders/preview`](#80-订单支付试算)
     - [业主上架商品支付试算 `POST /orders/from-listing/preview`](#800-post-ordersfrom-listingpreview--业主上架商品支付试算)
+    - [业主小店下单 `POST /orders/from-listing`](#60101-post-ordersfrom-listing--业主小店下单件数制)
   - [配送模块](#9-配送模块-deliveries)
     - [可用配送员 `GET /deliveries/couriers`](#98-可用配送员)
   - [配送规则模块](#10-配送规则模块-delivery-rules)
@@ -89,6 +178,7 @@
   - [二期 — 业主商户体系](#60-二期--业主商户体系-resident-merchants)
   - [优惠券模块](#98-优惠券模块)
   - [单元楼长与业主卖货钱包](#99-单元楼长与业主卖货钱包)
+  - [物业公司经理（v8.11）](#100-物业公司经理property-managers)
 - [三期 — 模块负责人体系](#61-三期--模块负责人体系-sector-leaders)
   - [三期 — 快递负责人体系](#62-三期--快递负责人体系-courier-managers)
   - [三期 — 商家端口改造](#63-三期--商家端口改造-merchant-port)
@@ -343,6 +433,13 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/auth/admin-login \
       "phone": "139****0020",
       "role": "property_admin",
       "propertySubRole": "property_leader",
+      "isBuildingLeader": false,
+      "isCoordinator": false,
+      "coordinatorId": null,
+      "isSectorLeader": false,
+      "sectorLeaderIds": [],
+      "isIndividualLeader": false,
+      "individualLeaderId": null,
       "propertyCompanyId": "pc_demo001",
       "status": "active"
     }
@@ -355,6 +452,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/auth/admin-login \
 > - 登录鉴权主字段仍是 `role`。物业领导 / 物业管理员的主角色均为 **`property_admin`**。  
 > - 细分用 `propertySubRole`：`property_leader` = 物业领导，`property_operator` = 物业管理员（可限楼栋/小区）。  
 > - **不要把 `property_leader` / `property_operator` 写入 `role` 字段**；若历史数据误写入 JWT `role`，后端会按 `property_admin` 归并鉴权。
+
+> **🆕 v8.13 负责人身份标签**：登录响应 `resident` 摘要（`/auth/wechat-login`、`/auth/admin-login`）新增 `isCoordinator`/`coordinatorId`、`isSectorLeader`/`sectorLeaderIds`、`isIndividualLeader`/`individualLeaderId`——与 `isBuildingLeader` 同款的「住户子身份」标签：负责人账号 `role` 为 `resident`，前端据这些字段在登录后立即渲染「我的」页负责人工作台入口；同时持有负责人身份的住户仍可正常登录管理端（负责人工作台按业务表 active 记录鉴权）。
 
 **错误响应**：
 
@@ -566,11 +665,26 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/auth/profile \
     "userType": "owner",
     "role": "resident",
     "propertySubRole": null,
+    "isBuildingLeader": false,
+    "buildingLeaderId": null,
+    "isCoordinator": false,
+    "coordinatorId": null,
+    "isSectorLeader": false,
+    "sectorLeaderIds": [],
+    "isIndividualLeader": false,
+    "individualLeaderId": null,
+    "isActivityLeader": false,
+    "activityLeaderId": null,
+    "isResidentMerchant": false,
+    "residentMerchantId": null,
+    "isDistributor": false,
+    "distributorId": null,
     "propertyCompanyId": "pc_demo001",
     "propertyName": "演示物业公司",
     "communityId": "com_demo001",
     "communityName": "演示小区",
     "building": "3栋",
+    "floor": "5",
     "unit": "5单元",
     "room": "502",
     "familyId": "fam_demo001",
@@ -589,6 +703,10 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/auth/profile \
 
 > 物业侧账号（`role=property_admin`）响应额外带 `propertySubRole`：`property_leader`（物业领导）或 `property_operator`（物业管理员）；非物业账号为 `null`。
 
+> **🆕 v8.13 负责人身份标签**：`isCoordinator`/`coordinatorId`、`isSectorLeader`/`sectorLeaderIds`、`isIndividualLeader`/`individualLeaderId` 为「住户子身份」标签——与 `isBuildingLeader` 同款：`role` 仍为 `resident`，身份由 `coordinators`/`sector_leaders`/`individual_leaders` 表 active 记录判定。前端按这些字段在「我的」页渲染负责人工作台入口（一名业主可同时持有多个标签：楼长 + 业主小店 + 一级代理 + 负责人）。`sectorLeaderIds` 为数组（同一住户可负责多个板块），非板块负责人时为空数组。
+
+> **🆕 v8.14「我的」页四图标标签**：`isActivityLeader`/`activityLeaderId`（组长，身份由 `activity_leader_identities` 表 active 记录判定）、`isResidentMerchant`/`residentMerchantId`（业主小店营业中，`resident_merchant_applications.status=active`）、`isDistributor`/`distributorId`（一级代理，名下有 `is_distributor=1` 且 `approved` 载体）。四图标路由规则：**我的订单**（恒显示）；**业主小店/活动组组长/一级代理商**——对应标签为 `true` 时点击进管理页面，为 `false` 时进申请页面（申请状态可再调 `GET /resident-merchants/my`、`GET /activity-leader-applications/my-application`、`GET /distributors/my/application` 查询）。一名住户可同时持有多个标签，图标互不排斥。
+
 **错误响应**：
 
 
@@ -596,7 +714,9 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/auth/profile \
 | ------- | ---- | -------- |
 | `20004` | 403  | 权限不足（角色不在 Roles 列表内） |
 
-> **三角色说明**：`merchant`、`courier`、`activity_leader` 调用本接口将返回 `20004`，**属预期行为**。三角色客户端登录后**不应**调用本接口；用户信息与路由所需字段以 `POST /auth/admin-login` 响应中的 `resident` 对象为准（含 `id`、`role`、`propertySubRole`、`propertyCompanyId` 等）。
+> **三角色说明**：`merchant`、`courier` 调用本接口将返回 `20004`，**属预期行为**。这两类角色客户端登录后**不应**调用本接口；用户信息与路由所需字段以 `POST /auth/admin-login` 响应中的 `resident` 对象为准（含 `id`、`role`、`propertySubRole`、`propertyCompanyId` 等）。
+>
+> **🆕 v8.14 组长标签化影响**：`activity_leader` 已降级为住户子身份（标签），组长账号 `role` 为 `resident`，**可以**正常调用本接口（`isActivityLeader=true`）；存量 JWT 中残留的 `activity_leader` 角色值由服务端归一化为 `resident` 后放行。
 
 ---
 
@@ -633,6 +753,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/residents?page=1&pageSize=20
 | `merchantName`      | `String` | ❌   |              | 按**关联商家名称**搜索（业务角色账号场景）。匹配 `merchants.name`，**不依赖 `residents.role`**，故被踢出（`resident` 已降级）的商家也可通过店铺名找回对应账号 |
 | `propertyCompanyId` | `String` | ❌   |              | 物业公司ID（超管筛选）                      |
 | `sort`              | `String` | ❌   | `-createdAt` | 排序字段（支持多字段：`sort=+building,+floor,+unit,+room`，跨页由服务端完成） |
+
+> **🆕 v8.13 负责人标签化影响**：统筹/板块/个体负责人任命后 `role` 保持 `resident`，本列表按 `role=resident` 即可筛出（含负责人账号）；负责人身份请在住户详情（§2.7）通过 `isCoordinator`/`isSectorLeader`/`isIndividualLeader` 标签识别。存量数据执行 `sql/manual_upgrade_leader_identity_tags_20261020.sql` 归一化后，`role=coordinator` 等筛选值将不再命中任何账号。
 
 
 **成功响应**：
@@ -768,6 +890,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/residents \
 | `propertyCompanyId` | `String`  | ✅   |                                    | 物业公司ID                                       |
 | `communityId`       | `String`  | ✅   |                                    | 小区ID                                         |
 | `building`          | `String`  | ❌   | `@Size(max=20)`                    | 楼栋                                           |
+| `floor`             | `String`  | ❌   | `@Size(max=20)`                    | 楼层                                           |
 | `unit`              | `String`  | ❌   | `@Size(max=20)`                    | 单元                                           |
 | `room`              | `String`  | ❌   | `@Size(max=20)`                    | 房号                                           |
 
@@ -898,6 +1021,10 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/residents/me/points \
 
 **成功响应**：同 `/auth/profile`，额外包含 `totalConsumption`、`totalOrders`。
 
+> **🆕 v8.13**：响应含负责人身份标签 `isCoordinator`/`coordinatorId`、`isSectorLeader`/`sectorLeaderIds`、`isIndividualLeader`/`individualLeaderId`（住户子身份，`role` 仍为 `resident`，详见 §1.6 说明），与既有 `isDistributor`（一级代理）并列，供「我的」页渲染全部身份入口。
+
+> **🆕 v8.14**：响应新增 `isActivityLeader`/`activityLeaderId`（组长标签，`activity_leader_identities` active 记录判定）、`isResidentMerchant`/`residentMerchantId`（业主小店营业中），与 `isDistributor` 共同构成「我的」页四图标的路由依据（详见 §1.6）。
+
 > **生日/年龄口径**：详情返回 `birthday`（`YYYY-MM-DD`）；有生日时 `age` 由后端按生日实时计算（随时间增长），否则回退库内 `age`。
 
 ---
@@ -935,6 +1062,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/residents/me \
 | `maritalStatus` | `String`  | ❌   | `@Size(max=20)`     | 婚姻状态：`single`/`married`/`divorced`/`widowed` |
 | `hasChildren`   | `Boolean` | ❌   |                     | 是否有子女                                        |
 | `building`      | `String`  | ❌   | `@Size(max=20)`     | 楼栋（**仅管理端角色可改，住户提交将被忽略**）                   |
+| `floor`         | `String`  | ❌   | `@Size(max=20)`     | 楼层（**仅管理端角色可改，住户提交将被忽略**）                   |
 | `unit`          | `String`  | ❌   | `@Size(max=20)`     | 单元（**仅管理端角色可改，住户提交将被忽略**）                   |
 | `room`          | `String`  | ❌   | `@Size(max=20)`     | 房号（**仅管理端角色可改，住户提交将被忽略**）                   |
 
@@ -1274,6 +1402,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/residents/me/building-change
     "communityId": "com_demo001",
     "communityName": "演示小区",
     "building": "3栋",
+    "floor": "5",
     "unit": "5单元",
     "room": "502",
     "familyId": "fam_demo001",
@@ -1289,13 +1418,21 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/residents/me/building-change
     "updatedAt": "2026-06-28 14:30:00",
     "hasArrears": false,
     "arrearsCount": 0,
-    "arrearsAmount": 0.00
+    "arrearsAmount": 0.00,
+    "isCoordinator": false,
+    "coordinatorId": null,
+    "isSectorLeader": false,
+    "sectorLeaderIds": [],
+    "isIndividualLeader": false,
+    "individualLeaderId": null
   },
   "timestamp": "2026-07-01 15:23:33"
 }
 ```
 
 > **说明**：详情响应新增 `hasArrears`/`arrearsCount`/`arrearsAmount` 三字段，与列表 §2.1 一致。
+
+> **🆕 v8.13**：详情含负责人身份标签 `isCoordinator`/`coordinatorId`、`isSectorLeader`/`sectorLeaderIds`、`isIndividualLeader`/`individualLeaderId`（住户子身份，`role` 仍为 `resident`，详见 §1.6），`/residents/me` 与 `/residents/{id}` 一致。
 
 ---
 
@@ -1340,9 +1477,10 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/residents/res_b7m9x1 \
 | `maritalStatus` | `String`  | ❌   | `@Size(max=20)`     | 婚姻状态：`single`/`married`/`divorced`/`widowed` |
 | `hasChildren`   | `Boolean` | ❌   |                     | 是否有子女                                        |
 | `building`      | `String`  | ❌   | `@Size(max=20)`     | 楼栋（仅管理端角色可改）                               |
+| `floor`         | `String`  | ❌   | `@Size(max=20)`     | 楼层（仅管理端角色可改）                               |
 | `unit`          | `String`  | ❌   | `@Size(max=20)`     | 单元（仅管理端角色可改）                               |
 | `room`          | `String`  | ❌   | `@Size(max=20)`     | 房号（仅管理端角色可改）                               |
-| `role`          | `String`  | ❌   | 仅管理端角色可传        | 角色变更（管理端专用，如 `activity_leader`）。改为 `activity_leader` 时自动开通组长小店（§18 能力总览），幂等 |
+| `role`          | `String`  | ❌   | 仅管理端角色可传        | 角色变更（管理端专用），仅接受 `RoleGuard.VALID_ROLES`（`resident`/`merchant`/`courier`/`technician`/`property_admin`/`community_admin` 等）。**v8.14 起不再接受 `activity_leader`/`coordinator`/`sector_leader`/`individual_leader`**——组长与负责人均为住户子身份，只能通过管理端任命或申请审核获得（组长见 §101.2，负责人见 §37.2/§39.2/§37.6），仿楼长（`building_leader` 亦不可通过本字段授予） |
 
 
 **成功响应**：
@@ -2978,7 +3116,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchants?page=1&pageSize=10
 | `applyRole`         | `String` | ❌   |              | 入驻申请身份筛选：`merchant`/`technician`/`activity_leader`（管理端审核列表按身份筛选，如只看技工入驻申请） |
 | `merchantType`      | `String` | ❌   |              | 商家角色类型筛选：`goods` 商品商家 / `technician` 技工商家 / `group_leader` 组长商家 / `canteen` 社区食堂商家。不传返回全部；**前端可按返回的 `merchantType` 分区展示（如食堂专区）** |
 | `status`            | `String` | ❌   | 全部          | 商家状态筛选：`active`/`inactive`/`kicked`/`quit`（**仅管理端可用**，传此参数需管理员登录；不传返回全部状态）。用于区分「营业中」与「已被踢出/已退出」记录——同一商家被踢出后重新入驻会同时存在 `kicked` 与 `active` 两条记录，属正常业务轨迹 |
-| `propertyCompanyId` | `String` | ❌   |              | 物业公司ID                                                |
+| `propertyCompanyId` | `String` | 条件 |              | 物业公司ID。**未登录浏览时必填**（无 Token 上下文，后端无法判定归属物业，不传返回 `10001`）；已登录用户后端取 Token 中的物业归属，可省略（平台管理员可传指定物业） |
 | `recommended`       | `Boolean`| ❌   |              | 是否仅返回**官方/物业推荐**商家：`recommended=true`=物业推荐列表；不传=返回全部审核通过商家（官方全部商家、物业公司模块） |
 | `sort`              | `String` | ❌   | `-rankOrder` | 排序                                                    |
 
@@ -3025,6 +3163,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchants?page=1&pageSize=10
         "status": "active",
         "isRecommended": true,
         "recommendedSort": 100,
+        "isDistributor": false,
         "createdAt": "2026-03-15 10:00:00"
       }
     ],
@@ -3072,6 +3211,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchants?page=1&pageSize=10
 | `list[].status`                | `String`       | 状态：`active`/`frozen`/`disabled`                         |
 | `list[].isRecommended`        | `Boolean`      | 是否官方/物业推荐（用于区分「物业推荐」列表与「官方全部/物业公司模块」） |
 | `list[].recommendedSort`      | `Integer`      | 推荐排序（越大越靠前）                                       |
+| `list[].isDistributor`       | `Boolean`      | 🆕 2026-10-16 是否一级代理（`merchants.is_distributor`）：管理端「一级代理商家」开通/取消后回读此字段；未开通为 `false`。`GET /merchants/{id}` 详情同名字段一致 |
 | `list[].merchantSource`        | `String`       | 商家来源：`platform`（平台）/ `group_leader`（组长店）/ `technician`（技师店）；前端按此字段排除商家 / 展示活动组（组长店为 `group_leader`） |
 | `list[].createdAt`             | `String`       | 创建时间                                                    |
 
@@ -3085,7 +3225,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/merchants?page=1&pageSize=10
 **Auth**: Required  
 **Roles**: `merchant`、`activity_leader`（组长店，`merchantSource=group_leader`）、`technician`（技工店，`merchantSource=technician`）
 
-> **组长/技工说明**：组长（`activity_leader`）/技工（`technician`）由系统自动绑定自己的店铺（按 `resident_id + 物业 + merchantSource` 解析，优先 `resident_id`，回退手机号）。**组长账号任命（§2.8 改 `role=activity_leader`）时立即自动创建** `merchant_source=group_leader` 小店（免审核：`auditStatus=approved`、`status=active`、店铺名=`{姓名或手机号}的小店`、分类=`活动组`、`deliveryFee=0`、`serveAllCommunities=true`、默认抽佣 0.1）；本接口可直接读取店铺配置，含 `deliveryFee` / `freeDeliveryThreshold` / `deliveryScope`。店铺未绑定/不存在时返回 `60001`（商家不存在）。
+> **组长/技工说明**：组长（`isActivityLeader=true`，`role` 仍为 `resident`）/技工（`technician`）由系统自动绑定自己的店铺（按 `resident_id + 物业 + merchantSource` 解析，优先 `resident_id`，回退手机号）。**组长小店在组长申请审核通过（§101.2）或管理端创建组长账号（`POST /admin/role-accounts`，`role=activity_leader`）时立即自动创建**（免审核：`auditStatus=approved`、`status=active`、`merchant_source=group_leader`、`merchant_type=group_leader`、店铺名=`{姓名或手机号}的小店`、分类=`活动组`、`deliveryFee=0`、`serveAllCommunities=true`、默认抽佣 0.1）；本接口可直接读取店铺配置，含 `deliveryFee` / `freeDeliveryThreshold` / `deliveryScope`。店铺未绑定/不存在时返回 `60001`（商家不存在）。
 
 **请求示例**：
 
@@ -3299,6 +3439,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/my/delivery-fees \
     "rankOrder": 1,
     "auditStatus": "approved",
     "status": "active",
+    "isDistributor": false,
     "merchantSource": "group_leader",
     "totalOrders": 120,
     "totalRevenue": 12500.00,
@@ -3555,6 +3696,8 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/mch_demo001 \
 
 按当前物业公司物业币商城规则（§69）试算可抵扣金额与现金应付，下单/支付前调用。
 
+> 🆕 **v8.11 前端约定**：下单支付页**积分入口已移除**，本接口与 `POST /orders/{id}/pay`（§8.2）调用时 `pointUsed` **一律传 `0`**。后端积分支付逻辑保留不变，仅前端不再提供积分抵扣入口。
+
 **请求体**（`PreviewOrderRequest`）：
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -3562,7 +3705,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/mch_demo001 \
 | `merchantId` | `String` | ✅ | 商家 ID |
 | `items` | `Array` | ✅ | 商品列表（同创建订单：`productId`、`quantity`） |
 | `coinUsed` | `BigDecimal` | ❌ | 期望抵扣的物业币金额 |
-| `pointUsed` | `Integer` | ❌ | 期望使用的积分 |
+| `pointUsed` | `Integer` | ❌ | 期望使用的积分（**前端固定传 0**） |
 | `familyId` | `String` | ❌ | 使用家庭物业币池时传入 |
 | `userCouponId` | `String` | ❌ | 期望使用的用户优惠券 ID（`ucp_` 前缀，取自 `GET /coupons/available`，见 §61） |
 
@@ -3629,16 +3772,18 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/preview \
 **Auth**: Required  
 **Roles**: `resident`
 
-对业主商户上架商品（`listingId`）试算可抵扣金额与现金应付，口径与下单 `POST /orders/from-listing` 一致（商品金额=零售价×数量，运费按一级经销商配送规则）。上架商品无商城 `productId`，**不可走 `POST /orders/preview`**。仅试算不落库，支付仍以下单后 `POST /orders/{id}/pay` 后端校验为准。
+对业主商户上架商品（`listingId`）试算可抵扣金额与现金应付，口径与下单 `POST /orders/from-listing` 一致（商品金额=零售价×件数，运费按**业主小店店铺主体**配送规则——店铺默认配送费 0、无满额减免，后台可调）。上架商品无商城 `productId`，**不可走 `POST /orders/preview`**。仅试算不落库，支付仍以下单后 `POST /orders/{id}/pay` 后端校验为准。
+
+> 🆕 **v8.11（件数制）**：① `quantity` 支持多件购买（默认 1，须 ≤ listing 可售件数 `quantityRemaining`，否则 `60035`）；② 订单归属**业主小店店铺主体**（`merchant_source=resident_shop`），非一级代理；③ **前端约定：下单/支付页积分入口已移除，`pointUsed` 一律传 `0`**（后端积分支付逻辑保留不变）。
 
 **请求体**（`PreviewListingOrderRequest`）：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `listingId` | `String` | ✅ | 业主上架记录 ID（`rml_` 前缀，见 `GET /resident-merchants/public-listings`/公开橱窗） |
-| `quantity` | `Integer` | ❌ | 数量，默认 1 |
+| `quantity` | `Integer` | ❌ | 购买件数，默认 1；须 ≥1 且 ≤ 可售件数 |
 | `coinUsed` | `BigDecimal` | ❌ | 期望抵扣的物业币金额 |
-| `pointUsed` | `Integer` | ❌ | 期望使用的积分 |
+| `pointUsed` | `Integer` | ❌ | 期望使用的积分（**前端固定传 0**） |
 | `familyId` | `String` | ❌ | 使用家庭物业币池时传入 |
 | `userCouponId` | `String` | ❌ | 期望使用的用户优惠券 ID（`ucp_` 前缀，见 §61） |
 
@@ -3666,6 +3811,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/from-listing/preview 
 | `60004` | 404 | 上架商品/货源商品不存在 |
 | `70002` | 409 | 该商品已下架 / 货源商品已停售 |
 | `60001` | 404 | 货源商家不存在 |
+| `60035` | 400 | 可售件数不足（件数制，v8.11） |
+| `60036` | 404 | 业主小店店铺主体不存在（v8.11） |
 
 ---
 
@@ -3863,7 +4010,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/ord_demo001/pay \
 | 字段              | 类型           | 必填  | 校验          | 说明                                       |
 | --------------- | ------------ | --- | ----------- | ---------------------------------------- |
 | `paymentMethod` | `String`     | ✅   | `@NotBlank` | `point`/`property_coin`/`wechat`/`mixed` |
-| `pointUsed`     | `Integer`    | ❌   | `@Min(0)`   | 使用积分                                     |
+| `pointUsed`     | `Integer`    | ❌   | `@Min(0)`   | 使用积分（**v8.11 前端约定：固定传 0**，下单页积分入口已移除，后端逻辑保留） |
 | `coinUsed`      | `BigDecimal` | ❌   | `@Min(0)`   | 使用物业币                                    |
 | `mainMerchantId` | `String`    | ❌   |             | 社区食堂定向余额所属**主商家体系ID**（`mixed` 且使用定向余额时必传，须在 `POST /orders/preview` 返回的 `directedBalances` 中） |
 | `directedBalanceUsed` | `BigDecimal` | ❌ | `@Min(0)` | 社区食堂**定向余额抵扣金额**（`mixed` 且使用定向余额时必传，须 ≤ 该体系余额；与 `mainMerchantId` 成对传入，否则返回 `10002`） |
@@ -4031,15 +4178,12 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&or
         "paymentMethodCode": "mixed",
         "paymentMethodLabel": "混合支付",
         "deliveryId": "dlv_demo001",
-        "deliveryStatus": "待抢单",
         "deliveryStatusCode": "pending",
         "deliveryStatusLabel": "待抢单",
         "pointUsed": 100,
         "coinUsed": 5.00,
         "cashAmount": 0.00,
-        "orderStatus": "已支付",
-        "orderStatusCode": "paid",
-        "orderStatusLabel": "已支付",
+        "orderStatus": "paid",
         "deliveryAddress": "3栋5单元502",
         "contactPhone": "13800138000",
         "createdAt": "2026-07-01 15:23:33"
@@ -4063,13 +4207,10 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&or
 | `paymentMethod` | `String` | **展示用中文**（微信支付/混合支付等） |
 | `paymentMethodCode` | `String` | 支付方式 code |
 | `paymentMethodLabel` | `String` | 与 `paymentMethod` 相同 |
-| `orderStatus` | `String` | **展示用中文**（已支付/配送中等） |
-| `orderStatusCode` | `String` | 订单状态 code |
-| `orderStatusLabel` | `String` | 与 `orderStatus` 相同 |
-| `deliveryId` | `String` | 配送单 ID |
-| `deliveryStatus` | `String` | **展示用中文**（待抢单/已完成等） |
-| `deliveryStatusCode` | `String` | 配送状态 code |
-| `deliveryStatusLabel` | `String` | 与 `deliveryStatus` 相同 |
+| `orderStatus` | `String` | 订单业务状态 **code**（`pending`/`paid`/`delivering`/`completed`/`cancelled`/`refunding`/`refunded`/`refund_rejected`，逻辑判断用此字段） |
+| `deliveryId` | `String` | 配送单 ID（无配送单为 `null`：团购/食堂单、商家尚未选择履约方式） |
+| `deliveryStatusCode` | `String` | 🆕 **v8.12** 配送单状态 code：`pending`/`accepted`/`delivering`/`merchant_self`/`completed`/`failed`/`property_fallback`（历史值 `delivered` 归一为 `completed`；无配送单为 `null`）。**物流状态，与订单业务状态相互独立** |
+| `deliveryStatusLabel` | `String` | 🆕 **v8.12** 配送单状态中文（后端下发：待抢单/已接单/配送中/已完成/配送失败/物业兜底/商家自配待配送/已退款），前端无需再维护映射 |
 | `deliveryAddress` | `String` | 配送地址 |
 | `contactPhone` | `String` | 联系电话（商家查看本店订单不脱敏） |
 | `residentName` | `String` | 下单用户姓名 |
@@ -4164,18 +4305,16 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&or
     "pointUsed": 100,
     "coinUsed": 5.00,
     "cashAmount": 0.00,
-    "orderStatus": "已支付",
-    "orderStatusCode": "paid",
-    "orderStatusLabel": "已支付",
     "deliveryAddress": "3栋5单元502",
     "contactPhone": "13800138000",
     "remark": "请尽快配送",
     "courierId": null,
     "courierName": null,
     "deliveryId": "dlv_demo001",
-    "deliveryStatus": "待抢单",
+    "deliveryDeliveredAt": null,
     "deliveryStatusCode": "pending",
     "deliveryStatusLabel": "待抢单",
+    "orderStatus": "paid",
     "paidAt": "2026-07-01 15:24:00",
     "completedAt": null,
     "cancelledAt": null,
@@ -4186,7 +4325,14 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/orders?page=1&pageSize=10&or
 }
 ```
 
-**详情字段**：与 §8.4 列表项相同，另含 `remark`、`courierName`、`updatedAt` 等；`orderStatus`/`paymentMethod`/`deliveryStatus` 均为**中文展示**，逻辑用 `*Code`。金额字段语义与列表一致（§8.4 字段表），住户视角至少返回 `productAmount`/`originalDeliveryFee`/`deliveryFee`/`deliveryWaiverAmount`/`totalAmount`/`freeDeliveryEligible`/`waiverReason`；商家与管理员视角额外返回 `deliverySubsidySponsor`/`deliverySubsidyAmount`/`merchantGoodsShare`/`merchantDeliverySubsidy`/`merchantShare`/`distributionStatus`。
+**详情字段**：与 §8.4 列表项相同，另含 `remark`、`courierName`、`updatedAt`、`version`、`cancelledAt`、`propertyCompanyId`、`deliveryDeliveredAt`（配送单送达时间）等。
+
+> **🆕 v8.12 三层状态口径（业务状态 / 物流状态 / 资金状态分离）**：
+> - **业务状态** `orderStatus`（code：`pending`/`paid`/`delivering`/`completed`/…）回答「订单走到哪一步」——订单列表 pill、订单详情 pill 用它；
+> - **物流状态** `deliveryStatusCode` + `deliveryStatusLabel` 回答「货送到哪了」——商家卡片配送提示、订单详情「配送状态」行用它；**与 `orderStatus` 相互独立**：配送员完成配送后配送单为 `completed`，而订单仍为 `delivering`（已送达，待居民确认收货）；
+> - **资金状态**（分账腿 / 冻结解冻汇总）**只在**商家「结算」Tab 与配送员「到账结算」界面展示，订单列表/详情不再承担资金态表达。
+>
+> `deliveredAt`（订单级，配送完成时落库）与 `deliveryDeliveredAt`（配送单级）都表示送达时间；无配送单（团购/食堂单、未选履约方式）时 `deliveryId`/`deliveryStatusCode`/`deliveryStatusLabel`/`deliveryDeliveredAt` 均为 `null`。
 
 ---
 
@@ -4521,6 +4667,31 @@ pending → cancelled
 paid → refunding → refunded
 ```
 
+> **🆕 v8.12 资金终态规则（重要）**：
+>
+> `completed` 是**资金终态**——一旦置完成即生成分成记录（含楼长分成）并触发微信分账冻结，
+> 且按「确认收货 = 资金终态」规则**不再支持线上退货退款**。因此：
+>
+> | 角色 | 允许的目标状态 | 说明 |
+> | --- | --- | --- |
+> | `courier` | 仅 `delivering` | 配送员开始配送时推进订单；**不允许置 `completed`**（返回 `70002`）。配送完成请调用 `POST /deliveries/{id}/complete`，订单停留 `delivering` + `deliveredAt`（已送达待确认） |
+> | `merchant` | `delivering` / `completed` | 商家可手动完成订单（管理兜底）；普通配送单建议等待居民确认收货 |
+>
+> **平台配送单的完成路径**（三选一，均落到 `completed` 并结算）：
+> 1. 居民确认收货：`POST /orders/{id}/confirm`（resident，主路径）；
+> 2. 超期自动确认：已送达（`deliveredAt` 非空）超过售后窗口期（`order.refund-window-days`，默认 3 天）由定时任务自动完成；
+> 3. 商家手动完成：本接口 `merchant` 角色置 `completed`。
+>
+> **商家自配单**：商家确认送达（`POST /deliveries/{id}/merchant-confirm`）时**后端直接级联**完成订单并结算，无需也不应再调本接口。
+>
+> **团购/食堂单**：不走配送流程，支付后 `pending_verification → verified → 冻结期 → completed`，本接口不参与。
+>
+> **错误响应（v8.12 新增场景）**：
+>
+> | 错误码 | HTTP | 说明 |
+> | --- | --- | --- |
+> | `70002 ORDER_STATUS_INVALID` | 409 | courier 角色尝试置 `completed`（提示改用 `/deliveries/{id}/complete` + 居民确认收货）；或当前订单状态不满足目标状态流转 |
+
 ---
 
 
@@ -4628,7 +4799,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
 | ---------- | -------- | --- | ------------ | ----------------------------------------------- |
 | `page`     | `int`    | ❌   | `1`          | 页码                                              |
 | `pageSize` | `int`    | ❌   | `20`         | 每页条数                                            |
-| `status`   | `String` | ❌   |              | `accepted`/`delivering`/`completed`/`cancelled` |
+| `status`   | `String` | ❌   |              | `accepted`/`delivering`/`completed`/`cancelled`；🆕 v8.12 传 `delivered`（历史遗留写法）时自动归一为 `completed` 查询 |
 | `sort`     | `String` | ❌   | `-createdAt` | 排序                                              |
 
 
@@ -4640,6 +4811,13 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
 | `courierShare`     | `BigDecimal`   | 兼容旧字段，恒等于 `courierEarning`       |
 | `proofImageUrls`   | `List<String>` | 完成配送时上传的凭证 URL（仅 `completed` 有值） |
 | `completeRemark`   | `String`       | 完成配送备注                          |
+| `statusLabel`      | `String`       | 🆕 v8.12 配送状态中文（后端下发）            |
+| `orderStatus`      | `String`       | 🆕 v8.12 订单业务状态 code（配送完成后仍为 `delivering`，待居民确认收货） |
+| `orderStatusLabel` | `String`       | 🆕 v8.12 订单业务状态中文                  |
+
+> **🆕 v8.12 展示口径**：配送员端卡片右上角标签用 `statusLabel`（配送单状态）；
+> 「配送收入」分账腿仅在 `status=completed` 时展示冻结/解冻态。**配送完成不等于订单完成**——
+> 完成配送后订单仍为 `delivering`，收入在居民确认收货（或超期自动确认）后才进入分账冻结。
 
 
 **成功响应**：
@@ -4671,6 +4849,9 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/deliveries/my?page=1&pageSiz
         "courierShare": 0.27,
         "settlementStatus": "pending",
         "status": "accepted",
+        "statusLabel": "已接单",
+        "orderStatus": "delivering",
+        "orderStatusLabel": "配送中",
         "acceptedAt": "2026-07-01 15:25:00",
         "pickedAt": null,
         "deliveredAt": null,
@@ -4772,6 +4953,13 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/compl
 - **直接完成**：不传 `requireProof` 或传 `false`，可不传 `proofImageUrls`。
 - **上传凭证后完成**：须传 `requireProof: true` 且 `proofImageUrls` 至少 1 张，否则 `10002`「凭证模式下必须上传配送凭证」。
 - 凭证 URL 以 JSON 数组存入 `deliveries.proof_image_urls`。
+- **🆕 v8.12 配送完成 ≠ 订单完成**：本接口只把**配送单**置 `completed` 并落 `deliveredAt`；
+  **订单保持 `delivering`**（已送达，待居民确认收货），不触发分成/分账。响应的 `orderStatus` 即为当前订单业务状态（`delivering`）。
+- **资金时点**：分成记录生成与微信分账冻结发生在**订单完成**时点（居民确认收货 / 超期自动确认 / 商家手动完成），
+  售后窗口（`wechat-split.after-sale-days`）到期后才完结划账（解冻）。配送完成**不解冻、不分账**——
+  窗口内用户申请退货时配送费尚未划走，避免平台垫付。
+- **幂等保护**：配送单已完成（`completed`）后重复调用返回 `70002`。
+- 商家自配单（`carrierType=merchant`）不可调用本接口（`80020`），商家请用 `POST /deliveries/{id}/merchant-confirm`。
 
 
 **成功响应**：
@@ -4784,6 +4972,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/compl
     "id": "dlv_demo001",
     "orderId": "ord_demo001",
     "status": "completed",
+    "orderStatus": "delivering",
+    "orderStatusLabel": "配送中",
     "fee": 0.30,
     "originalDeliveryFee": 0.30,
     "deliverySubsidySponsor": "merchant",
@@ -4802,6 +4992,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/deliveries/dlv_demo001/compl
   "timestamp": "2026-07-01 15:40:00"
 }
 ```
+
+> `orderStatus` / `orderStatusLabel` 为 🆕 v8.12 新增：配送员端据此向用户解释「配送已完成，等待居民确认收货后本单收入计入冻结」。
 
 **错误响应**：
 
@@ -7896,16 +8088,20 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/services/svc_demo001 \
 
 ### 活动组组长（activity_leader）能力总览
 
+> **🆕 v8.14 组长标签化**：活动组组长从「与业主住户互斥的独立角色」改为「住户子身份（标签）」——`residents.role` 恒为 `resident`，「是否组长」由 `activity_leader_identities` 表 active 记录判定（与单元楼长、统筹/板块/个体负责人同模式）。组长账号保留全部住户功能（社区论坛、家庭、业主小店申请等），且可与楼长/业主小店/一级代理等身份叠加。存量 `role=activity_leader` 账号已由 `sql/manual_upgrade_shop_profile_leader_tag_forum_ban_20261021.sql` 迁移（建身份记录 + role 归一化）。
+
 **组长如何产生**：
 
 | 方式 | 说明 |
 | --- | --- |
-| 管理端任命 | 管理端调用 §2.8 `PUT /residents/{id}`，将 `role` 改为 `activity_leader`。任命时**立即自动开通**组长小店（见下） |
-| 创建活动组 | 任意 `resident` 调用 §18.4 `POST /activity-groups` 创建活动组后即成为该组组长（`group.leaderId`=创建者、成员 `role=leader`）；但账号角色仍为 `resident`，`my-led`、小店等组长完整能力需管理端将角色改为 `activity_leader` 后才可用 |
+| 住户自助申请（🆕 v8.14） | 住户调用 §18.4.1 `POST /activity-leader-applications/apply` 提交申请，管理端 §101.1 审核通过后自动获得组长身份并开通组长小店 |
+| 管理端创建账号 | 管理端 §101 角色账号创建 `POST /admin/role-accounts`（`role=activity_leader`）时建 `resident` 账号 + 组长身份 + 组长小店 |
+| ~~管理端任命~~ | ~~`PUT /residents/{id}` 改 `role=activity_leader`~~ **v8.14 起不再支持**（`activity_leader` 已移出 role 白名单，与楼长/负责人一致） |
+| 创建活动组 | 任意 `resident` 调用 §18.4 `POST /activity-groups` 创建活动组后即成为该组组长（`group.leaderId`=创建者、成员 `role=leader`）；但**账号级组长身份**仍需申请/任命获得（`my-led`、小店等完整能力以身份为准） |
 
-**任命即开通组长小店（免审核）**：
+**组长小店开通（免审核）**：
 
-- 触发时机：管理端将住户 `role` 改为 `activity_leader` 时**立即**创建（幂等：已存在则跳过）；历史兜底：组长首次访问商品 / 提现 / 我的商家接口时也会自动创建
+- 触发时机：组长身份创建时（申请审核通过 / 管理端建号）**立即**创建（幂等：已存在则跳过）；历史兜底：组长首次访问商品 / 提现 / 我的商家接口时也会自动创建
 - 店铺参数：
   - `merchantSource = group_leader`（组长小店）
   - 店铺名 = `{姓名或手机号}的小店`；分类 `category = 活动组`
@@ -7917,7 +8113,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/services/svc_demo001 \
 
 | 能力 | 接口 | 说明 |
 | --- | --- | --- |
-| 我管理的组列表 | §18.2.1 `GET /activity-groups/my-led` | 仅返回本人担任组长的活动组 |
+| 我管理的组列表 | §18.2.1 `GET /activity-groups/my-led` | 仅返回本人担任组长的活动组（🆕 v8.14 补齐落地） |
 | 创建活动组 | §18.4 `POST /activity-groups` | 创建者即该组组长 |
 | 更新活动组 | §18.10 `PUT /activity-groups/{id}` | 仅本人担任组长的组（否则 `20004`） |
 | 成员列表 | §18.5 `GET /activity-groups/{id}/members` | 仅本人担任组长的组（否则 `20004`） |
@@ -7935,6 +8131,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/services/svc_demo001 \
 - 组长仅能查看/管理**本人担任组长**（`leaderId`=本人）的活动组，访问其他活动组返回 `20004`
 - 组长不可退出自己组长的活动组（`90011` 组长不能退出活动组）；移除成员时也不可移除组长本人
 - 组长店身份解析按 `resident_id + 物业 + merchantSource=group_leader` 三重匹配
+- 「我的」页入口：`GET /auth/profile` 返回 `isActivityLeader`/`activityLeaderId`，为 `true` 进组长管理页，为 `false` 进申请页（§18.4.1）
 
 ### 18.1 GET `/activity-groups/my-subscriptions` — 我的订阅列表
 
@@ -8104,9 +8301,11 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-joined?pa
 ### 18.2.1 GET `/activity-groups/my-led` — 我管理的活动组列表
 
 **Auth**: Required  
-**Roles**: `activity_leader`
+**Roles**: `resident`（持组长身份）、`activity_leader`（存量 JWT）、`property_admin`、`platform_admin`
 
-**Description**: 活动组组长专用。返回当前登录用户作为 `leaderId` 的活动组列表（状态为 `active`），响应格式与 `GET /activity-groups` 列表项一致。
+**Description**: 活动组组长专用（组长管理页）。返回当前登录用户作为 `leaderId` 的活动组列表，**不过滤 status/reviewStatus**（与 `GET /activity-groups?mine=true` 的组长分支一致），响应格式与 `GET /activity-groups` 列表项一致。
+
+> **🆕 v8.14**：本接口补齐落地（此前文档已有但服务端缺失）；Roles 随组长标签化放宽——组长身份由 `activity_leader_identities` 表 active 记录判定（`role` 仍为 `resident`），不再要求 JWT role 为 `activity_leader`。
 
 **请求示例**：
 
@@ -8223,7 +8422,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/activity-groups/my-led?page=
 **Auth**: Required  
 **Roles**: `resident`、`activity_leader`、`coordinator`、`sector_leader`、`individual_leader`、`property_admin`、`platform_admin`
 
-> **组长说明**：创建者自动成为该组组长（`group.leaderId`=创建者、成员 `role=leader`）。创建活动组**本身不会**自动开通组长小店——小店在管理端将账号角色改为 `activity_leader` 时开通（见本模块「活动组组长能力总览」）。组长账号（`activity_leader`）同样可调用本接口创建新组并成为其组长。
+> **组长说明**：创建者自动成为该组组长（`group.leaderId`=创建者、成员 `role=leader`）。创建活动组**本身不会**开通组长小店——组长小店在**组长申请审核通过**（§101.2）或管理端任命组长时自动开通（见本模块「活动组组长能力总览」）。组长账号（`role` 仍为 `resident`，持 `isActivityLeader=true` 标签）同样可调用本接口创建新组并成为其组长。
 
 > **2026-09-07 前端问题 F（产品确认）**：创建活动组**即刻生效**，`status=active`、`reviewStatus=approved`，住户端创建后立即可见可用；管理端 `POST /admin/activity-groups/{id}/review` 仅为事后兜底（`approve` 无影响，`reject` 永久硬删该组）。
 
@@ -8295,7 +8494,161 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/activity-groups \
 
 ---
 
+### 18.4.1 POST `/activity-leader-applications/apply` — 申请成为活动组组长（🆕 v8.14）
 
+**Auth**: Required  
+**Roles**: `resident`
+
+**Description**: 住户自主申请成为活动组组长，由管理端（§101.1）审核。审核通过后：组长身份以**标签**形式叠加在住户账号上（`role` 仍为 `resident`），并**自动开通组长小店**（`merchant_source=group_leader`，免审核）。每位住户在同一物业公司下仅可有一个待审核申请；已是组长则拒绝（`97062`）。
+
+**请求体**（`ApplyActivityLeaderRequest`）：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `activityField` | String | ❌ | `@Size(max=50)` | 擅长领域/活动类型（如 文艺/体育/亲子/户外） |
+| `remark` | String | ❌ | `@Size(max=200)` | 自我介绍/备注 |
+
+**响应**：`applicationId`, `status`（`pending`）, `activityField`, `remark`, `message`
+
+**请求示例**：
+```json
+{ "activityField": "亲子活动", "remark": "有 3 年社区活动组织经验" }
+```
+
+**成功响应**：
+```json
+{ "code": 0, "data": {
+  "applicationId": "ala_xxx",
+  "status": "pending",
+  "activityField": "亲子活动",
+  "remark": "有 3 年社区活动组织经验",
+  "message": "申请已提交，等待物业审核"
+} }
+```
+
+> **完整链路**（v8.15 已修复审核通过报错）：提交申请 → §101.1 管理端列表 → §101.2 审核。`approved` 后同事务创建 active 组长身份并自动开通组长小店；申请人 `role` 仍为 `resident`，`GET /auth/profile` 的 `isActivityLeader` 变为 `true`，即可进入组长管理页（§18.2.1）。驳回不创建身份/小店，C 端可在 §18.4.2 看到 `rejected` 与原因。
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `97062` | 400 | 已有待审核申请 / 已是组长 |
+| `PARAM_MISSING` | 400 | 未绑定物业公司 |
+
+### 18.4.2 GET `/activity-leader-applications/my-application` — 查询我的组长申请状态（🆕 v8.14）
+
+**Auth**: Required  
+**Roles**: `resident`
+
+**Description**: 查询本人最新的组长申请状态，供申请页展示审核进度。
+
+**响应**：`applicationId`, `status`（`none`=未申请 / `pending`=审核中 / `approved`=已通过 / `rejected`=已驳回）, `activityField`, `remark`, `rejectReason`（驳回原因）, `message`
+
+**响应示例**：
+```json
+{ "code": 0, "data": {
+  "applicationId": "ala_xxx",
+  "status": "approved",
+  "activityField": "亲子活动",
+  "remark": "有 3 年社区活动组织经验",
+  "rejectReason": null,
+  "message": "申请已通过"
+} }
+```
+
+```json
+{ "code": 0, "data": { "applicationId": null, "status": "none", "message": "暂无申请记录" } }
+```
+
+> **「我的」页路由**：`GET /auth/profile` 的 `isActivityLeader=true` → 进组长管理页（§18.2.1 `my-led` 等）；`false` → 进申请页（本接口查进度 + §18.4.1 提交）。
+
+---
+
+## 101 管理端 — 活动组组长申请审核（🆕 v8.14）
+
+> 对应 C 端 §18.4.1/§18.4.2。审核通过时**同一事务**内创建组长身份（标签，`role` 仍为 `resident`）+ 自动开通组长小店（`merchant_source=group_leader`，免审核）。组长身份由 `activity_leader_identities` active 记录判定，与楼长/负责人同模式。
+
+### §101.1 GET `/admin/activity-leader-applications` — 组长申请列表
+
+**Roles**: `property_admin`、`platform_admin`
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| `page` | `int` | ❌ | 1 | 页码 |
+| `pageSize` | `int` | ❌ | 20 | 每页条数 |
+| `auditStatus` | `String` | ❌ | — | 状态过滤：`pending`/`approved`/`rejected` |
+| `propertyCompanyId` | `String` | ❌ | — | 仅 `platform_admin` 跨物业查询时传；**v8.15 起不传即返回全部物业**。`property_admin` 始终强制本物业 |
+
+**响应**：分页 `ActivityLeaderApplicationListItemResponse`
+
+`ActivityLeaderApplicationListItemResponse` 字段：`id`、`residentId`、`residentName`、`residentPhone`(脱敏)、`activityField`、`remark`、`auditStatus`、`rejectReason`、`activityLeaderIdentityId`(审核通过后创建的组长身份记录ID)、`auditedAt`(ISO8601)、`createdAt`(ISO8601)、`propertyCompanyId`
+
+### §101.2 POST `/admin/activity-leader-applications/{applicationId}/audit` — 审核组长申请
+
+**Roles**: `property_admin`、`platform_admin`
+
+**路径参数**：`applicationId`（`ala_` 前缀，必填）
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `auditStatus` | `String` | ✅ | `approved`/`rejected` | 审核结果 |
+| `rejectReason` | `String` | 条件必填 | — | `rejected` 时必填 |
+
+**业务说明**：
+
+- `approved`：同一事务内创建组长身份（幂等复用已有 `active` 身份）+ 自动开通组长小店；申请置 `approved`，返回 `activityLeaderIdentityId`。
+- `rejected`：记录 `rejectReason`，申请置 `rejected`。
+- 申请不存在返回 `97060`；非 `pending` 申请重复审核返回 `97061`；住户账号停用返回 `ACCOUNT_DISABLED`。
+
+**请求示例（通过）**：
+```json
+{ "auditStatus": "approved" }
+```
+
+**请求示例（驳回）**：
+```json
+{ "auditStatus": "rejected", "rejectReason": "当前活动组名额已满" }
+```
+
+**成功响应**：
+```json
+{ "code": 0, "data": {
+  "applicationId": "ala_xxx",
+  "auditStatus": "approved",
+  "residentId": "res_xxx",
+  "residentName": "李阿姨",
+  "rejectReason": null,
+  "auditedAt": "2026-10-22T01:05:11.000Z",
+  "activityLeaderIdentityId": "ali_xxx"
+} }
+```
+
+**审核通过自动开通的组长小店**：`merchants` 记录 `merchant_source=group_leader`、`merchant_type=group_leader`、`audit_status=approved`、`status=active`；同时创建 `merchant_property_configs` 配置。**v8.15 修复**：此前创建该小店时未赋值 `merchant_type` / `is_canteen_main_merchant`，触发 NOT NULL 约束导致审核 400；现已在实体层补齐默认值，前端无需改动，修复前失败的申请仍为 `pending`，可直接重试。
+
+**成功响应**：`ActivityLeaderApplicationAuditResponse`
+
+`ActivityLeaderApplicationAuditResponse` 字段：`applicationId`、`auditStatus`(`approved`/`rejected`)、`residentId`、`residentName`、`rejectReason`、`auditedAt`(ISO8601)、`activityLeaderIdentityId`(审核通过时创建的组长身份记录ID)
+
+### §101.3 POST `/admin/activity-leaders/{residentId}/revoke` — 撤销组长身份
+
+**Roles**: `property_admin`、`platform_admin`
+
+**路径参数**：`residentId`（`res_` 前缀，必填）
+
+**业务说明**：
+
+- 将该住户 `active` 组长身份记录置 `revoked`，历史业务数据（活动组、小店、订单）保留。
+- 无 `active` 组长身份返回 `97063`。
+
+**成功响应**：`ActivityLeaderApplicationAuditResponse`（`auditStatus=revoked`）
+
+> **管理端创建账号路径**：管理端 `POST /admin/role-accounts`（`role=activity_leader`）时建 `resident` 账号 + 组长身份 + 组长小店（与申请审核同款能力），见 §31.2。
+
+---
 
 ### 18.6 POST `/activity-groups/{id}/subscribe` — 订阅活动组
 
@@ -9252,7 +9605,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/reports/export?type=point-su
 ### 21.1 GET `/distribution/records` — 分成记录列表
 
 **Auth**: Required  
-**Roles**: `coordinator`, `sector_leader`, `individual_leader`, `property_admin`, `platform_admin`
+**Roles**: `property_admin`, `platform_admin`，或持有启用中负责人记录（统筹/板块/个体）的住户（v8.13 标签化）
 
 **请求示例**：
 
@@ -9407,7 +9760,7 @@ totalAmount = productAmount + deliveryFee
 ### 21.2 GET `/distribution/stats` — 分成统计
 
 **Auth**: Required  
-**Roles**: `coordinator`, `sector_leader`, `individual_leader`, `property_admin`, `platform_admin`
+**Roles**: `property_admin`, `platform_admin`，或持有启用中负责人记录（统筹/板块/个体）的住户（v8.13 标签化）
 
 **请求示例**：
 
@@ -11842,7 +12195,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/merchants/mch_demo001/
 **业务规则**：
 
 - 商家入驻申请后状态为 `pending_audit`
-- 审核通过：`auditStatus` → `approved`，`status` → `active`；同时按 `merchants.contact_phone` + `merchants.property_company_id` 匹配居民，将其 `residents.role` 升级为**入驻申请身份** `applyRole`（`merchant`/`technician`/`activity_leader`，缺省 `merchant`），开通对应端登录/操作权限
+- 审核通过：`auditStatus` → `approved`，`status` → `active`；**不改写住户 `residents.role`**（v8.14 起组长/负责人均为住户子身份，身份由业务表判定；组长小店由组长申请审核自动开通，见 §101.2）。商家端登录账号由管理端 `POST /admin/role-accounts` 创建（`role=merchant`/`technician`）。
 - 审核拒绝：**拒绝即硬删（2026-08-19 调整）**——商家记录及其关联数据一并物理删除，**不再保留 `rejected` 记录**。删除范围（按外键自子到父）：
   - `merchants` 名下商品（`products`）、特惠推送（`special_offers`）、分账配置（`merchant_property_configs`）
   - `merchants` 本体
@@ -12167,6 +12520,8 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/admin/individual-leaders \
 }
 ```
 
+> **🆕 v8.13 负责人标签化**：任命成功后**不再**把该住户的 `residents.role` 改写为 `individual_leader`——role 保持 `resident`，个体负责人身份由 `individual_leaders` 表 active 记录判定（与楼长同模式）。住户的社区论坛/家庭等住户功能不受影响；「我的」页通过 `/auth/profile` 的 `isIndividualLeader` 渲染负责人入口。撤销（§37.4）同理不再回退 role。
+
 ---
 
 
@@ -12462,14 +12817,14 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/individual-leaders/app
 
 ---
 
-## 37.7 住户端 — 一级代理申请
+## 37.7 住户端 — 个体负责人申请（历史叫法"一级代理申请"，与 §60 货源一级代理无关）
 
 ### POST `/individual-leaders/apply` — 申请成为个体负责人
 
 **Auth**: Required  
 **Roles**: `resident`
 
-**说明**：住户自主申请成为个体负责人（一级代理），需登录。每位住户在同一物业公司下仅可有一个 `pending` 状态的申请。
+**说明**：住户自主申请成为**个体负责人**（承接物业板块；历史叫法"一级代理申请"，与 §60 的"货源一级代理"`/distributors/*` 是两套完全不同的能力，注意区分）。需登录。每位住户在同一物业公司下仅可有一个 `pending` 状态的申请。
 
 **请求体**：
 
@@ -12524,6 +12879,8 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/individual-leaders/app
 ```
 
 > `status` 可能值：`none`（无申请）、`pending`（审核中）、`approved`（已通过）、`rejected`（未通过）。
+>
+> **v8.15 修复**：此前该接口以 `auditStatus=null` 调用派生查询，被翻译为 `audit_status IS NULL`，导致有申请也恒返回 `none`。现按 `createdAt` 倒序返回本人最新一条申请，前端调用方式不变。
 
 ---
 
@@ -12955,7 +13312,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/sector-leaders/sl_demo0
 ### GET `/sector-leaders/my` — 获取当前板块负责人信息
 
 **Auth**: Required  
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 **请求示例**：
 
@@ -13019,7 +13376,7 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/sector-leaders/my \
 
 ### 39.7 POST `/sector-leaders/{id}/withdrawals` — 板块负责人申请提现
 
-**Roles**: `sector_leader`（仅本人）
+**Roles**: `resident`（仅本人，且须持有启用中的板块负责人记录；v8.13 标签化）
 
 请求体同 §64.6（`amount`），可提现=累计分成-已占用提现；响应 `withdrawalType`=`sector_leader`。
 
@@ -16373,33 +16730,60 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 60.0 角色与资金流
 
+> 🆕 **v8.11（件数制）**：业主商户（下称**业主小店**）从一级代理**按件拿货**（拿货时一次性扣减一级代理库存件数），上架后按件零售；卖满（已卖=拿货件数）自动下架。
+
 ```
-一级经销商 (distributor_level=1)  — 有货源，设进货价/建议零售价
-    ↓ 供货
-业主商户 (distributor_level=2)  — 选品上架，自定价，分享赚差价
-    ↓ 分享链接（带 resellerId）
-普通用户购买 → 平台收款 → 进货价结算一级 → 差价 T+1 至业主商户物业币余额
+一级代理 (merchants.is_distributor=1，后台开通)  — 有货源，设进货价/建议零售价/库存件数
+    ↓ 拿货（POST /resident-merchants/listings，quantity 件，扣一级代理库存）
+业主小店 (营业中 resident_merchant_applications)  — 选品上架，自定零售价（≥进货价），件数制售卖
+    ↓ 公开橱窗/分享链接（买家可见店主 residentId，可发起私聊）
+买家购买 → 订单归属业主小店店铺主体（merchant_source=resident_shop）
+    → 确认收货触发结算：
+       商品额 = 零售价 × 件数
+       货款   = 进货价 × 件数 → 一级代理商家钱包
+       平台佣金 = 商品额 × 佣金率（默认 10%，后台可配）
+       差价   = 商品额 − 货款 − 佣金 → 店主卖货钱包（仅可提现）
 ```
+
+**件数守恒**：`took_quantity（拿货件数）= sold_quantity（已卖件数）+ 支付锁定中件数 + quantity_remaining（可售件数）`。
+
+**listing 订单不参与物业四级分成/楼长分成**（`listingId != null` 的订单在完成结算时跳过常规分账，只走上述件数制结算链路）。
 
 ## 60.0.1 数据表
 
 | 表名 | 说明 |
 | --- | --- |
-| `resident_merchant_applications` | 申请与审核（`rma_`） |
+| `resident_merchant_applications` | 申请与审核（`rma_`）；v8.11 新增 `shop_name`（店铺名，默认"住户姓名的小店"）/ `merchant_id`（店铺主体商家 ID `mch_`，审核通过自动创建）；**v8.14 新增 `description`/`business_hours`/`contact_phone`/`cover_url`（店铺资料，对齐普通商家）** |
 | `resident_merchant_deposits` | 保证金（`rmd_`），默认 500 元；可由平台配置 `residentMerchant.defaultDepositAmount` 覆盖 |
-| `distributor_products` | 一级上架商品（`dpr_`） |
-| `resident_merchant_listings` | 二级选品上架（`rml_`） |
-| `resident_merchant_settlements` | T+1 结算（`rms_`） |
+| `distributor_products` | 一级货源商品（`dpr_`），`stock` 语义=**库存件数** |
+| `resident_merchant_listings` | 二级选品上架（`rml_`）；v8.11 新增件数制列：`took_quantity`（拿货件数）/ `sold_quantity`（已卖件数）/ `sold_out_unlisted`（是否因卖完自动下架）/ `quantity_remaining`（可售件数，支付锁定时扣减、取消/退款恢复） |
+| `resident_merchant_settlements` | 结算（`rms_`）；v8.11 新增 `quantity`（本单结算件数） |
+| `merchants` | v8.11 新增 `is_distributor`（是否一级代理，后台开通/取消） |
+| `activity_leader_identities` | **v8.14 活动组组长身份表（`ali_`）**：住户子身份/标签，`source=appoint/application`，`status=active/revoked`；与楼长/负责人同模式 |
+| `activity_leader_applications` | **v8.14 组长申请表（`ala_`）**：住户自助申请，管理端审核（`audit_status=pending/approved/rejected`） |
+| `resident_forum_bans` | **v8.14 论坛禁言记录表（`rfb_`）**：影子封禁，`status=active/lifted/expired`，`expires_at` 为空=永久 |
+| `community_posts` / `community_comments` | **v8.14 新增 `shadow_banned` 打标列**：禁言作者的内容仅本人与管理端可见 |
 
 ## 60.1 POST `/resident-merchants/apply` — 申请成为业主商户
 
 **Roles**: `resident`（业主身份）
 
-**请求体**：`agreedTerms`（必填 true）
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `agreedTerms` | Boolean | ✅ | 须为 true | 是否同意协议 |
+| `shopName` | String | ❌ | `@Size(max=100)` | 小店名称（不传默认「{业主姓名}的小店」） |
+| `description` | String | ❌ | `@Size(max=500)` | 🆕 v8.14 店铺简介（对齐普通商家） |
+| `businessHours` | String | ❌ | `@Size(max=50)` | 🆕 v8.14 营业时间（如 `08:00-22:00`） |
+| `contactPhone` | String | ❌ | `@Size(max=20)` | 🆕 v8.14 联系电话（不传则买家看到店主手机号） |
+| `coverUrl` | String | ❌ | `@Size(max=500)` | 🆕 v8.14 店铺封面图URL |
 
 **响应**：`applicationId`, `depositAmount`, `status`（`待缴保证金`/`pending_deposit`）, `visibility`（默认 `private`）
 
 > 🔧 **说明（2026-09-04）**：`depositAmount` 现取**平台配置** `residentMerchant.defaultDepositAmount`（管理端 §60.12 `PUT /admin/resident-merchant-settings` 的 `defaultDepositAmount`），未配置时回落 `500.00`。此前该值硬编码为 500，后台改配置不生效。
+
+> 🆕 **v8.14 店铺资料**：`description`/`businessHours`/`contactPhone`/`coverUrl` 均为可选，随申请落库；审核通过后作为店铺主体（`merchant_source=resident_shop`）资料，公开橱窗与订单展示一致。已开小店的主播可随时用 `PUT /resident-merchants/my/shop`（§60.9.1）修改。
 
 ## 60.2 POST `/resident-merchants/deposit/pay` — 缴纳保证金（微信支付）
 
@@ -16451,6 +16835,11 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 | `listingCount` | `Integer` | 已上架商品数 |
 | `auditRemark` | `String` | 驳回原因（若被驳回） |
 | `createdAt` | `String` | 申请创建时间 |
+| `shopName` | `String` | 🆕 v8.14 店铺名称 |
+| `description` | `String` | 🆕 v8.14 店铺简介 |
+| `businessHours` | `String` | 🆕 v8.14 营业时间 |
+| `contactPhone` | `String` | 🆕 v8.14 联系电话（未设置为 null，前端可回退展示店主手机号） |
+| `coverUrl` | `String` | 🆕 v8.14 店铺封面图URL |
 
 **示例**：
 
@@ -16480,13 +16869,38 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 60.5 GET `/distributors/products` — 一级货源选品池
 
-**Query**：`categoryId`, `keyword`, `page`, `pageSize`
+**Query**：`categoryId`（兼容参数名 `category`）, `keyword`, `page`, `pageSize`
 
-**列表项**：`distributorProductId`, `name`, `coverUrl`, `wholesalePrice`, `suggestedRetailPrice`, `stock`
+**Roles**: `resident`——🆕 **v8.11：仅营业中（`active`）的业主小店可访问**；非营业中（未申请/待缴保证金/待审核/已退出等）调用会被拦截（`PARAM_INVALID`，提示需营业中），前端应在入口层隐藏选品池。
 
-## 60.6 POST `/resident-merchants/listings` — 从一级选品上架
+**列表项**：`distributorProductId`, `name`, `coverUrl`, `wholesalePrice`, `suggestedRetailPrice`, `stock`（`stock`=该货源**剩余库存件数**，决定可拿货件数上限）
 
-**请求体**：`distributorProductId`, `retailPrice`, `enabled`
+## 60.6 POST `/resident-merchants/listings` — 从一级选品拿货上架（件数制）
+
+**Roles**: `resident`（营业中业主小店）
+
+**请求体**（`CreateResidentMerchantListingRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `distributorProductId` | `String` | ✅ | 一级货源商品 ID（`dpr_`） |
+| `retailPrice` | `BigDecimal` | ✅ | 零售价；须 **≥ 该货源进货价**，否则 `10002`（"零售价不能低于进货价"） |
+| `quantity` | `Integer` | ❌ | 🆕 v8.11 拿货件数，默认 1，须 ≥1（`60032`）；一次性从一级代理库存扣减，库存不足返回 `60033` |
+| `enabled` | `Boolean` | ❌ | 是否立即上架，默认 `true` |
+
+**行为**：拿货成功即创建 listing（`rml_`），`tookQuantity=quantity`、`soldQuantity=0`、`quantityRemaining=quantity`；一级代理货源 `stock` 同步扣减 `quantity`。
+
+**错误码**：`60032`（拿货件数必须为不小于 1 的整数）、`60033`（一级代理货源库存不足）、`60004`（货源商品不存在/已停售）、`10002`（零售价低于进货价）。
+
+## 60.6.1 DELETE `/resident-merchants/listings/{id}` — 取消拿货（退回未卖出件数）
+
+> 🆕 **v8.11（件数制）**：删除自己从一级代理拿货的上架记录，**未卖出件数（`quantityRemaining`）退回一级代理库存**。
+
+**Roles**: `resident`（营业中业主小店，仅本人 listing）
+
+**前置校验**：该 listing 存在**未完成订单**（pending/paid/delivering/refunding 等）时禁止取消，返回 `60034`（该上架存在未完成订单，不可取消）。
+
+**行为**：`quantityRemaining` 加回 `distributor_products.stock`，删除 listing 记录。
 
 ## 60.7 GET `/resident-merchants/listings` — 我的上架商品
 
@@ -16504,12 +16918,18 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 | `wholesalePrice` | `BigDecimal` | 批发价 |
 | `retailPrice` | `BigDecimal` | 零售价（业主定价） |
 | `enabled` | `Boolean` | 是否上架 |
+| `tookQuantity` | `Integer` | 🆕 v8.11 拿货件数（从一级代理库存一次性扣减的件数） |
+| `soldQuantity` | `Integer` | 🆕 v8.11 已卖出件数（订单完成结算时累加） |
+| `quantityRemaining` | `Integer` | 🆕 v8.11 可售件数（未锁定未售出；买家下单锁定时扣减，取消/超时/退款恢复） |
+| `soldOutUnlisted` | `Boolean` | 🆕 v8.11 是否因卖完自动下架（退款恢复余量后自动重新上架） |
 | `shareCount` | `Integer` | 分享次数 |
 | `createdAt` | `String` | 创建时间 |
 
 > ⚠️ **无商城 `productId`**：列表项**不包含** `products` 表商品ID，不能用于 `GET /products/{id}`（非 `prd_` 前缀会返回 `10002` 商品ID格式不正确）。分销商品卡片/分享应跳橱窗详情（`listingId + resellerId`），或使用公开橱窗 `GET /resident-merchants/public/{residentId}`（私密橱窗返回 `90111`）。
 
 ## 60.8 PUT `/resident-merchants/listings/{id}` — 改价/上下架
+
+**请求体**（`UpdateResidentMerchantListingRequest`）：`retailPrice`（改价，仍须 ≥ 进货价）、`enabled`（上下架）。角色：`resident`（营业中业主小店，仅本人 listing）。
 
 ## 60.9 POST `/resident-merchants/listings/{id}/share` — 生成分享链接/海报
 
@@ -16534,6 +16954,31 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 > 产品规则（会议纪要 20260727 §7.4）：`public`=对外，任何人可查看公开橱窗；`private`=不对外，仅店主/管理端可见。
 
+## 60.9.1.1 PUT `/resident-merchants/my/shop` — 修改我的小店店铺资料（🆕 v8.14）
+
+**Auth**: Required  
+**Roles**: `resident`（营业中业主商户，`status=active`）
+
+**Description**: 店主修改店铺资料，对齐普通商家的店铺信息（店名/简介/营业时间/联系电话/封面）。**未传字段不修改**；修改后同步店铺主体（`merchants` + `platform_merchants`），管理端与订单展示保持一致。
+
+**请求体**（`UpdateResidentMerchantShopRequest`）：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `shopName` | String | ❌ | `@Size(max=100)` | 店铺名称 |
+| `description` | String | ❌ | `@Size(max=500)` | 店铺简介 |
+| `businessHours` | String | ❌ | `@Size(max=50)` | 营业时间 |
+| `contactPhone` | String | ❌ | `@Size(max=20)` | 联系电话 |
+| `coverUrl` | String | ❌ | `@Size(max=500)` | 店铺封面图URL |
+
+**响应**：同 §60.3（含更新后的店铺资料回显）
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `60016` | 400 | 业主商户未营业/不存在（非 `active` 状态调用） |
+
 ## 60.9.2 GET `/resident-merchants/public` — 公开橱窗列表（任何人可查看）
 
 **Auth**: Optional（无需登录）
@@ -16542,13 +16987,15 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 **仅返回**：`visibility=public` 且 `status=active` 的业主商户；姓名缺省时手机号脱敏展示。
 
-**列表项**：`residentId`, `residentName`, `propertyCompanyId`, `visibility`, `status`, `depositAmount`, `listingCount`
+**列表项**：`residentId`, `residentName`, `propertyCompanyId`, `shopName`（🆕 v8.14 店铺名，列表页可优先展示）, `visibility`, `status`, `depositAmount`, `listingCount`
 
 ## 60.9.3 GET `/resident-merchants/public/{residentId}` — 公开橱窗详情（任何人可查看）
 
 **Auth**: Optional（无需登录）
 
 **响应**：`residentId`, `residentName`, `propertyCompanyId`, `visibility`, `status`, `depositAmount`, `listingCount`, `listings`（仅 `enabled=true` 的商品）
+
+**🆕 v8.14 店铺资料字段（对齐普通商家橱窗 §7.3）**：`shopName`（店铺名）、`description`（简介）、`businessHours`（营业时间）、`contactPhone`（联系电话；店铺未设置时后端回退为店主手机号）、`coverUrl`（封面图）
 
 **listings[].字段**：`id`, `productName`, `coverUrl`, `retailPrice`, `shareCount`（**不含批发价/进货价**）
 
@@ -16564,6 +17011,77 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 | `resellerId` | 业主商户住户 ID（与 listing 校验一致） |
 
 > **说明**：结算表 `resident_merchant_settlements` 与管理端查询已就绪；**自动 T+1 入账定时任务暂缓**。
+
+## 60.10.1 POST `/orders/from-listing` — 业主小店下单（件数制）
+
+> 🆕 **v8.11**：购买业主小店上架商品的正式下单入口；**订单归属业主小店店铺主体**（经 `listing → 店主 residentId → 业主商户申请 → merchantId` 解析，`merchant_source=resident_shop`，店铺缺失返回 `60036` 拒绝下单）。响应 `merchantId`/`merchantName` 为**小店店铺**（店名），前端订单卡片直接展示 `merchantName`。
+
+**Auth**: Required  
+**Roles**: `resident`
+
+**请求体**（`CreateListingOrderRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `listingId` | `String` | ✅ | 上架记录 ID（`rml_` 前缀） |
+| `quantity` | `Integer` | ❌ | 🆕 v8.11 购买件数，默认 1，须 ≥1 且 ≤ `quantityRemaining`（超出返回 `60035`） |
+| `address` | `String` | ❌ | 配送地址（≤200 字，不传取住户默认地址） |
+| `contactPhone` | `String` | ❌ | 联系电话（≤20 字，不传取住户手机号） |
+| `remark` | `String` | ❌ | 备注（≤500 字） |
+| `familyId` | `String` | ❌ | 家庭 ID（不传取住户所属家庭） |
+
+**请求示例**：
+
+```bash
+curl -X POST https://test.yuanxusoftware.top/api/v1/orders/from-listing \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9..." \
+  -d '{
+    "listingId": "rml_abc123",
+    "quantity": 2,
+    "address": "阳光花园1号楼1单元101",
+    "contactPhone": "13800138000"
+  }'
+```
+
+**成功响应**（`CreateOrderResponse`）：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "orderId": "ord_xxx",
+    "orderNo": "ORD202610130001",
+    "merchantId": "mch_xxx",
+    "merchantName": "张阿姨的小店",
+    "totalAmount": 70.00,
+    "deliveryFee": 0.00,
+    "paymentMethod": null,
+    "pointUsed": 0,
+    "coinUsed": 0.00,
+    "cashAmount": 0.00,
+    "orderStatus": "pending",
+    "createdAt": "2026-10-13T08:00:00Z"
+  }
+}
+```
+
+**行为说明**：
+
+1. 商品金额 = `listing.retailPrice × quantity`；配送费按**小店店铺主体**规则计算（默认 0 配送费、无满额减免，后台可调）；
+2. 下单后 `orderStatus=pending`，支付成功才锁定件数（`quantityRemaining` 扣减）；走常规配送履约链路（支付后 `pending_choice`，支持配送/自提选择）；
+3. 结算口径见 §60.15；支付走 `POST /orders/{id}/pay`（§8.2，`pointUsed` 前端固定传 0）。
+
+**错误响应**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `60004` | 404 | 上架商品/货源商品不存在或已停售 |
+| `10002` | 400 | 该商品已下架 |
+| `60035` | 400 | 可售件数不足 |
+| `60036` | 404 | 业主小店店铺主体不存在 |
+| `70002` | 409 | 订单状态不允许操作 |
 
 ## 60.11 POST `/orders/{id}/refund-request` — 退货申请
 
@@ -16707,13 +17225,33 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 | POST | `/admin/resident-merchant-applications/{id}/confirm-deposit` | 确认保证金已缴纳（线下收款） | ✅（2026-09-04 新增） |
 | GET | `/admin/resident-merchant-deposits` | 保证金管理 | ✅ |
 | POST | `/admin/resident-merchant-deposits/{id}/deduct` | 违规扣除 | ✅ |
-| GET | `/admin/distributor-products` | 分销商品列表 | ✅ |
-| POST | `/admin/distributor-products` | 一级经销商上架 | ✅ |
+| GET | `/admin/distributor-products` | 分销商品列表（🆕 v8.11 仅展示已开通一级代理权限 `is_distributor=1` 商家的商品） | ✅ |
+| POST | `/admin/distributor-products` | 一级经销商上架（🆕 v8.11 **必传 `distributorMerchantId`**） | ✅ |
 | PUT | `/admin/distributor-products/{id}` | 更新分销商品（🆕 2026-09-07，见下方） | ✅ |
 | DELETE | `/admin/distributor-products/{id}` | 删除分销商品（软删 status=inactive，🆕 2026-09-07，见下方） | ✅ |
 | PUT | `/admin/distributor-products/{id}/billing-cycle` | 设置收费周期 | ✅（详见 §63.2） |
+| POST | `/admin/distributors/{merchantId}/enable` | 🆕 v8.11 开通一级代理权限（`is_distributor=1`） | ✅ |
+| POST | `/admin/distributors/{merchantId}/disable` | 🆕 v8.11 取消一级代理权限（`is_distributor=0`） | ✅ |
 | GET | `/admin/resident-merchant-settings` | 配置读取 | ✅ |
 | PUT | `/admin/resident-merchant-settings` | 默认保证金、平台抽成、退货天数 | ✅ |
+
+### POST `/admin/distributors/{merchantId}/enable` / `disable` — 开通/取消一级代理权限（v8.11 新增）
+
+**Auth**: Required  
+**Roles**: `property_admin`, `platform_admin`（物业隔离：`property_admin` 仅限本物业商家）
+
+**Path**：`merchantId` 商家 ID（`mch_` 前缀）
+
+**行为**：
+
+| 接口 | 行为 |
+| --- | --- |
+| `POST /admin/distributors/{merchantId}/enable` | 将商家 `merchants.is_distributor` 置 `1`；仅审核通过（`approved`）的商家可开通；开通后可在货源池上架商品并接收业主小店货款 |
+| `POST /admin/distributors/{merchantId}/disable` | 将 `is_distributor` 置 `0`；已有货源商品保留（历史可追溯），仅失去新建货源资格 |
+
+**成功响应**：`data: null`
+
+**错误响应**：`60001`（商家不存在）、`60037`（仅审核通过的商家可管理一级代理权限——商家非 `approved`）、`20004`（跨物业/权限不足）
 
 ### GET `/admin/distributor-products` — 分销商品列表
 
@@ -16770,17 +17308,24 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 **Auth**: Required  
 **Roles**: `property_admin`, `platform_admin`
 
+> 🆕 **v8.11 变更**：请求体**必传 `distributorMerchantId`**（不再自动取第一个认证商家）；未传返回 `60031`；指定商家须已开通一级代理权限（`is_distributor=1`，否则 `60030`）且属于操作物业。`stock` 语义为**库存件数**（业主小店按件拿货扣减）。
+
 **请求体**：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
+| `distributorMerchantId` | String | ✅（🆕 v8.11） | 一级代理商家 ID（`mch_`，须已开通 `is_distributor` 且属本物业） |
 | `name` | String | ✅ | 商品名称 |
 | `coverUrl` | String | | 封面图 |
 | `categoryId` | String | | 分类 ID（当前可传，落库以实际实现为准） |
+| `category` | String | | 货源类目（如 `食品饮料`、`日用百货`，公开列表按此筛选） |
 | `description` | String | | 描述 |
 | `wholesalePrice` | BigDecimal | ✅ | 进货价 |
 | `suggestedRetailPrice` | BigDecimal | ✅ | 建议零售价 |
-| `stock` | Integer | | 库存，默认 0 |
+| `stock` | Integer | | 库存件数，默认 0 |
+| `serviceScope` | String | | 服务区间 `city`(本市)/`community`(小区) |
+
+**错误响应**：`60031`（必须指定一级代理商家 distributorMerchantId）、`60030`（该商家未开通一级代理权限）、`60037`（该商家未通过审核，不可上架货源商品）、`60001`（商家不存在）、`20004`（跨物业/权限不足）。
 
 **成功响应**：
 
@@ -16966,6 +17511,192 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 **Roles**: `property_admin`, `platform_admin`
 
+**Query**：`page`, `pageSize`, `startDate`, `endDate`
+
+**列表项**：`id`, `orderId`, `listingId`, `residentId`, `orderAmount`, `resellerProfit`, `status`（`settled`/`reversed`）, `settleAt`, `createdAt`（🆕 v8.11 结算单含 `quantity` 本单结算件数，落库字段）
+
+---
+
+## 60.14 业主小店店铺主体与订单归属（v8.11 新增）
+
+> 🆕 **v8.11**：业主商户审核通过（`active`）时自动创建**店铺主体**——`platform_merchants` + `merchants`（`merchant_source=resident_shop`、`audit_status=approved`、`status=active`）+ `merchant_property_configs`（配送费默认 `0.00`、无满额减免；佣金率=平台配置 `residentMerchant.distributorProductCommissionRate`，默认 `0.1000`；后台可调）。存量已 active 的业主商户由 V22 脚本自动补建店铺主体并回填 `merchant_id`/`shop_name`。
+
+| 项 | 说明 |
+| --- | --- |
+| 店铺名 | `resident_merchant_applications.shop_name`，默认"`住户姓名`的小店"；下单响应 `merchantName` 即店名 |
+| 订单归属 | `POST /orders/from-listing` 订单 `merchantId` = 小店店铺主体（非一级代理）；配送费/履约/佣金按店铺主体配置 |
+| 店铺主体缺失 | 下单/试算返回 `60036`（业主小店店铺主体不存在），拒绝下单避免错挂一级代理 |
+| 商家列表隔离 | 移动端常规商家列表（`GET /merchants`）与附近商家**排除** `merchant_source=resident_shop` 店铺主体（小店仅在业主橱窗体系展示）；管理端不受限 |
+| 前端展示 | 订单卡片直接渲染接口返回的 `merchantName`（小店店名） |
+
+## 60.15 件数制结算口径（v8.11 新增，确认收货触发）
+
+```
+设：零售价 P，进货价 W，件数 Q，佣金率 R（默认 0.10，后台可配）
+
+商品额     = P × Q（不含配送费，即 order.totalAmount）
+一级代理货款 = W × Q            → 一级代理商家钱包（wallet_flows，entryType=distributor_wholesale_income）
+平台佣金    = 商品额 × R        → 平台
+店主差价    = 商品额 − 货款 − 佣金 → 店主卖货钱包（wallet_flows，ownerType=resident_merchant，entryType=reseller_profit）
+（差价为负时置 0）
+```
+
+**行为规则**：
+
+| 场景 | 行为 |
+| --- | --- |
+| 卖满自动下架 | `soldQuantity = tookQuantity` 时 listing 自动 `enabled=false` 并标记 `soldOutUnlisted=true` |
+| 退款冲正 | 已结算订单退款：2 条负向钱包流水（店主差价 + 一级代理货款，`refRecordId` 指向原流水）、结算单置 `reversed`、`soldQuantity` 回退件数、可售件数恢复；卖完下架的 listing 恢复余量后**自动重新上架** |
+| 支付锁定 | 买家支付成功（含微信预下单预占）扣 `quantityRemaining`；取消/超时/退款加回 |
+| 未支付取消守卫 | `pending` 订单仅当**发起过支付**（存在支付流水）才回补件数；从未发起支付的取消不回补（防 `quantityRemaining` 虚增超卖，前端无感知） |
+| 分成隔离 | listing 订单**不走**物业四级分成/楼长分成/物业经理抽成（跳过 `DistributionService` 常规分账） |
+| 店主提现 | 业主卖货钱包不变：`GET /resident-merchants/seller-wallet`、`POST/GET /resident-merchants/seller-wallet/withdrawals`（`withdrawalType=resident_seller`，见 §99.3） |
+
+---
+
+## 60.16 一级代理申请与身份（v8.12.1 新增，2026-10-20）
+
+> 一级货源经销商（`merchants.is_distributor=1`）此前只能由管理端开通。本节新增**用户自助申请**全链路：
+> 任意已登录角色提交申请 → 管理端审核 → 通过后由后端同事务创建/关联商家载体并开通一级代理。
+> 与 §37.7「个体负责人申请」**完全无关**（那是物业板块负责人，历史也叫"一级代理申请"，切勿混淆）。
+
+### 60.16.1 POST `/distributors/apply` — 提交一级代理申请（C端）
+
+**Auth**: Required  
+**Roles**: 任意已登录角色（resident / merchant / courier / technician / activity_leader / coordinator / sector_leader / individual_leader / property_admin / platform_admin / community_admin）
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `contactName` | String | 是 | 联系人姓名，≤50字 |
+| `contactPhone` | String | 是 | 联系电话（11位手机号） |
+| `businessScope` | String | 是 | 经营品类：`fresh`=生鲜 / `daily`=日用 / `grain`=粮油 / `other`=其它 |
+| `serviceScope` | String | 是 | 服务范围：`community`=本小区 / `city`=本市 |
+| `remark` | String | 否 | 备注，≤200字 |
+
+**成功响应**：
+```json
+{ "code": 0, "data": { "applicationId": "dap_xxx", "status": "pending",
+  "contactName": "张三", "contactPhone": "13800138000",
+  "businessScope": "daily", "serviceScope": "community",
+  "submittedAt": "2026-10-20T02:00:00.000Z", "message": "申请已提交，等待物业审核" } }
+```
+
+**约束与错误码**：同一用户同物业仅一条 `pending` → `97042`；已是一级代理 → `97043`；枚举越界/参数缺失 → `10002`。
+
+### 60.16.2 GET `/distributors/my/application` — 查询我的申请状态（C端）
+
+**Roles**: 同上。返回本人最新一条申请；`status`: `none`/`pending`/`approved`/`rejected`。`rejected` 带 `rejectReason`，`approved` 带 `distributorMerchantId`，无申请返回 `status=none`。
+
+**成功响应（有申请）**：
+```json
+{ "code": 0, "data": {
+  "applicationId": "dap_37dcd56a341000",
+  "status": "approved",
+  "contactName": "张阿姨",
+  "contactPhone": "13624964818",
+  "businessScope": "fresh",
+  "serviceScope": "community",
+  "remark": null,
+  "rejectReason": null,
+  "distributorMerchantId": "mch_xxx",
+  "submittedAt": "2026-10-21T06:12:30.000Z",
+  "message": "申请已通过"
+} }
+```
+
+**成功响应（无申请）**：
+```json
+{ "code": 0, "data": { "applicationId": null, "status": "none", "message": "暂无申请记录" } }
+```
+
+> **v8.15 修复**：此前该接口以 `auditStatus=null` 调用派生查询，Spring Data 将其翻译为 `audit_status IS NULL`，导致有申请也恒返回 `none`。现按 `createdAt` 倒序取最新一条，前端无需改动调用方式。
+
+### 60.16.3 GET `/distributors/my/identity` — 查询我的一级代理身份（C端）
+
+**Roles**: 同上。返回当前用户一级代理身份与钱包；**未开通时 HTTP 200 + `code 0` + `isDistributor=false`**（不返回 `60030`）。
+
+```json
+{ "code": 0, "data": { "isDistributor": true, "distributorMerchantId": "mch_xxx",
+  "merchantName": "张三的一级代理", "auditStatus": "approved",
+  "withdrawableAmount": 12345.00, "withdrawalBlocked": false,
+  "totalRevenue": 20000.00, "totalOrders": 30 } }
+```
+
+> `withdrawableAmount`=可提现余额（含一级代理货款 `distributor_wholesale_income`），`withdrawalBlocked`=是否被禁止提现。前端据此做入口显隐与钱包展示，无需再"试调列表接口"探测身份（解决前端 D2/D3/D5）。
+
+### 60.16.4 管理端 — 一级代理申请审核
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/admin/distributor-applications` | 申请列表（按物业隔离，platform_admin 可跨物业；支持 `auditStatus` 过滤，`createdAt` 倒序） |
+| POST | `/admin/distributor-applications/{applicationId}/audit` | 审核：`approved` 同事务自动建载体并开通一级代理；`rejected` 记录 `rejectReason` |
+
+**Roles**: `property_admin`, `platform_admin`。
+
+#### 列表 `GET /admin/distributor-applications`
+
+| 查询参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | int | ❌ | 页码，默认 1 |
+| `pageSize` | int | ❌ | 每页条数，默认 20 |
+| `auditStatus` | String | ❌ | `pending` / `approved` / `rejected` |
+| `propertyCompanyId` | String | ❌ | 仅 `platform_admin` 跨物业查询时使用；**v8.15 起不传即返回全部物业**。`property_admin` 始终强制本物业 |
+
+列表项字段：`id`、`residentId`、`contactName`、`contactPhone`、`businessScope`、`serviceScope`、`remark`、`auditStatus`、`rejectReason`、`distributorMerchantId`、`auditedAt`、`createdAt`、`propertyCompanyId`。
+
+#### 审核 `POST /admin/distributor-applications/{applicationId}/audit`
+
+**路径参数**：`applicationId`（`dap_` 前缀）。
+
+**请求体**（`AuditDistributorApplicationRequest`）：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `auditStatus` | String | ✅ | `approved` / `rejected` | 审核结果 |
+| `rejectReason` | String | 条件必填 | ≤200 字 | `rejected` 时必填 |
+
+**请求示例（通过）**：
+```json
+{ "auditStatus": "approved" }
+```
+
+**成功响应（通过）**：
+```json
+{ "code": 0, "data": {
+  "applicationId": "dap_37dcd56a341000",
+  "auditStatus": "approved",
+  "residentId": "res_xxx",
+  "contactName": "张阿姨",
+  "businessScope": "fresh",
+  "serviceScope": "community",
+  "rejectReason": null,
+  "auditedAt": "2026-10-22T01:05:11.000Z",
+  "distributorMerchantId": "mch_xxx"
+} }
+```
+
+**请求示例（驳回）**：
+```json
+{ "auditStatus": "rejected", "rejectReason": "暂不满足经营资质要求" }
+```
+
+**审核通过（approved）副作用**：同一事务内完成载体闭环——创建 `platform_merchants` + `merchants`（`is_distributor=1`、`audit_status=approved`、`merchant_source=distributor`、`merchant_type=goods`、`is_canteen_main_merchant=0`、`serve_all_communities=1`、关联申请人 `resident_id`）+ `merchant_property_configs`；申请人名下已有合格载体则复用（幂等）。**v8.15 修复**：此前 `merchant_type` / `is_canteen_main_merchant` 未赋值导致 NOT NULL 约束报错（HTTP 400），现已在实体层补齐默认值并覆盖所有建店路径，前端无需改动。
+
+**错误码**：`97040`（申请不存在）、`97041`（已审核不可重复）、`20004`（跨物业/权限不足）、`PARAM_MISSING`（rejected 未填原因）、`ACCOUNT_DISABLED`（申请人账号停用）。
+
+> **重试说明**：修复前审核失败的事务已整体回滚，申请仍为 `pending`；部署 v8.15 后直接重新点击「通过」即可，无需补数据。
+
+### 60.16.5 数据表
+
+| 表 | 说明 |
+| --- | --- |
+| `distributor_applications` | 一级代理申请表（`dap_`）：申请人、物业、联系人、经营品类、服务范围、审核状态、拒绝原因、审核通过后载体ID |
+| `merchants.is_distributor` | V22 已存在；审核通过置 1 |
+
+迁移脚本：**统一使用 `sql/manual_upgrade_20261022_distributor_leader_audit_fix.sql`**（幂等可重复执行）——包含 `merchants` 四个 NOT NULL 列兜底与 NULL 修复、`distributor_applications` 表、活动组长身份/申请表、存量 `role=activity_leader` 迁移。Flyway `V24__distributor_applications.sql` 仅作留档（生产 `flyway.enabled=false`，不执行）。
+
 ---
 
 # 三期接口总览（§61–§72）
@@ -16993,7 +17724,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.1 POST `/sector-leaders/{id}/individual-leaders` — 增加个体负责人
 
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 **Path**: `id` — 板块负责人ID
 
@@ -17025,13 +17756,13 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.2 DELETE `/sector-leaders/{id}/individual-leaders/{subId}` — 删除个体负责人
 
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 将个体负责人 status 设为 `inactive`。
 
 ## 61.3 POST `/sector-leaders/{id}/merchants` — 上传商家
 
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 ```json
 // Request Body
@@ -17048,7 +17779,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.4 POST `/sector-leaders/{id}/merchant-audits` — 同意/拒绝商家加入
 
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 > 🔧 **路径修正（2026-09-03）**：旧文档写作 `PUT /sector-leaders/{id}/merchant-audit`，与实际代码不一致；
 > 实际为 **`POST`** 且路径为 **`/merchant-audits`**，请求体字段为 `remark`（非 `reason`）。
@@ -17065,7 +17796,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.5 PUT `/sector-leaders/{id}/individual-leaders/{subId}/distribution` — 设置个体负责人分成
 
-**Roles**: `sector_leader`
+**Roles**: `resident`（须持有启用中的板块负责人记录；v8.13 负责人标签化后不再要求 `role=sector_leader`）
 
 ```json
 // Request Body
@@ -17074,7 +17805,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.6 PUT `/individual-leaders/{id}/merchant-distribution` — 个体负责人设置商家分成
 
-**Roles**: `individual_leader`  
+**Roles**: `resident`（须持有启用中的个体负责人记录；v8.13 负责人标签化后不再要求 `role=individual_leader`）  
 **Path**: `id` — `il_` / `res_` / `me`
 
 ```json
@@ -17089,7 +17820,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 61.7 PUT `/individual-leaders/{id}/delivery-fee` — 设置满额配送费
 
-**Roles**: `individual_leader`  
+**Roles**: `resident`（须持有启用中的个体负责人记录；v8.13 负责人标签化后不再要求 `role=individual_leader`）  
 **Path**: `id` — `il_` / `res_` / `me`
 
 ```json
@@ -17103,7 +17834,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 ## 61.8 GET `/individual-leaders/my` — 当前个体负责人信息
 
 **Auth**: Required  
-**Roles**: `individual_leader`
+**Roles**: `resident`（须持有启用中的个体负责人记录；v8.13 负责人标签化后不再要求 `role=individual_leader`）
 
 返回当前登录用户对应的个体负责人档案；后续工作台接口路径建议使用响应中的 `id`（`il_` 前缀）。
 
@@ -17302,7 +18033,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 ## 64.0 GET `/coordinators/my` — 当前统筹信息
 
 **Auth**: Required  
-**Roles**: `coordinator`
+**Roles**: `resident`（须持有启用中的统筹记录；v8.13 负责人标签化后不再要求 `role=coordinator`）
 
 **响应**（`CoordinatorMyResponse`）：
 
@@ -17324,7 +18055,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 64.1 POST `/coordinators/{id}/sector-leaders` — 增加模块负责人
 
-**Roles**: `coordinator`, `property_admin`
+**Roles**: `property_admin`，或持有启用中统筹记录的住户（v8.13 标签化）
 
 ```json
 // Request Body
@@ -17371,7 +18102,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 64.5 PUT `/coordinators/{id}/merchant-audit` — 统筹审核商家加入
 
-**Roles**: `coordinator`（**仅统筹**，物业管理员不可代审）
+**Roles**: `resident`（**仅统筹**：须持有启用中统筹记录，物业管理员不可代审；v8.13 标签化）
 
 审核板块负责人经 §61.3 上报的商家加入申请。与 §61.4 共用同一套请求/响应结构与后端服务，区别仅在于身份维度：
 
@@ -17395,7 +18126,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 64.6 POST `/coordinators/{id}/withdrawals` — 统筹申请提现
 
-**Roles**: `coordinator`（仅本人）
+**Roles**: `resident`（仅本人，且须持有启用中的统筹记录；v8.13 标签化）
 
 **请求体**（`ApplyRoleWithdrawalRequest`）：
 
@@ -17407,7 +18138,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 64.7 GET `/coordinators/{id}/withdrawals` — 统筹提现记录
 
-**Roles**: `coordinator`（仅本人）
+**Roles**: `resident`（仅本人，且须持有启用中的统筹记录；v8.13 标签化）
 
 **Query 参数**：`page`/`pageSize`/`auditStatus`(`pending`/`approved`/`rejected`/`completed`)/`startDate`/`endDate`
 
@@ -17632,6 +18363,10 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 > **2026-10-06 修复（v8.10）**：订单置 `completed` 后现同步执行结算
 > （`OrderCompletionService.settleOnCompleted`：生成 `distribution_records`（含楼长分成）与业主卖货明细）。
 > 修复此前商家自配单完成却无任何分成记录、楼长钱包不增加的问题。
+>
+> **2026-10-16 口径说明（v8.12）**：商家自配单**不经居民确认收货**——商家确认送达即订单完成（资金终态），
+> 这是与平台配送单（配送员完成配送 → 居民确认收货才完成）的唯一差异，属既有设计。
+> 前端无需在调用本接口后再同步订单状态（重复推进会因状态机校验返回 `70002`，无副作用但无必要）。
 
 ```json
 // Request Body（可空）
@@ -17669,8 +18404,13 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
   `requiresDelivery`(bool)、`fulfillmentMode`(string)、`fulfillmentModeLabel`(string)、`fulfillmentDeadline`(string)、`fulfillmentChosenAt`(string)。
   - `fulfillmentMode` 取值：`pending_choice`（待选择）/ `merchant_self`（商家自配）/ `courier_hall`（平台配送）/ `none`（团购单，无需配送）/ `null`（历史订单未迁移）；
   - 团购单：`requiresDelivery=false`、`fulfillmentMode=none`、`fulfillmentDeadline=null`、`fulfillmentChosenAt=null`，前端据此显示"无需配送"且不出现"发布到抢单大厅"按钮。
+- **🆕 v8.12 订单列表/详情配送状态字段**（§8.3/§8.4/§8.5，业务状态与物流状态分离）：
+  `deliveryStatusCode`(string：配送单状态 code，历史值 `delivered` 归一为 `completed`)、`deliveryStatusLabel`(string：配送单状态中文，后端下发)；
+  订单详情另含 `deliveryDeliveredAt`(string：配送单送达时间)。无配送单时均为 `null`。
 - **配送列表/详情**（`PendingDeliveryItemResponse` / `MyDeliveryItemResponse` / `CompleteDeliveryResponse`）：
   `carrierType`(string：courier/merchant)、`merchantDeliveryFeeShare`(decimal：仅商家自配单)。
+  - 🆕 v8.12：`MyDeliveryItemResponse` 新增 `statusLabel`/`orderStatus`/`orderStatusLabel`；`PendingDeliveryItemResponse` 新增 `statusLabel`；
+    `CompleteDeliveryResponse` 新增 `orderStatus`/`orderStatusLabel`（配送完成 ≠ 订单完成，见 §9.5）。
 
 ## 68.6 新增错误码
 
@@ -17704,6 +18444,9 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
   - 已有配送单的订单 → `courier_hall`；
   - 近 7 天内已支付 / 配送中且无配送单 → `pending_choice` + `paid_at + 30min` 时限；
   - 其余 `requires_delivery` 为空 → `1`。
+- **🆕 v8.12 数据规范化（2026-10-16）**：`sql/manual_upgrade_delivery_order_status_20261016.sql`（幂等）——
+  历史遗留 `deliveries.status='delivered'` 归一为 `completed`（正式完成态），并同步 `status` 列注释；
+  无表结构变更，`orders` 表状态均为合法值无需处理。
 
 ## 68.8 2026-09-09 修复清单（v8.4）
 
@@ -17727,6 +18470,29 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 > **影响面**：`POST /merchants/my/orders/{id}/fulfillment`、`POST /orders/{id}/choose-fulfillment`、`POST /orders/{id}/send-delivery`、`FulfillmentChoiceTimeoutJob`、`POST /admin/orders/{id}/override-fulfillment` 行为一致；
 > 无数据库结构变更。存量「已支付且未选择」订单若已有 `pending` 配送单，修复后不再出现在待抢大厅，待商家选择后按新规则处理。
+
+## 68.10 2026-10-10 修复（住户地址字段 `floor` 丢失）
+
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | 住户楼层 `floor` 无法保存/读取：楼栋变更审批通过后楼层丢失；管理端新增/修改住户、`GET /auth/profile`、`GET /residents/me`、住户详情/列表均无 `floor` | `residents.floor` 列早已存在且有数据，但 `Resident` 实体未映射该字段；各地址写入路径只写 `building/unit/room`，楼层被静默丢弃 | `Resident` 新增 `floor` 映射；`CreateResidentRequest`/`UpdateResidentRequest` 新增 `floor`；楼栋变更审批（§2.6.2.2）、管理端新增/修改住户写入 `floor`；`/auth/profile`、`/residents/me`、住户详情、住户列表响应新增 `floor` |
+
+> **影响面**：`POST /admin/residents`、`PUT /admin/residents/{id}`、`PUT /residents/me`、`POST /residents/me/building-change` 审批、`GET /auth/profile`、`GET /residents/me`、住户列表/详情。
+> **无数据库结构变更**（列早已存在），存量数据无需迁移。
+
+## 68.11 2026-10-16 修复（配送完成与订单完成 · 状态口径与结算展示分离，v8.12）
+
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | 「配送员处显示已完成，商家/居民处仍显示配送中」：同一张商家订单卡片同时出现「配送中」pill 与「已完成」配送提示 | 配送单状态与订单状态是两套独立状态机；订单响应从未下发配送状态字段，前端只能读 `orderStatus`（配送完成后仍为 `delivering`） | 订单列表/详情（§8.3/§8.4/§8.5）新增 `deliveryStatusCode` + `deliveryStatusLabel`（物流状态）；配送列表新增 `statusLabel` + `orderStatus`/`orderStatusLabel`；三端按「业务状态 / 物流状态 / 资金状态」分层展示 |
+| 2 | 前端拟用 `courier` 角色调 `PATCH /orders/{id}/status {completed}` 修补显示，会使资金在配送完成时即冻结、居民丧失确认收货与退货窗口 | `completed` 是资金终态（分账冻结 + 不支持线上退货），完成权应在居民/商家/超期兜底，而非配送员 | `applyStatusTransition` 收紧：courier 仅允许 `delivering`，置 `completed` 返回 `70002` 并提示正确路径；`POST /deliveries/{id}/complete` 不级联完成订单（文档 §9.5 明确） |
+| 3 | 文档 v8.11 起就写明订单返回 `deliveryStatusCode`/`deliveryStatusLabel`，后端从未实现 | 文档先行、实现缺失 | v8.12 真正落地（见 #1），并订正示例中不存在的 `deliveryStatus`/`orderStatusCode` 等字段 |
+| 4 | 配送完成态存在 `completed`（现行）/ `delivered`（旧部署）双写，前端需兼容两套 | 旧部署用 `delivered` + 配送完成即分账；现行版本改为 `completed` + 订单完成时分账 | 统一以 `completed` 为正式完成态；`/deliveries/my` 的 `status=delivered` 过滤自动归一；SQL 脚本归一存量数据（§68.7） |
+
+> **资金时点（不变）**：分成记录生成 + 微信分账冻结仍发生在**订单完成**时点；售后窗口到期完结划账（解冻）。
+> 配送完成不解冻——窗口内用户申请退货时配送费尚未划走，避免平台垫付。
+> **前端配合项**：移除配送员完成配送后向 `orders/{id}/status` 补同步 `completed` 的逻辑（会收到 `70002`，不阻断流程但无意义）；
+> 商家自配送达也无需再补同步（后端已级联）。详细交付说明见随附 HTML《配送完成与订单完成-状态口径与结算展示分离-后端答复》。
 
 ---
 
@@ -17846,7 +18612,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 70.1 POST `/individual-leaders/{id}/withdrawals` — 个体负责人提现申请
 
-**Roles**: `individual_leader`  
+**Roles**: `resident`（须持有启用中的个体负责人记录；v8.13 负责人标签化后不再要求 `role=individual_leader`）  
 **Path**: `id` — `il_` / `res_` / `me`（同 §61）
 
 ```json
@@ -17858,7 +18624,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 70.2 GET `/individual-leaders/{id}/withdrawals` — 个体负责人提现记录
 
-**Roles**: `individual_leader`  
+**Roles**: `resident`（须持有启用中的个体负责人记录；v8.13 负责人标签化后不再要求 `role=individual_leader`）  
 **Path**: `id` — `il_` / `res_` / `me`（同 §61）
 
 ## 70.3 POST `/courier-managers/my/withdrawals` — 快递员提现申请
@@ -17880,7 +18646,7 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 
 ## 70.5 GET `/admin/role-withdrawals` — 配送员/多角色提现审核列表
 
-> **背景**：快递员/个体负责人/统筹/板块负责人/单元楼长/业主卖货的提现申请统一落库 `withdrawal_records`（`withdrawal_type=courier / individual_leader / coordinator / sector_leader / building_leader / resident_seller`），管理端需经本接口查询审核（原 `/admin/merchant-withdrawals` 仅查商家提现表 `merchant_withdrawals`，不包含这些记录）。
+> **背景**：快递员/个体负责人/统筹/板块负责人/单元楼长/业主卖货/物业经理的提现申请统一落库 `withdrawal_records`（`withdrawal_type=courier / individual_leader / coordinator / sector_leader / building_leader / resident_seller / property_manager`），管理端需经本接口查询审核（原 `/admin/merchant-withdrawals` 仅查商家提现表 `merchant_withdrawals`，不包含这些记录）。
 
 **Auth**: Required  
 **Roles**: `property_admin`, `platform_admin`  
@@ -17899,7 +18665,7 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/role-withdrawals?page=
 | --- | --- | --- | --- | --- |
 | `page` | `int` | ❌ | `1` | 页码 |
 | `pageSize` | `int` | ❌ | `20` | 每页条数 |
-| `withdrawalType` | `String` | ❌ | | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader`/`building_leader`（单元楼长分成）/`resident_seller`（业主卖货收益） |
+| `withdrawalType` | `String` | ❌ | | 提现类型：`individual_leader`/`courier`/`coordinator`/`sector_leader`/`building_leader`（单元楼长分成）/`resident_seller`（业主卖货收益）/`property_manager`（🆕 v8.11 物业经理抽成） |
 | `auditStatus` | `String` | ❌ | | 审核状态：`pending`/`approved`/`rejected`/`completed`（兼容传 `pending_audit`，等价 `pending`） |
 | `keyword` | `String` | ❌ | | 关键词（提现ID/申请人ID/住户姓名/手机号，子查询匹配） |
 | `startDate` | `String` | ❌ | | 开始日期 `yyyy-MM-dd` |
@@ -19001,14 +19767,22 @@ curl -X PATCH "https://test.yuanxusoftware.top/api/v1/technicians/my/tasks/so_de
 ## 配送状态 (DeliveryStatus)
 
 
-| 值                   | 说明   |
-| ------------------- | ---- |
-| `pending`           | 待抢单  |
-| `accepted`          | 已接单  |
-| `delivering`        | 配送中  |
-| `completed`         | 已完成  |
-| `failed`            | 配送失败 |
-| `property_fallback` | 物业兜底 |
+| 值                   | 说明                                          |
+| ------------------- | ------------------------------------------- |
+| `pending`           | 待抢单                                         |
+| `accepted`          | 已接单                                         |
+| `delivering`        | 配送中                                         |
+| `completed`         | **已完成（正式完成态）**：配送员完成配送 / 商家确认自配送达           |
+| `failed`            | 配送失败（订单取消时联动置失败）                            |
+| `property_fallback` | 物业兜底（超时无人抢单，转物业处理）                          |
+| `merchant_self`     | 商家自配待配送（内部态，骑手不可见）                           |
+| `merchant_delivering` | 商家自配配送中（内部态，骑手不可见）                          |
+| `delivered`         | ⚠️ 历史遗留完成态（旧部署写入），**读写均归一为 `completed`**，禁止新写入 |
+| `refunded`          | ⚠️ 历史遗留退款态（旧部署退款冲正写入），当前模型退款只改订单状态，配送单保持 `completed` |
+
+> **v8.12 口径**：配送单状态回答「货送到哪了」，与订单业务状态（§订单状态）相互独立。
+> 配送员完成配送 → 配送单 `completed`，订单仍 `delivering`（已送达待确认）；
+> 居民确认收货 / 超期自动确认 / 商家自配确认送达 → 订单 `completed`（资金终态，触发结算）。
 
 
 
@@ -19538,6 +20312,77 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 
 **规则**：`accept` → 举报单 `status=accepted`，被举报帖子置 `hidden`、评论置 `deleted`；`reject` → `status=rejected`，内容不变；已处理举报再次处理返回 `98009`。
 
+### §C.15 POST `/admin/community/users/{residentId}/forum-ban` — 禁言用户（影子封禁）🆕 v8.14
+
+**Roles**: `property_admin`、`platform_admin`（限本物业公司；`platform_admin` 无归属物业可跨物业）
+
+**路径参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `residentId` | `String` | ✅ | 被禁住户ID（`res_` 前缀） |
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 校验 | 说明 |
+| --- | --- | --- | --- | --- |
+| `reason` | `String` | ❌ | ≤200 | 禁言原因（管理端留痕） |
+| `expiresAt` | `String` | ❌ | ISO8601（`yyyy-MM-ddTHH:mm:ss`，须晚于当前 | 到期时间；**不传=永久禁言** |
+
+**业务说明**：
+
+- **影子封禁（被禁用户无感知）**：被禁用户仍可正常发帖/评论，且本人端能看到自己刚发的内容；其他住户与管理端以外的任何人均看不到其内容（查询层按 `community_posts.shadow_banned` / `community_comments.shadow_banned` 与「作者可见性」过滤：`shadow_banned=0 OR author_id=viewer`）。
+- 已处于生效禁言（`active`）的用户重复禁言返回 `97050`。
+- 禁言生效时计数口径：先将该作者「已计数」的评论从各帖 `comment_count` 扣回，再给其历史帖子/评论打标 `shadow_banned=true`；帖子 `comment_count` 仅统计对外可见评论，保证「评论数」与实际可见列表始终一致。
+- `expiresAt` 为空=永久禁言；到期由调度器（`ForumBanExpiryScheduler`，带分布式锁）自动解除并回补计数（`status=expired`）。
+
+**成功响应**：`ResidentForumBanItemResponse`（字段见 §C.17）
+
+### §C.16 DELETE `/admin/community/users/{residentId}/forum-ban` — 解除禁言 🆕 v8.14
+
+**Roles**: `property_admin`、`platform_admin`
+
+**路径参数**：`residentId`（`res_` 前缀，必填）
+
+**业务说明**：
+
+- 解除禁言：先回补评论计数、取消内容打标（`shadow_banned=false`），再把禁言记录置 `lifted`；历史被禁内容恢复对外可见。
+- 无生效中禁言记录时返回 `97051`。
+
+**成功响应**：`ResidentForumBanItemResponse`
+
+### §C.17 GET `/admin/community/forum-bans` — 禁言列表 🆕 v8.14
+
+**Roles**: `property_admin`、`platform_admin`
+
+**查询参数**：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| `page` | `int` | ❌ | 1 | 页码 |
+| `pageSize` | `int` | ❌ | 20 | 每页条数（≤100） |
+| `status` | `String` | ❌ | — | 状态过滤：`active`/`lifted`/`expired` |
+
+**响应**：分页 `ResidentForumBanItemResponse`
+
+`ResidentForumBanItemResponse` 字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String` | 禁言记录ID（`rfb_`） |
+| `residentId` | `String` | 被禁住户ID |
+| `residentName` | `String` | 被禁住户姓名 |
+| `residentPhone` | `String` | 手机号（脱敏） |
+| `propertyCompanyId` | `String` | 物业公司ID |
+| `reason` | `String` | 禁言原因 |
+| `bannedBy` | `String` | 操作管理员住户ID |
+| `bannedByName` | `String` | 操作管理员姓名 |
+| `bannedAt` | `String` | 禁言开始时间(ISO8601) |
+| `expiresAt` | `String` | 到期时间(ISO8601)；`null`=永久 |
+| `status` | `String` | `active`/`lifted`/`expired` |
+
+> **C 端联动（影子封禁对前端的影响）**：住户在「社区」发帖/评论时，若处于生效禁言，**接口照常返回成功、本人端能看到自己刚发的内容**，但其他住户在帖子列表/详情/评论列表均看不到（后端按可见性过滤）；帖子 `comment_count` 只统计对外可见评论。前端**无需**改造发帖/评论交互，也**不要**提示「您已被禁言」——被禁用户应无感知。管理端在帖子/评论列表（`adminView=true`）可看到 `shadowBanned` 标记以区分正常内容与禁言内容。
+
 ### 错误码 98xxx
 
 | 错误码 | HTTP | 含义 | 触发场景 |
@@ -19640,6 +20485,14 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 | `60006` | 404  | 商家在该物业下未完成挂接配置 | `merchant_property_configs` 无对应记录 |
 | `60011` | 400  | 广告额度不足 | 免费额度用尽仍选 `free` 投放（§59.2） |
 | `60012` | 404  | 广告不存在 | 微信回调/超时收尾时 `merchant_ads` 无对应记录 |
+| `60030` | 403  | 该商家未开通一级代理权限 | 建货源商品 / 选品池调用时商家 `is_distributor=0`（§60.12、§60.5） |
+| `60037` | 400  | 仅审核通过的商家可管理一级代理权限 | 开通/取消一级代理、上架货源商品时商家 `audit_status != approved`（§60.12，2026-10-16 新增，从 60030 拆出） |
+| `60031` | 400  | 必须指定一级代理商家（distributorMerchantId） | `POST /admin/distributor-products` 未传 `distributorMerchantId`（§60.12） |
+| `60032` | 400  | 拿货件数必须为不小于1的整数 | `POST /resident-merchants/listings` 的 `quantity` < 1（§60.6） |
+| `60033` | 400  | 一级代理货源库存不足 | 拿货件数 > 货源剩余库存件数（§60.6） |
+| `60034` | 400  | 该上架存在未完成订单，不可取消 | `DELETE /resident-merchants/listings/{id}` 时有未完成订单（§60.6.1） |
+| `60035` | 400  | 可售件数不足 | 下单件数 > listing 可售件数 `quantityRemaining`（§60.10.1、§8.0.0） |
+| `60036` | 404  | 业主小店店铺主体不存在 | 下单/试算时未解析到小店店铺主体（§60.10.1、§60.14） |
 
 
 
@@ -19759,6 +20612,11 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 | `91001` | 404  | 统筹不存在    | 统筹ID无效 |
 | `91002` | 404  | 板块负责人不存在 | ID无效   |
 | `91003` | 404  | 个体负责人不存在 | ID无效   |
+| `91004` | 404  | 楼长不存在 | 楼长ID无效 |
+| `91005` | 404  | 物业经理不存在 | 经理ID无效 / 当前住户不是在职经理（§100） |
+| `91006` | 400  | 该物业公司已存在在职物业经理 | 同一物业公司重复指派 active 经理（§100） |
+| `91007` | 403  | 物业经理身份已停用 | 停用经理访问工作台（§100） |
+| `91008` | 403  | 物业经理不可修改自己的分成比例 | 经理本人调用更新接口改自己 `commissionRate`（§100） |
 
 
 
@@ -19820,6 +20678,12 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 | `97017` | 500  | 催缴消息落库/审计写入失败 | 消息/审计表写入（DataAccessException）兜底，返回明确错误码而非「数据访问失败」（v7.0 从 97011 拆出） |
 | `97020` | 400  | 积分功能未开启 | `property_companies.point_enabled=false` 时调用积分写接口（如 §2.6.4.1 转给物业）（2026-09-10 登记） |
 | `97021` | 400  | 物业币功能未开启 | `property_companies.coin_enabled=false` 时调用物业币写接口（如 §2.6.4.2 转给物业）（2026-09-10 登记） |
+| `97050` | 400  | 该用户已被禁言，无需重复操作 | `POST /admin/community/users/{residentId}/forum-ban` 命中已 `active` 禁言记录（§C.15，v8.14 新增） |
+| `97051` | 404  | 禁言记录不存在 | `DELETE /admin/community/users/{residentId}/forum-ban` 无生效中禁言记录（§C.16，v8.14 新增） |
+| `97060` | 404  | 组长申请不存在 | `POST /admin/activity-leader-applications/{id}/audit` 的 `applicationId` 无效（§101.2，v8.14 新增） |
+| `97061` | 400  | 该申请已审核，不可重复审核 | 对非 `pending` 组长申请再次调用审核接口（§101.2，v8.14 新增） |
+| `97062` | 400  | 您已有待审核的组长申请或已是组长，请勿重复提交 | `POST /activity-leader-applications/apply` 同物业已有 `pending` 或已是组长（§18.4.1，v8.14 新增） |
+| `97063` | 404  | 该用户没有生效中的组长身份 | `POST /admin/activity-leaders/{residentId}/revoke` 无 `active` 组长身份（§101.3，v8.14 新增） |
 
 
 
@@ -19841,6 +20705,10 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 | `97016` | 400  | 分账比例不合法         | 分账比例超出 [0,1] |
 | `97030` | 404  | 个体负责人申请不存在     | `applicationId` 查不到记录（§37.6，2026-09-08 新增） |
 | `97031` | 400  | 该申请已审核，不可重复审核 | 对非 `pending` 申请再次调用审核接口（§37.6，2026-09-08 新增） |
+| `97040` | 404  | 一级代理申请不存在     | `applicationId` 查不到记录（§60.16.4，2026-10-20 新增） |
+| `97041` | 400  | 一级代理申请已审核，不可重复审核 | 对非 `pending` 申请再次调用审核接口（§60.16.4，2026-10-20 新增） |
+| `97042` | 400  | 你已有待审核的一级代理申请，请勿重复提交 | `POST /distributors/apply` 同一用户同物业已有 `pending`（§60.16.1） |
+| `97043` | 400  | 你已是一级代理，无需重复申请 | `POST /distributors/apply` 名下已有 `is_distributor=1` 且 `approved` 载体（§60.16.1） |
 | `97033` | 400  | 物业公司存在关联数据，不可删除 | `DELETE /admin/property-companies/{id}` 命中小区/住户/商家/订单关联（§94.14，2026-09-08 新增） |
 
 
@@ -19909,27 +20777,46 @@ curl -X GET "https://test.yuanxusoftware.top/api/v1/admin/community/posts/cp_gen
 │  paid        │  获得积分 + 物业币返现
 └──────┬──────┘
        │
-       ▼
-┌─────────────┐
-│  快递员抢单  │  POST /deliveries/{id}/grab
-│  或          │  或
-│  物业指派    │  POST /deliveries/{id}/assign
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  配送中      │  PATCH /orders/{id}/status
-│  status:     │  → delivering
-│  delivering  │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  确认收货    │  POST /orders/{id}/confirm
-│  status:     │  → completed
-│  completed   │  分成记录生成
-└─────────────┘
+       ├──────────────────────────────┬─────────────────────────────┐
+       ▼                              ▼                             ▼
+┌─────────────┐              ┌──────────────┐              ┌──────────────────┐
+│ 需配送订单    │              │ 团购/食堂单    │              │ （配送中不回答钱的问题）  │
+│ 商家选履约方式  │              │ 无需配送       │              │ 资金态只在结算Tab展示   │
+│ merchant_self│              │ pending_      │              └──────────────────┘
+│ /courier_hall│              │ verification  │
+└──────┬──────┘              └──────┬───────┘
+       │                            │
+       ▼                            ▼
+┌─────────────┐              ┌──────────────┐
+│ 配送中        │              │ 商家核实通过    │  POST /orders/{id}/verify
+│ delivering   │              │ verified     │  → 冻结期（freezeEndDate）
+└──────┬──────┘              └──────┬───────┘
+       │                            │
+       ▼                            │
+┌─────────────┐                     │
+│ 配送员完成配送  │ POST /deliveries/{id}/complete        │
+│ 配送单 completed│ （订单仍 delivering + deliveredAt）      │
+│ 或商家确认自配送达│ POST /deliveries/{id}/merchant-confirm │
+│ （商家自配：订单直接 completed）│                            │
+└──────┬──────┘                     │
+       │                            │
+       ▼                            ▼
+┌─────────────────────────────────────────┐
+│  订单完成 completed（资金终态）                │
+│  ① 居民确认收货 POST /orders/{id}/confirm    │
+│  ② 超期自动确认（售后窗口期，定时任务）             │
+│  ③ 商家手动完成 PATCH /orders/{id}/status    │
+│  ④ 团购冻结期到期自动完成                      │
+│  → 生成分成记录 + 触发微信分账冻结               │
+│  → 售后窗口到期完结划账（解冻）→ 可提现           │
+└─────────────────────────────────────────┘
 ```
+
+> **v8.12 核心口径**：**配送完成 ≠ 订单完成**。配送单状态（`deliveries.status`）与订单业务状态
+> （`orders.order_status`）是两套独立状态机；订单列表/详情只回答「货送到哪了」，
+> 资金状态（冻结中/已解冻）只在商家「结算」Tab 与配送员「到账结算」界面回答。
+> `completed` 一旦落定即触发分账冻结且不再支持线上退货退款，因此平台配送单必须保留
+> 「送达 → 居民确认收货」缓冲窗口（超期由定时任务自动确认兜底）。
 
 
 
@@ -21983,9 +22870,9 @@ v7.0 起，HTTP 状态码由错误码枚举自身决定（新增错误码时编�
 
 - **新增接口**：`GET /residents/me/booking-info`（登录即可，已在 §2.x 文档化）。返回完整手机号 `contactPhone`、默认服务地址 `address`（楼栋+单元+房号）、以及 `hasPhone` / `hasAddress` 标志，供预约服务时自动带出。响应结构见 `BookingContactInfoResponse`。
 
-## 95.8 一级代理申请 / 退货申请
+## 95.8 个体负责人申请 / 退货申请
 
-- **一级代理（个体负责人）住户自主申请**：已实现 `POST /individual-leaders/apply` + `GET /individual-leaders/my-application`，文档见 §（个体负责人）。无需重复开发。
+- **个体负责人住户自主申请**（历史叫法"一级代理申请"，与 §60 货源一级代理无关）：已实现 `POST /individual-leaders/apply` + `GET /individual-leaders/my-application`，文档见 §37.7（个体负责人）。无需重复开发。
 - **订单退货**：已实现 `POST /orders/{id}/refund-request`（住户申请）+ `POST /admin/orders/refunds/{orderId}/audit`（管理端审核），文档见 §60.11 / §60.12。无需重复开发。
 - 另：`Order` 状态白名单补充 `refund_rejected`（退货被驳回）。
 
@@ -22658,7 +23545,7 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 
 # 99. 单元楼长（building_leader）与业主卖货钱包
 
-> 数据库变更见 `backend/src/main/resources/db/migration/V18__building_leader_and_seller_wallet.sql`（生产禁用 Flyway，需**手动执行**，脚本幂等可重复执行）。
+> 数据库变更见 `backend/src/main/resources/db/migration/V18__building_leader_and_seller_wallet.sql`、`V21__building_leader_unit_binding.sql`（生产禁用 Flyway，需**手动执行**，脚本幂等可重复执行）。
 
 ## 99.0 业务口径
 
@@ -22667,8 +23554,8 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 | 维度 | 说明 |
 | --- | --- |
 | 身份标识 | 楼长为**「住户 + 楼长」复合身份**：`residents.role` **始终保持 `resident`**，楼长身份由 `building_leaders` 表存在 `status='active'` 记录判定（`GET /auth/profile` 返回 `isBuildingLeader`/`buildingLeaderId`）。**不替换住户角色**，因此社区论坛等住户功能不受影响 |
-| 与活动组关系 | **无关**，楼长是与「小区 + 楼栋」绑定的独立推广角色 |
-| 绑定粒度 | 小区 `communityId` + 楼栋 `building`；同一小区同一楼栋**同一时刻仅一名 active 楼长**（历史记录保留，撤销后可重指派） |
+| 与活动组关系 | **无关**，楼长是与「小区 + 单元」绑定的独立推广角色 |
+| 绑定粒度 | 小区 `communityId` + 单元 `unit`；同一小区同一单元**同一时刻仅一名 active 楼长**（历史记录保留，撤销后可重指派）。**与楼栋无关**：`1号楼2单元` 与 `2号楼2单元` 视为同一岗位 |
 | 分成比例 | 任命时**按人单独设置** `commissionRate` ∈ (0,1]，默认 `0.1000`；表示占「物业公司分成」的比例 |
 | 分成来源 | 从**物业公司分成 `property_share` 中定向扣除**；`property_share` 相应减少，**总额守恒**，不影响统筹/板块/个体链路 |
 | 绑定时机 | **订单创建那一刻**快照 `orders.building_leader_id` / `orders.building_leader_rate`。分成定向从订单产生那一刻绑定，后续修改/撤销楼长**不会**把分成改判给新楼长 |
@@ -22701,11 +23588,25 @@ property_share        = property_share − building_leader_share
 
 | 表 | 变更 |
 | --- | --- |
-| `building_leaders` | **新建表**：`id`(`bl_`)/`resident_id`/`property_company_id`/`community_id`/`building`/`commission_rate`/`description`/`status`/`created_at`/`updated_at`；索引 `idx_bl_building(community_id,building,status)`、`idx_bl_resident`、`idx_bl_property` |
+| `building_leaders` | **新建表（V18）**：`id`(`bl_`)/`resident_id`/`property_company_id`/`community_id`/`commission_rate`/`description`/`status`/`created_at`/`updated_at`；**V21 调整**：新增 `unit`（与 `residents.unit` 对齐，绑定粒度），删除 `building`，索引 `idx_bl_building` → `idx_bl_unit(community_id, unit, status)`；保留 `idx_bl_resident`、`idx_bl_property` |
 | `orders` | 新增列 `building_leader_id`（`VARCHAR(32)`）、`building_leader_rate`（`DECIMAL(5,4)`），下单时写入的快照 |
 | `distribution_records` | 新增列 `building_leader_share`（`DECIMAL(10,2) NOT NULL DEFAULT 0`）、`building_leader_id`、`building_leader_rate`；索引 `idx_dr_building_leader(building_leader_id)` |
 | `withdrawal_records` | `withdrawal_type` 扩展支持 `building_leader` / `resident_seller`（列宽不变，仅刷新注释） |
 | `residents` | **数据修正**：`UPDATE residents SET role='resident' WHERE role='building_leader'`（历史误改写回滚；楼长身份由 `building_leaders` 表判定） |
+
+### 99.0.4 本次变更（v8.10）：楼长绑定由「楼栋」改为「单元」
+
+| 项 | 变更前 | 变更后 |
+| --- | --- | --- |
+| 绑定键 | `communityId + building` | `communityId + unit`（与楼栋无关） |
+| 管理端指定请求字段 | `building` | `unit` |
+| 列表筛选参数 | `building` | `unit` |
+| 列表 / 详情 / 工作台响应字段 | `building` | `unit` |
+| 订单绑定匹配 | 住户 `communityId + building` | 住户 `communityId + unit` |
+| 分成预览匹配 | 住户 `communityId + building` | 住户 `communityId + unit` |
+| 数据库 | `building_leaders.building` | `building_leaders.unit`（V21：新增 `unit` 并删除 `building`） |
+
+> **前端注意**：`POST /admin/building-leaders`（指定楼长）请求体字段由 `building` 改为 `unit`；楼长相关列表/详情/工作台响应中的 `building` 字段更名为 `unit`；`GET /admin/building-leaders` 的筛选参数由 `building` 改为 `unit`。存量数据已按住户 `residents.unit` 自动回填。
 
 ---
 
@@ -22724,7 +23625,7 @@ property_share        = property_share − building_leader_share
 | `keyword` | `String` | ❌ | 住户姓名/手机号模糊搜索 |
 | `status` | `String` | ❌ | `active`/`inactive` |
 | `communityId` | `String` | ❌ | 小区过滤 |
-| `building` | `String` | ❌ | 楼栋过滤 |
+| `unit` | `String` | ❌ | 单元过滤 |
 | `propertyCompanyId` | `String` | ❌ | 仅 `platform_admin` 可用，`property_admin` 强制本物业 |
 
 **响应**：`PageResponse<BuildingLeaderListItemResponse>`
@@ -22737,7 +23638,7 @@ property_share        = property_share − building_leader_share
 | `phone` | `String` | 手机号（旧字段，值同 `residentPhone`） |
 | `propertyCompanyId` / `propertyCompanyName` | `String` | 物业公司 |
 | `communityId` / `communityName` | `String` | 小区 |
-| `building` | `String` | 楼栋 |
+| `unit` | `String` | 单元 |
 | `commissionRate` | `BigDecimal` | 楼长分成比例（占物业分成，0~1） |
 | `description` | `String` | 备注 |
 | `totalEarning` | `BigDecimal` | 累计楼长分成 |
@@ -22752,12 +23653,12 @@ property_share        = property_share − building_leader_share
 | --- | --- | --- | --- |
 | `residentId` | `String` | ✅ | 住户 ID（`res_` 前缀） |
 | `communityId` | `String` | ❌ | 不传取住户所属小区；住户未关联小区时必填 |
-| `building` | `String` | ❌ | 不传取住户所属楼栋；住户未关联楼栋时必填 |
+| `unit` | `String` | ❌ | 不传取住户所属单元；住户未关联单元时必填（`residents.unit`） |
 | `commissionRate` | `BigDecimal` | ❌ | 占物业分成的比例，(0,1]，默认 `0.1000` |
 | `description` | `String` | ❌ | 备注 |
 | `status` | `String` | ❌ | `active`（默认）/`inactive` |
 
-**校验**：住户存在且属本物业；该小区+楼栋**已存在 active 楼长** → 报错；该住户**已是 active 楼长** → 报错。
+**校验**：住户存在且属本物业；该小区+单元**已存在 active 楼长** → 报错；该住户**已是 active 楼长** → 报错。
 
 **副作用**：新增一条 `building_leaders`（`status='active'`）记录；**不修改** `residents.role`（住户身份保留，楼长身份叠加）。
 
@@ -22796,7 +23697,7 @@ property_share        = property_share − building_leader_share
 
 ## 99.2 楼长工作台
 
-**Roles**：`resident`（登录用户须为该楼栋**启用中的楼长**，否则返回 `91004`）
+**Roles**：`resident`（登录用户须为该单元**启用中的楼长**，否则返回 `91004`）
 
 > 说明：楼长登录后 `role=resident`，前端通过 `GET /auth/profile`.`isBuildingLeader` 判断是否展示楼长工作台入口；工作台接口内部按 `building_leaders` 表校验楼长身份。
 
@@ -22810,7 +23711,7 @@ property_share        = property_share − building_leader_share
 | `residentId` / `residentName` | `String` | 住户信息 |
 | `propertyCompanyId` | `String` | 物业公司 |
 | `communityId` / `communityName` | `String` | 小区 |
-| `building` | `String` | 楼栋 |
+| `unit` | `String` | 单元 |
 | `commissionRate` | `BigDecimal` | 分成比例 |
 | `status` | `String` | `active`/`inactive` |
 | `totalEarning` | `BigDecimal` | 累计分成 |
@@ -22881,7 +23782,7 @@ property_share        = property_share − building_leader_share
 | --- | --- | --- |
 | `GET /distribution/records`（§21.1）、`GET /admin/distribution-records`（§21.4） | `buildingLeaderShare`、`buildingLeaderId`、`buildingLeaderName` | 楼长分成金额 / 楼长 ID / 楼长姓名 |
 | `GET /distribution/stats`（§21.2）、`GET /admin/distribution/statistics`（§21.5） | `summary.buildingLeaderAmount` | 楼长分成合计 |
-| `GET /distribution/calculate`（§21.3） | `buildingLeaderShare`、`buildingLeaderId` | 试算时的楼长分成分项（按住户当前楼栋实时解析） |
+| `GET /distribution/calculate`（§21.3） | `buildingLeaderShare`、`buildingLeaderId` | 试算时的楼长分成分项（按住户当前「小区 + 单元」实时解析） |
 | `GET /deliveries/pending`（§9.1）、`/deliveries/my`（§9.3）、`POST /deliveries/{id}/grab`（§9.4）、`POST /deliveries/{id}/complete`（§9.5） | `fee`、`originalDeliveryFee`、`deliverySubsidySponsor`、`deliverySubsidyAmount`、`deliverySettlementBase`、`platformDeliveryShare`、`courierEarning`、`courierShare`、`settlementStatus`、`carrierType`、`merchantDeliveryFeeShare` | v8.9 配送侧结算链字段（A1） |
 
 ### 99.4.2 订单快照
@@ -22902,8 +23803,8 @@ property_share        = property_share − building_leader_share
 | 错误码 | HTTP | 说明 |
 | --- | --- | --- |
 | `91004` | 404 | 楼长不存在 / 当前用户不是楼长（`BUILDING_LEADER_NOT_FOUND`） |
-| `10001` | 400 | 参数缺失（如住户未关联小区/楼栋且未指定 `communityId`/`building`） |
-| `10002` | 400 | 参数格式错误（如 `commissionRate` 不在 (0,1]、`status` 非法、该楼栋已存在 active 楼长、该住户已是 active 楼长） |
+| `10001` | 400 | 参数缺失（如住户未关联小区/单元且未指定 `communityId`/`unit`） |
+| `10002` | 400 | 参数格式错误（如 `commissionRate` 不在 (0,1]、`status` 非法、该小区该单元已存在 active 楼长、该住户已是 active 楼长） |
 | `30001` | 404 | 业主不存在（`RESIDENT_NOT_FOUND`） |
 | `97001` | 404 | 物业公司不存在（`PROPERTY_COMPANY_NOT_FOUND`） |
 | `94003` | 400 | 提现申请不允许操作（可提现余额不足，`MERCHANT_WITHDRAWAL_INVALID`） |
@@ -22923,3 +23824,273 @@ property_share        = property_share − building_leader_share
 | 登录响应 `resident`（`/auth/wechat-login`、`/auth/admin-login`） | `isBuildingLeader` | 同上，供登录后立即渲染入口 |
 
 > **存量数据迁移提示**：历史曾把楼长 `residents.role` 误写为 `building_leader`。执行 V18 脚本中的 `UPDATE residents SET role='resident' WHERE role='building_leader'` 后即为 `resident`。此前签发的旧令牌由 `RoleGuard` 将 `building_leader` 归一化为 `resident` 兜底，住户功能可正常使用；**建议楼长用户重新登录**以获取带 `isBuildingLeader` 的最新 profile。
+
+---
+
+<a id="100-物业公司经理property-managers"></a>
+
+# 100. 物业公司经理（property-managers）
+
+> 🆕 **v8.11 新增**。物业公司经理是**「住户 + 经理」复合身份**（附录于 §100.0 角色说明）。由 `property_admin` / `platform_admin` 指派，登录角色仍为 `resident`（**不占用 `residents.role`，也不写入座位字段**）。
+
+## 100.0 角色与业务口径
+
+| 项 | 说明 |
+| --- | --- |
+| 身份属性 | **业主属性**：经理自身的登录角色为 `resident`，经理身份由 `property_managers` 表的 `active` 记录判定（`resident_id` + `property_company_id`） |
+| 绑定关系 | 绑定一户 `resident`（`r_`/`res_` 前缀）+ 一个 `property_company`（`pc_`）；由管理端指派 |
+| 唯一性 | **同一物业公司同一时刻仅允许一名 `active` 经理**（应用层校验，参照楼长模式） |
+| 可做的两件事 | ① 添加**本物业公司范围内**的单元楼长（限定 scope）；② 从**楼长分成中按比例抽成**。**经理本人不能改自己的抽成比例**（防自肥） |
+| 抽成比例设置方 | 平台/物业（管理端 `commissionRate`，取值 `[0,1)`，默认 `0`） |
+
+**抽成口径（订单创建时快照，后续修改不影响已产生订单）**：
+
+```
+设：楼长分成 L，经理抽成比例 M（commission_rate，0≤M<1）
+
+经理收益   = L × M          → 经理独立钱包（wallet_flows，ownerType=property_manager，entryType=property_manager_share）
+楼长实得   = L × (1 − M)    → 楼长分成净额
+```
+
+- 快照落点：`orders.manager_id` / `orders.manager_rate`、`distribution_records.manager_id` / `distribution_records.manager_rate`（与楼长快照 `building_leader_id` / `building_leader_rate` 同表同模式，V22 脚本新增列）；
+- 无 `active` 经理时，楼长分成不抽成，楼长实得=`L`；
+- 经理收益写入 `wallet_flows`（`owner_type=property_manager`、`owner_id=经理 residentId`），`balanceType=withdrawable`，退款时写负向冲正流水（`refRecordId` 指向原流水），可提现；
+- **业主小店（listing）订单不参与**楼长分成/物业四级分成，故也**不产生经理抽成**（见 §60.15）。
+
+**数据表**（V22 脚本）：
+
+| 表 | 关键列 |
+| --- | --- |
+| `property_managers` | `id`（`pm_`）、`resident_id`（`res_`）、`property_company_id`（`pc_`）、`commission_rate`（`DECIMAL(5,4)`，默认 `0.0000`）、`description`、`status`（`active`/`inactive`） |
+| `orders` | 新增 `manager_id`、`manager_rate`（快照） |
+| `distribution_records` | 新增 `manager_id`、`manager_rate`（快照） |
+| `withdrawal_records` | `withdrawal_type` 新增枚举值 `property_manager` |
+
+## 100.1 管理端 — 物业经理管理
+
+**Auth**: Required　**Roles**: `property_admin`, `platform_admin`（物业隔离：`property_admin` 仅限本物业公司，跨物业操作返回 `20004`）
+
+| 方法 | 路径 | 说明 | 状态 |
+| --- | --- | --- | --- |
+| GET | `/admin/property-managers` | 经理列表 | ✅ |
+| POST | `/admin/property-managers` | 指派物业经理 | ✅ |
+| GET | `/admin/property-managers/{id}` | 经理详情 | ✅ |
+| PUT | `/admin/property-managers/{id}` | 更新（抽成比例/状态） | ✅ |
+| DELETE | `/admin/property-managers/{id}` | 停用（置 `inactive`） | ✅ |
+
+### GET `/admin/property-managers` — 经理列表
+
+**Query**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | Integer | ❌ | 页码，默认 1 |
+| `pageSize` | Integer | ❌ | 每页条数，默认 20 |
+| `keyword` | String | ❌ | 搜索关键词（住户姓名/手机号） |
+| `status` | String | ❌ | 状态 `active`/`inactive` |
+| `propertyCompanyId` | String | ❌ | 物业公司 ID（`platform_admin` 可跨物业筛选；`property_admin` 自动限本物业） |
+
+**响应（`PageResponse<PropertyManagerListItemResponse>`，`data.list[]`）**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | String | 经理 ID（`pm_`） |
+| `residentId` | String | 住户 ID |
+| `residentName` | String | 住户姓名 |
+| `residentPhone` | String | 住户手机号 |
+| `propertyCompanyId` | String | 物业公司 ID |
+| `propertyCompanyName` | String | 物业公司名称 |
+| `commissionRate` | BigDecimal | 经理抽成比例（占单元楼长分成） |
+| `status` | String | `active`/`inactive` |
+| `createdAt` | String | 创建时间 |
+
+### POST `/admin/property-managers` — 指派物业经理
+
+**请求体**（`CreatePropertyManagerRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `residentId` | String | ✅ | 经理对应住户 ID（`res_` 前缀，`@NotBlank`） |
+| `commissionRate` | BigDecimal | ❌ | 抽成比例（占楼长分成），`[0,1)`，不传默认 `0` |
+| `status` | String | ❌ | `active`/`inactive`，不传默认 `active` |
+
+**行为**：校验证件前缀、住户存在、**同物业（`assertSameProperty`）**；**同一住户已有经理记录（含停用）时禁止重复指派**（返回 `91006`，提示直接更新原记录）；指派 `active` 时校验该物业公司唯一在职经理（重复返回 `91006`）。
+
+**错误响应**：`91006`（该物业公司已存在在职物业经理 / 该住户已有经理记录）、`10003`（参数值超出范围）、`30001`（业主不存在）、`20004`（跨物业/权限不足）。
+
+**curl 示例**：
+
+```bash
+curl -X POST https://test.yuanxusoftware.top/api/v1/admin/property-managers \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <property_admin_token>" \
+  -d '{"residentId":"res_1001","commissionRate":0.20,"status":"active"}'
+```
+
+### GET `/admin/property-managers/{id}` — 经理详情
+
+**Path**：`id` 经理 ID（`pm_` 前缀，非法前缀返回 `10002`）
+**响应（`PropertyManagerDetailResponse`）**：字段同列表项（`id`/`residentId`/`residentName`/`residentPhone`/`propertyCompanyId`/`propertyCompanyName`/`commissionRate`/`status`/`createdAt`）
+**错误响应**：`91005`（物业经理不存在）、`20004`（跨物业/权限不足）
+
+### PUT `/admin/property-managers/{id}` — 更新（抽成比例/状态）
+
+**请求体**（`UpdatePropertyManagerRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `commissionRate` | BigDecimal | ❌ | 新抽成比例，`[0,1)`（传 null 表示不改） |
+| `status` | String | ❌ | `active`/`inactive`（传 null 表示不改） |
+
+**行为与规则**：
+
+- **经理本人调用改自己的 `commissionRate` 时禁止**，返回 `91008`（`manager.residentId == 当前登录人`）；
+- 将状态由 `inactive` 改为 `active` 时校验同物业唯一在职经理（重复返回 `91006`）；
+- 响应同详情 `PropertyManagerDetailResponse`。
+
+**错误响应**：`91008`（经理不可改自己的分成比例）、`91006`、`91005`、`10003`（比例超出 0~1 范围）、`20004`。
+
+### DELETE `/admin/property-managers/{id}` — 停用
+
+**行为**：将经理 `status` 置为 `inactive`（楼长分成不再被抽成）。响应当前详情 `PropertyManagerDetailResponse`。历史已快照的订单不受影响。
+**错误响应**：`91005`、`20004`。
+
+## 100.2 经理工作台（业主端）
+
+**Auth**: Required　**Roles**: `resident`（须为**在职**物业经理；即以 `resident` 登录且在本物业公司存在 `active` 经理记录）
+
+> 身份解析：按 `当前 userId + 当前物业公司ID + status=active` 查找；有停用记录时返回 `91007`（身份已停用），无任何记录返回 `91005`（当前用户不是物业经理）。
+
+| 方法 | 路径 | 说明 | 状态 |
+| --- | --- | --- | --- |
+| GET | `/property-managers/my` | 我的身份与抽成比例 | ✅ |
+| GET | `/property-managers/my/building-leaders` | 名下楼长列表（本物业范围） | ✅ |
+| POST | `/property-managers/my/building-leaders` | 指定单元楼长（限本物业） | ✅ |
+| GET | `/property-managers/my/earnings` | 我的抽成收益流水 | ✅ |
+| GET | `/property-managers/my/wallet` | 我的钱包概览 | ✅ |
+| POST | `/property-managers/my/withdrawals` | 申请提现 | ✅ |
+| GET | `/property-managers/my/withdrawals` | 提现记录 | ✅ |
+
+### GET `/property-managers/my` — 我的身份与抽成比例
+
+**响应（`PropertyManagerMyResponse`）**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `propertyManagerId` | String | 经理 ID（`pm_`） |
+| `residentId` | String | 住户 ID |
+| `residentName` | String | 姓名 |
+| `propertyCompanyId` | String | 物业公司 ID |
+| `propertyCompanyName` | String | 物业公司名称 |
+| `commissionRate` | BigDecimal | 经理抽成比例（占单元楼长分成） |
+| `status` | String | `active`/`inactive` |
+
+> 前端可用本接口判定「当前登录人是否为在职经理」以决定是否展示经理工作台入口；未开通则 `91005`。
+
+### GET `/property-managers/my/building-leaders` — 名下楼长列表
+
+**Query**：`page`（默认 1）、`pageSize`（默认 20）、`keyword`（住户姓名/手机号）、`status`（`active`/`inactive`）
+
+**响应**：`PageResponse<BuildingLeaderListItemResponse>`（本物业公司范围，字段同管理端楼长列表 §99.1）
+
+### POST `/property-managers/my/building-leaders` — 指定单元楼长
+
+**请求体**（`AppointBuildingLeaderRequest`，复用管理端楼长指定 DTO）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `residentId` | String | ✅ | 住户（楼长）ID（`res_` 前缀） |
+| `communityId` | String | ❌ | 小区 ID；不传取住户所属小区 |
+| `unit` | String | ❌ | 单元；不传取住户所属单元 |
+| `commissionRate` | BigDecimal | ❌ | 楼长分成比例（占物业公司分成），不传默认 `0.1000` |
+| `description` | String | ❌ | 备注/说明 |
+| `status` | String | ❌ | `active`/`inactive`，不传默认 `active` |
+
+**行为**：复用管理端楼长指定核心逻辑，**限定本物业公司**作用域。**响应**：`BuildingLeaderDetailResponse`。
+
+**curl 示例**：
+
+```bash
+curl -X POST https://test.yuanxusoftware.top/api/v1/property-managers/my/building-leaders \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <resident_token>" \
+  -d '{"residentId":"res_2001","unit":"1单元","commissionRate":0.10,"description":"1单元楼长"}'
+```
+
+### GET `/property-managers/my/earnings` — 我的抽成收益流水
+
+**Query**：`page`（默认 1）、`pageSize`（默认 20，**上限 100**，超过返回 `10003`）
+
+**响应（`PageResponse<PropertyManagerEarningItemResponse>`，`data.list[]`）**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | String | 流水 ID（`wf_`） |
+| `orderId` | String | 订单 ID |
+| `distributionRecordId` | String | 分账记录 ID（`dr_`） |
+| `entryType` | String | 流水类型 `property_manager_share` |
+| `amount` | BigDecimal | 金额（正数入账，**负数冲正**） |
+| `balanceType` | String | 余额类型 `withdrawable` |
+| `refRecordId` | String | 冲正关联的原流水 ID |
+| `createdAt` | String | 创建时间 |
+
+### GET `/property-managers/my/wallet` — 我的钱包概览
+
+**响应（`PropertyManagerWalletResponse`）**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `totalEarning` | BigDecimal | 累计抽成收益（含退款冲正负向） |
+| `withdrawnAmount` | BigDecimal | 已提现金额（`completed`） |
+| `pendingAmount` | BigDecimal | 在途提现金额（待审 `pending` + 已审待打款 `approved`） |
+| `withdrawableAmount` | BigDecimal | 可提现余额 = `totalEarning − withdrawnAmount − pendingAmount`（负则置 0） |
+
+### POST `/property-managers/my/withdrawals` — 申请提现
+
+**请求体**（`ApplyRoleWithdrawalRequest`）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `amount` | BigDecimal | ✅ | 提现金额，`≥0.01`；不得超过可提现余额 |
+
+**行为**：落库 `withdrawal_records`（`withdrawal_type=property_manager`、`applicant_id=经理 pm_ id`、`resident_id`、`property_company_id`）。
+
+**响应（`RoleWithdrawalItemResponse`）**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | String | 提现记录 ID |
+| `withdrawalType` | String | 提现类型 `property_manager` |
+| `applicantId` | String | 申请主体ID（经理 ID `pm_`） |
+| `residentId` | String | 关联住户 ID |
+| `propertyCompanyId` | String | 物业公司 ID |
+| `amount` | BigDecimal | 提现金额 |
+| `feeRate` | BigDecimal | 手续费比例 |
+| `feeAmount` | BigDecimal | 手续费金额 |
+| `actualAmount` | BigDecimal | 实际到账金额 |
+| `status` | String | `pending`/`approved`/`rejected`/`completed` |
+| `auditedAt` / `completedAt` / `createdAt` | String | 审核/完成/创建时间 |
+
+### GET `/property-managers/my/withdrawals` — 提现记录
+
+**Query**：`page`（默认 1）、`pageSize`（默认 20）、`auditStatus`（审核状态）、`startDate`、`endDate`
+
+**响应**：`PageResponse<RoleWithdrawalItemResponse>`（同上字段）
+
+## 100.3 提现审核（管理端）
+
+经理提现与其他多角色提现统一落 `withdrawal_records`（`withdrawal_type=property_manager`），**管理端提现审核列表**（§70.5 `GET /admin/role-withdrawals`）新增该类型筛选值。审核流程（`pending → approved → completed` / `rejected`）与其余角色一致。
+
+## 100.4 错误码
+
+| 错误码 | HTTP | 含义 | 触发场景 |
+| --- | --- | --- | --- |
+| `91005` | 404 | 物业经理不存在 | 详情/更新/停用 ID 无效；或当前住户无在职经理记录（工作台） |
+| `91006` | 400 | 该物业公司已存在在职物业经理 | 指派/激活时同物业已有 active 经理；或该住户已有经理记录重复指派 |
+| `91007` | 403 | 物业经理身份已停用 | 停用经理访问经理工作台 |
+| `91008` | 403 | 物业经理不可修改自己的分成比例 | 经理本人调用更新接口调整自身 `commissionRate` |
+| `10003` | 400 | 参数值超出范围 | `commissionRate` 不在 `[0,1)`；工作台收益 `pageSize>100` |
+| `30001` | 404 | 业主不存在 | 指派时 `residentId` 无效 |
+| `20004` | 403 | 权限不足 | 非 `property_admin`/`platform_admin`；或跨物业公司操作 |
+
+> 件数制相关码段（`60030`–`60036`）见 §60.5/§60.6/§60.6.1/§60.10.1/§60.12 与「错误码速查表」。

@@ -48,4 +48,28 @@ public class ResidentMerchantApplication extends BaseEntity {
 
     @Column(name = "quit_requested_at")
     private LocalDateTime quitRequestedAt;
+
+    /** 店铺名称（订单/买家看到的店名，默认「业主姓名的小店」） */
+    @Column(name = "shop_name", length = 100)
+    private String shopName;
+
+    /** 店铺主体商家ID（审核通过时自动创建，merchantSource=resident_shop） */
+    @Column(name = "merchant_id", length = 32)
+    private String merchantId;
+
+    /** 店铺简介（对齐普通商家 description） */
+    @Column(name = "description", length = 500)
+    private String description;
+
+    /** 营业时间（对齐普通商家 businessHours，如 08:00-22:00） */
+    @Column(name = "business_hours", length = 50)
+    private String businessHours;
+
+    /** 联系电话（对齐普通商家 contactPhone；不传则回退为店主手机号） */
+    @Column(name = "contact_phone", length = 20)
+    private String contactPhone;
+
+    /** 店铺封面图URL（对齐普通商家封面） */
+    @Column(name = "cover_url", length = 500)
+    private String coverUrl;
 }

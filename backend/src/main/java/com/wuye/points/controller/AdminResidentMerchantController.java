@@ -114,7 +114,7 @@ public class AdminResidentMerchantController {
         return ApiResponse.success(adminResidentMerchantService.updateSettings(request));
     }
 
-    @Operation(summary = "分销商品列表", description = "角色: property_admin, platform_admin。platform_admin 需传 propertyCompanyId")
+    @Operation(summary = "分销商品列表", description = "角色: property_admin, platform_admin。platform_admin 需传 propertyCompanyId。仅展示已开通一级代理权限(is_distributor=1)商家的商品")
     @GetMapping("/admin/distributor-products")
     public ApiResponse<PageResponse<DistributorProductListItemResponse>> listDistributorProducts(
             @RequestParam(defaultValue = "1") int page,
@@ -123,6 +123,26 @@ public class AdminResidentMerchantController {
             @RequestParam(required = false) String propertyCompanyId) {
         return ApiResponse.success(adminResidentMerchantService.listDistributorProducts(
                 page, pageSize, keyword, propertyCompanyId));
+    }
+
+    @Operation(summary = "开通一级代理权限",
+            description = "角色: property_admin, platform_admin。将商家 is_distributor 置 1，"
+                    + "仅审核通过(approved)的商家可开通；开通后可在货源池上架商品并接收业主小店货款")
+    @PostMapping("/admin/distributors/{merchantId}/enable")
+    public ApiResponse<Void> enableDistributor(
+            @Parameter(description = "商家ID(mch_)") @PathVariable String merchantId) {
+        adminResidentMerchantService.enableDistributor(merchantId);
+        return ApiResponse.success(null);
+    }
+
+    @Operation(summary = "取消一级代理权限",
+            description = "角色: property_admin, platform_admin。将商家 is_distributor 置 0；"
+                    + "已有货源商品保留（历史可追溯），仅失去新建货源资格")
+    @PostMapping("/admin/distributors/{merchantId}/disable")
+    public ApiResponse<Void> disableDistributor(
+            @Parameter(description = "商家ID(mch_)") @PathVariable String merchantId) {
+        adminResidentMerchantService.disableDistributor(merchantId);
+        return ApiResponse.success(null);
     }
 
     @Operation(summary = "一级经销商上架商品", description = "角色: property_admin, platform_admin")

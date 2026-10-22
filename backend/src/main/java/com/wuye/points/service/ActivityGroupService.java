@@ -109,13 +109,9 @@ public class ActivityGroupService {
         boolean isMine = Boolean.TRUE.equals(mine);
 
         // 组长查看"我管理的活动组"：按 leaderId 查，不过滤 status/reviewStatus
+        // （2026-10-21 组长标签化：isActivityLeader 按 identity 表 active 记录判定，兼容存量 JWT）
         if (isMine && roleGuard.isActivityLeader()) {
-            Pageable pageable = buildPageable(page, pageSize, sort);
-            Specification<ActivityGroup> spec = (root, query, cb) -> cb.and(
-                    cb.equal(root.get("propertyCompanyId"), resident.getPropertyCompanyId()),
-                    cb.equal(root.get("leaderId"), resident.getId()));
-            Page<ActivityGroup> groupPage = activityGroupRepository.findAll(spec, pageable);
-            return buildListPage(groupPage, page, pageSize, resident);
+            return listMyLedGroups(page, pageSize, sort);
         }
 
         String memberResidentId = isMine ? resident.getId() : null;
@@ -128,6 +124,26 @@ public class ActivityGroupService {
                 memberResidentId,
                 isMine ? null : "approved");
 
+        Page<ActivityGroup> groupPage = activityGroupRepository.findAll(spec, pageable);
+        return buildListPage(groupPage, page, pageSize, resident);
+    }
+
+    /**
+     * 我管理的活动组列表（§18.2.1）：仅返回本人担任组长（leaderId=当前用户）的活动组，
+     * 不过滤 status/reviewStatus。组长身份按 identity 表 active 记录判定（含存量 JWT 兼容）。
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<ActivityGroupListItemResponse> listMyLedGroups(int page, int pageSize, String sort) {
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        Pageable pageable = buildPageable(page, pageSize, sort);
+        Specification<ActivityGroup> spec = (root, query, cb) -> cb.and(
+                cb.equal(root.get("propertyCompanyId"), resident.getPropertyCompanyId()),
+                cb.equal(root.get("leaderId"), resident.getId()));
         Page<ActivityGroup> groupPage = activityGroupRepository.findAll(spec, pageable);
         return buildListPage(groupPage, page, pageSize, resident);
     }

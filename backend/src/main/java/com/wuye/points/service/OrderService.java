@@ -37,6 +37,7 @@ import com.wuye.points.entity.OrderItem;
 import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.Product;
 import com.wuye.points.entity.Resident;
+import com.wuye.points.entity.ResidentMerchantApplication;
 import com.wuye.points.entity.ResidentMerchantListing;
 import com.wuye.points.enums.CoinType;
 import com.wuye.points.enums.ResidentStatus;
@@ -47,6 +48,7 @@ import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.payment.EcommerceSplitProperties;
 import com.wuye.points.payment.WechatPayService;
 import com.wuye.points.payment.WechatSplitService;
+import com.wuye.points.payment.WechatSplitProperties;
 import com.wuye.points.entity.MerchantWechatAccount;
 import com.wuye.points.repository.DeliveryRepository;
 import com.wuye.points.repository.FamilyRepository;
@@ -60,6 +62,8 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.DistributorProductRepository;
 import com.wuye.points.repository.BuildingLeaderRepository;
+import com.wuye.points.repository.PropertyManagerRepository;
+import com.wuye.points.repository.ResidentMerchantApplicationRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.OrderSpecifications;
@@ -127,11 +131,15 @@ public class OrderService {
     private final FamilyRepository familyRepository;
     private final WechatPayService wechatPayService;
     private final WechatSplitService wechatSplitService;
+    private final WechatSplitProperties wechatSplitProperties;
     private final PaymentRecordRepository paymentRecordRepository;
     private final EcommerceSplitProperties ecommerceSplitProperties;
     private final MerchantWechatAccountRepository merchantWechatAccountRepository;
     private final CouponService couponService;
     private final BuildingLeaderRepository buildingLeaderRepository;
+    private final PropertyManagerRepository propertyManagerRepository;
+    private final ResidentMerchantApplicationRepository residentMerchantApplicationRepository;
+    private final ListingStockService listingStockService;
 
     @Transactional
     public CreateOrderResponse createOrder(CreateOrderRequest request) {
@@ -219,7 +227,8 @@ public class OrderService {
 
     /**
      * 向业主商户下单（购买其从一级经销商拿货后上架的商品）。
-     * 订单商家为货源方（一级经销商），订单记录 listing_id，完成时结算差价并自动下架。
+     * 订单归属业主小店店铺主体（merchant_source=resident_shop，经 listing→application→merchantId 解析），
+     * 订单记录 listing_id，商品金额=零售价×件数，完成时按件数结算差价与货款。
      */
     @Transactional
     public CreateOrderResponse createListingOrder(CreateListingOrderRequest request) {
@@ -234,17 +243,21 @@ public class OrderService {
         if (!Boolean.TRUE.equals(listing.getEnabled())) {
             throw new BizException(ErrorCode.PARAM_INVALID, "该商品已下架");
         }
+        int quantity = request.getQuantity() == null || request.getQuantity() < 1 ? 1 : request.getQuantity();
+        int remaining = listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining();
+        if (remaining < quantity) {
+            throw new BizException(ErrorCode.LISTING_STOCK_INSUFFICIENT);
+        }
         DistributorProduct product = distributorProductRepository.findById(listing.getDistributorProductId())
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND, "货源商品不存在"));
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND, "货源商品已停售");
         }
-        Merchant merchant = merchantRepository.findById(product.getDistributorMerchantId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        // 订单归属业主小店店铺主体（而非一级代理），配送费/佣金按店铺主体计算
+        Merchant merchant = resolveShopMerchant(listing);
         assertMerchantAvailable(merchant);
         loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
 
-        int quantity = request.getQuantity() == null || request.getQuantity() < 1 ? 1 : request.getQuantity();
         BigDecimal unitPrice = defaultDecimal(listing.getRetailPrice());
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
         BigDecimal deliveryFee = calculateDeliveryFee(merchant, totalAmount);
@@ -312,22 +325,53 @@ public class OrderService {
     }
 
     /**
-     * 下单时绑定单元楼长：按住户所属「小区 + 楼栋」解析启用中的楼长，
+     * 解析业主小店店铺主体：listing → 店主 residentId → 业主商户申请 → merchantId。
+     * 店铺主体缺失（存量数据未回填）时拒绝下单，避免订单错挂到一级代理名下。
+     */
+    private Merchant resolveShopMerchant(ResidentMerchantListing listing) {
+        ResidentMerchantApplication application = residentMerchantApplicationRepository
+                .findByResidentId(listing.getResidentId())
+                .orElseThrow(() -> new BizException(ErrorCode.SHOP_MERCHANT_NOT_FOUND, "业主小店申请记录不存在"));
+        if (!StringUtils.hasText(application.getMerchantId())) {
+            throw new BizException(ErrorCode.SHOP_MERCHANT_NOT_FOUND);
+        }
+        return merchantRepository.findById(application.getMerchantId())
+                .orElseThrow(() -> new BizException(ErrorCode.SHOP_MERCHANT_NOT_FOUND));
+    }
+
+    /**
+     * 下单时绑定单元楼长：按住户所属「小区 + 单元」解析启用中的楼长，
      * 并将楼长ID与分成比例快照写入订单。分成定向从订单产生那一刻算绑定关系，
      * 后续修改/撤销楼长不会影响本单分成归属。
+     * 同步快照物业经理（property_managers）：同一物业在职(active)经理唯一，
+     * 经理按比例从楼长分成中抽成（快照口径，后续变更不影响已产生订单）。
      */
     private void applyBuildingLeaderBinding(Order order, Resident resident) {
         if (resident == null
                 || !StringUtils.hasText(resident.getCommunityId())
-                || !StringUtils.hasText(resident.getBuilding())) {
+                || !StringUtils.hasText(resident.getUnit())) {
+            applyPropertyManagerBinding(order, resident);
             return;
         }
         buildingLeaderRepository
-                .findFirstByCommunityIdAndBuildingAndStatusOrderByCreatedAtDesc(
-                        resident.getCommunityId(), resident.getBuilding(), "active")
+                .findFirstByCommunityIdAndUnitAndStatusOrderByCreatedAtDesc(
+                        resident.getCommunityId(), resident.getUnit(), "active")
                 .ifPresent(leader -> {
                     order.setBuildingLeaderId(leader.getId());
                     order.setBuildingLeaderRate(leader.getCommissionRate());
+                });
+        applyPropertyManagerBinding(order, resident);
+    }
+
+    /** 物业经理快照：按住户所属物业公司解析在职经理（无楼长绑定的订单同样适用）。 */
+    private void applyPropertyManagerBinding(Order order, Resident resident) {
+        if (resident == null || !StringUtils.hasText(resident.getPropertyCompanyId())) {
+            return;
+        }
+        propertyManagerRepository.findByPropertyCompanyIdAndStatus(resident.getPropertyCompanyId(), "active")
+                .ifPresent(manager -> {
+                    order.setManagerId(manager.getId());
+                    order.setManagerRate(manager.getCommissionRate());
                 });
     }
 
@@ -371,7 +415,7 @@ public class OrderService {
         }
 
         // 纯积分/物业币即时支付：直接落账
-        deductStock(items);
+        deductStock(order, items);
         executePayment(resident, order, breakdown, useFamilyPool);
 
         int pointEarned = calculatePointEarned(breakdown, config);
@@ -441,7 +485,7 @@ public class OrderService {
                 PaymentBizType.ORDER, order.getId(), "pending").isEmpty()) {
             throw new BizException(ErrorCode.ORDER_CONFLICT, "订单支付处理中，请勿重复提交");
         }
-        deductStock(items);
+        deductStock(order, items);
         if (StringUtils.hasText(request.getFamilyId())) {
             order.setFamilyId(request.getFamilyId());
         }
@@ -650,8 +694,9 @@ public class OrderService {
         Merchant merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         boolean maskPhone = !isOrderOwner(order) && !roleGuard.isPlatformAdmin() && !roleGuard.isPropertyAdmin();
+        Delivery delivery = deliveryRepository.findByOrderId(order.getId()).orElse(null);
 
-        return orderConverter.toDetail(order, merchant, items, maskPhone);
+        return orderConverter.toDetail(order, merchant, items, maskPhone, delivery);
     }
 
     @Transactional
@@ -687,7 +732,7 @@ public class OrderService {
             refundPoint = defaultPoint(order.getPointUsed());
             refundAmount = refundCoin.add(defaultDecimal(order.getCashAmount()));
             refundPayment(resident, order, refundPoint, refundCoin);
-            restoreStock(orderItemRepository.findByOrderId(order.getId()));
+            restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
             reverseRewards(resident, order);
             refundCashIfAny(order, "用户取消订单");
         }
@@ -869,12 +914,16 @@ public class OrderService {
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND, "货源商品已停售");
         }
-        Merchant merchant = merchantRepository.findById(product.getDistributorMerchantId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        // 试算口径与 createListingOrder 一致：配送费按业主小店店铺主体计算
+        Merchant merchant = resolveShopMerchant(listing);
         assertMerchantAvailable(merchant);
         loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
 
         int quantity = request.getQuantity() == null || request.getQuantity() < 1 ? 1 : request.getQuantity();
+        int remaining = listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining();
+        if (remaining < quantity) {
+            throw new BizException(ErrorCode.LISTING_STOCK_INSUFFICIENT);
+        }
         BigDecimal retailPrice = defaultDecimal(listing.getRetailPrice());
         BigDecimal productAmount = retailPrice.multiply(BigDecimal.valueOf(quantity))
                 .setScale(2, RoundingMode.HALF_UP);
@@ -1043,9 +1092,11 @@ public class OrderService {
         int refundPoint = defaultPoint(order.getPointUsed());
         BigDecimal refundCoin = defaultDecimal(order.getCoinUsed());
         refundPayment(resident, order, refundPoint, refundCoin);
-        restoreStock(orderItemRepository.findByOrderId(order.getId()));
+        restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
         reverseRewards(resident, order);
         refundCashIfAny(order, "退货审核通过");
+        // 业主小店订单：已结算的结算单冲正（负向钱包流水 + sold_quantity 回退 + 结算单置 reversed）
+        residentMerchantSettlementService.refundOnOrderRefunded(order);
 
         order.setOrderStatus("refunded");
         try {
@@ -1067,10 +1118,16 @@ public class OrderService {
      *
      * <p>此前仅存在管理端审核（refunding→refunded）而无住户侧申请入口，
      * 导致订单永远无法进入 refunding，审核流空转。本方法补齐该断链。</p>
+     *
+     * <p>用户主动退款受运营开关 {@code wechat-split.user-refund-enabled} 控制（P1-4 修复：
+     * 此前该配置无任何读取方，开关形同虚设）；默认关闭，需管理端显式开启。</p>
      */
     @Transactional
     public RefundResponse requestRefund(String orderId, RefundRequestDTO request) {
         roleGuard.requireAnyRole("resident");
+        if (!wechatSplitProperties.isUserRefundEnabled()) {
+            throw new BizException(ErrorCode.REFUND_NOT_ENABLED);
+        }
         if (!orderId.startsWith("ord_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "订单ID格式不正确");
         }
@@ -1079,7 +1136,14 @@ public class OrderService {
         assertOrderOwner(order, resident.getId());
 
         String status = order.getOrderStatus();
-        if (!"paid".equals(status) && !"delivering".equals(status) && !"completed".equals(status)
+        // 「确认收货 = 资金终态」业务规则：completed 订单已触发微信分账（资金按分账链路解付），
+        // 系统内不再支持退货退款；有质量问题走物业线下客服处理。此前 completed 在可申请列表内，
+        // 而分账完结后微信侧不可回退（普通分账）/ 回退受限，会让审核流进入必然失败的中间态。
+        if ("completed".equals(status)) {
+            throw new BizException(ErrorCode.ORDER_STATUS_INVALID,
+                    "订单已完成确认收货，不支持线上退货退款，如有问题请联系物业线下处理");
+        }
+        if (!"paid".equals(status) && !"delivering".equals(status)
                 && !"pending_verification".equals(status) && !"verified".equals(status)) {
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "当前订单状态不可申请退货");
         }
@@ -1436,6 +1500,20 @@ public class OrderService {
                 .build();
     }
 
+    /**
+     * 订单状态流转（§8.8）。
+     *
+     * <p><b>资金终态规则（2026-10-16 v8.12 收紧）</b>：{@code completed} 是资金终态——
+     * 一旦置完成即生成分成记录并触发微信分账冻结，且按「确认收货 = 资金终态」规则
+     * 不再支持线上退货退款。因此平台配送单的完成权归居民（{@code POST /orders/{id}/confirm}），
+     * 配送员完成配送只推进配送单（{@code POST /deliveries/{id}/complete}），
+     * 订单停留 {@code delivering} + {@code deliveredAt}（已送达待确认），
+     * 超期由 {@code OrderAutoConfirmScheduler} 自动确认兜底。</p>
+     *
+     * <p>商家自配单由商家确认送达时后端直接级联完成订单（{@code DeliveryService.merchantConfirm}），
+     * 不经过本接口；本接口中 courier 角色不再允许置 {@code completed}，
+     * 防止「配送完成即跳过居民确认收货、资金提前解冻分账」。</p>
+     */
     private void applyStatusTransition(Order order, UpdateOrderStatusRequest request) {
         String targetStatus = request.getOrderStatus();
         if (roleGuard.isCourier()) {
@@ -1450,13 +1528,9 @@ public class OrderService {
                 return;
             }
             if ("completed".equals(targetStatus)) {
-                if (!"delivering".equals(order.getOrderStatus())) {
-                    throw new BizException(ErrorCode.ORDER_STATUS_INVALID);
-                }
-                order.setOrderStatus("completed");
-                order.setDeliveredAt(LocalDateTime.now());
-                order.setCompletedAt(LocalDateTime.now());
-                return;
+                throw new BizException(ErrorCode.ORDER_STATUS_INVALID,
+                        "配送完成不等于订单完成：订单完成须由居民确认收货（POST /orders/{id}/confirm），"
+                                + "或超期自动确认；配送员请调用 POST /deliveries/{id}/complete");
             }
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID);
         }
@@ -1492,16 +1566,28 @@ public class OrderService {
                                                                   int previewLimit) {
         Map<String, Merchant> merchantMap = loadMerchantMap(orderPage.getContent());
         Map<String, List<OrderItem>> itemMap = loadItemMap(orderPage.getContent());
+        Map<String, Delivery> deliveryMap = loadDeliveryMap(orderPage.getContent());
 
         List<OrderListItemResponse> list = orderPage.getContent().stream()
                 .map(order -> orderConverter.toListItem(
                         order,
                         merchantMap.get(order.getMerchantId()),
                         itemMap.getOrDefault(order.getId(), List.of()),
-                        previewLimit))
+                        previewLimit,
+                        deliveryMap.get(order.getId())))
                 .toList();
 
         return PageResponse.of(list, page, pageSize, orderPage.getTotalElements());
+    }
+
+    /** 按订单批量加载配送单（避免列表 N+1；无配送单的订单不出现在 Map 中） */
+    private Map<String, Delivery> loadDeliveryMap(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return Map.of();
+        }
+        List<String> orderIds = orders.stream().map(Order::getId).distinct().toList();
+        return deliveryRepository.findByOrderIdIn(orderIds).stream()
+                .collect(Collectors.toMap(Delivery::getOrderId, Function.identity(), (a, b) -> a));
     }
 
     @Transactional(readOnly = true)
@@ -1530,12 +1616,14 @@ public class OrderService {
 
         Map<String, Merchant> merchantMap = loadMerchantMap(orderPage.getContent());
         Map<String, List<OrderItem>> itemMap = loadItemMap(orderPage.getContent());
+        Map<String, Delivery> deliveryMap = loadDeliveryMap(orderPage.getContent());
         List<OrderListItemResponse> list = orderPage.getContent().stream()
                 .map(order -> orderConverter.toListItem(
                         order,
                         merchantMap.get(order.getMerchantId()),
                         itemMap.getOrDefault(order.getId(), List.of()),
-                        3))
+                        3,
+                        deliveryMap.get(order.getId())))
                 .toList();
         return PageResponse.of(list, page, pageSize, orderPage.getTotalElements());
     }
@@ -1592,19 +1680,48 @@ public class OrderService {
 
     /**
      * 商城库存扣减：统一委托 {@link ProductStockService}（行锁 + @Version 乐观锁，防并发超卖）。
-     * 业主上架货源商品（dpr_）不占用商城库存：拿货名额在上架/取消上架时已处理，
-     * 下单后仅卖一次并自动下架，故先过滤掉。
+     * 业主上架货源商品（dpr_）不占用商城库存：改为锁定 listing 可售件数（quantity_remaining 扣减）。
      */
-    private void deductStock(List<OrderItem> items) {
+    private void deductStock(Order order, List<OrderItem> items) {
         productStockService.deductAll(listingSourcedExcluded(items));
+        if (order.getListingId() != null) {
+            listingStockService.deductForOrder(order.getListingId(), listingQuantity(items));
+        }
     }
 
     /**
      * 商城库存恢复（取消 / 超时关单 / 退货）：同样统一委托 {@link ProductStockService}。
-     * 业主上架货源商品（dpr_）无商城库存结转，退货不恢复商城库存。
+     * 业主上架货源商品（dpr_）恢复 listing 可售件数（quantity_remaining 加回）。
      */
-    private void restoreStock(List<OrderItem> items) {
+    private void restoreStock(Order order, List<OrderItem> items) {
         productStockService.restoreAll(listingSourcedExcluded(items));
+        if (order.getListingId() != null && isListingStockDeducted(order)) {
+            listingStockService.restoreForOrder(order.getListingId(), listingQuantity(items));
+        }
+    }
+
+    /**
+     * listing 件数是否已预占：支付成功及之后状态（paid/delivering/refunding 等）必然已扣减；
+     * pending 订单仅当发起过支付（存在支付流水，微信预下单即预占）时才扣过件数——
+     * 从未发起支付的 pending 订单取消时不得回补可售件数，否则 quantity_remaining 虚增可超卖
+     * （超时关单由 PendingPaymentScheduler 收尾，流水关闭时订单已同步置 cancelled，不会走到这里）。
+     */
+    private boolean isListingStockDeducted(Order order) {
+        if (!"pending".equals(order.getOrderStatus())) {
+            return true;
+        }
+        return paymentRecordRepository.existsByBizId(order.getId());
+    }
+
+    /** 业主上架货源商品（dpr_）明细的总件数（listing 订单为单 item）。 */
+    private int listingQuantity(List<OrderItem> items) {
+        if (items == null) {
+            return 0;
+        }
+        return items.stream()
+                .filter(this::isListingSourcedItem)
+                .mapToInt(item -> item.getQuantity() == null ? 0 : item.getQuantity())
+                .sum();
     }
 
     /** 过滤掉业主上架货源商品（dpr_），仅保留占用商城库存的商品明细。 */
@@ -1706,12 +1823,11 @@ public class OrderService {
         if (cash.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        try {
-            wechatSplitService.reverseForOrder(order.getId());
-        } catch (Exception e) {
-            // 分账回退失败不阻断退款申请；回退资金未到账时微信退款会报余额不足，届时整个事务回滚由用户重试
-            log.warn("订单退款前分账退回异常，继续发起退款 orderId={}", order.getId(), e);
-        }
+        // 分账回退 fail-closed（P0-3 修复）：任一笔分账未回退完成即抛错回滚整个取消 / 审核事务，
+        // 杜绝「部分回退 + 已发起退款」的资金中间态；本地状态随事务回滚，重试时微信侧按
+        // 确定性 out_return_no 幂等处理，不会重复回退。订单无分账记录时（分账未启用 / 确认收货前取消）
+        // reverseForOrder 直接通过，不影响既有退款流程。
+        wechatSplitService.reverseForOrder(order.getId());
         String outRefundNo = wechatPayService.refund(record, cash, reason);
         record.setOutRefundNo(outRefundNo);
         record.setStatus("refunding");

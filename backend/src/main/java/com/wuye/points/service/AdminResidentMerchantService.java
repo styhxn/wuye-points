@@ -74,6 +74,7 @@ public class AdminResidentMerchantService {
     private final AdminSupport adminSupport;
     private final PlatformSettingService platformSettingService;
     private final SnowflakeIdGenerator idGenerator;
+    private final ResidentShopMerchantService residentShopMerchantService;
 
     @Transactional(readOnly = true)
     public PageResponse<ResidentMerchantApplicationListItemResponse> listApplications(
@@ -133,8 +134,11 @@ public class AdminResidentMerchantService {
         application.setAuditedAt(LocalDateTime.now());
         if ("approved".equals(auditStatus)) {
             application.setStatus("active");
+            // 审核通过：自动创建业主小店店铺主体（merchant_source=resident_shop）并回填 merchantId
+            residentShopMerchantService.ensureShopMerchant(application);
         } else {
             application.setStatus("closed");
+            residentShopMerchantService.deactivateShopMerchant(application);
         }
         applicationRepository.save(application);
 
@@ -192,6 +196,8 @@ public class AdminResidentMerchantService {
             application.setAuditRemark(remark != null ? remark : "线下缴纳保证金，管理端确认并直接开通");
             application.setAuditedBy(UserContext.currentUserId());
             application.setAuditedAt(LocalDateTime.now());
+            // 直接开通：同步创建业主小店店铺主体
+            residentShopMerchantService.ensureShopMerchant(application);
         } else {
             application.setStatus("pending_audit");
         }
@@ -376,15 +382,56 @@ public class AdminResidentMerchantService {
         return getSettings();
     }
 
+    /**
+     * 开通商家一级代理权限（is_distributor=1）：仅审核通过的商家可开通，物业隔离。
+     */
+    @Transactional
+    public void enableDistributor(String merchantId) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        Merchant merchant = getDistributorCapableMerchant(merchantId);
+        merchant.setIsDistributor(true);
+        merchantRepository.save(merchant);
+        log.info("开通一级代理权限 merchantId={} operator={}", merchantId, UserContext.currentUserId());
+    }
+
+    /**
+     * 取消商家一级代理权限（is_distributor=0）：已有货源商品不物理删除，仅失去新建/入池资格。
+     */
+    @Transactional
+    public void disableDistributor(String merchantId) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        Merchant merchant = getDistributorCapableMerchant(merchantId);
+        merchant.setIsDistributor(false);
+        merchantRepository.save(merchant);
+        log.info("取消一级代理权限 merchantId={} operator={}", merchantId, UserContext.currentUserId());
+    }
+
+    private Merchant getDistributorCapableMerchant(String merchantId) {
+        Merchant merchant = merchantRepository.findById(merchantId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "商家不存在"));
+        adminSupport.assertSameProperty(merchant.getPropertyCompanyId());
+        if (!"approved".equals(merchant.getAuditStatus())) {
+            throw new BizException(ErrorCode.DISTRIBUTOR_MERCHANT_NOT_APPROVED, "仅审核通过的商家可管理一级代理权限");
+        }
+        return merchant;
+    }
+
     @Transactional
     public CreateDistributorProductResponse createDistributorProduct(CreateDistributorProductRequest request) {
         roleGuard.requireAnyRole("property_admin", "platform_admin");
-        Merchant distributor = merchantRepository.findAll((root, query, cb) -> cb.and(
-                cb.equal(root.get("merchantLevel"), "official_certified"),
-                cb.equal(root.get("auditStatus"), "approved")))
-                .stream()
-                .findFirst()
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "未找到可用的一级经销商商家"));
+        // 修复：不再自动取第一个 official_certified 商家，必须显式指定一级代理商家并校验开通状态与物业隔离
+        if (!StringUtils.hasText(request.getDistributorMerchantId())) {
+            throw new BizException(ErrorCode.DISTRIBUTOR_PRODUCT_MERCHANT_REQUIRED);
+        }
+        Merchant distributor = merchantRepository.findById(request.getDistributorMerchantId())
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "指定的一级代理商家不存在"));
+        if (!Boolean.TRUE.equals(distributor.getIsDistributor())) {
+            throw new BizException(ErrorCode.DISTRIBUTOR_NOT_ENABLED);
+        }
+        if (!"approved".equals(distributor.getAuditStatus())) {
+            throw new BizException(ErrorCode.DISTRIBUTOR_MERCHANT_NOT_APPROVED, "该商家未通过审核，不可上架货源商品");
+        }
+        adminSupport.assertSameProperty(distributor.getPropertyCompanyId());
 
         DistributorProduct product = new DistributorProduct();
         product.setId(idGenerator.generateId("dpr"));
@@ -412,17 +459,25 @@ public class AdminResidentMerchantService {
         Pageable pageable = adminSupport.buildPageable(page, pageSize, "createdAt");
         String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
 
-        List<String> merchantIds = null;
+        // 货源池仅展示已开通一级代理权限（is_distributor=1）商家的商品
+        List<String> merchantIds;
         if (StringUtils.hasText(scopedPropertyCompanyId)) {
             String scoped = scopedPropertyCompanyId;
-            merchantIds = merchantRepository.findAll((root, query, cb) ->
-                            cb.equal(root.get("propertyCompanyId"), scoped))
+            merchantIds = merchantRepository.findAll((root, query, cb) -> cb.and(
+                            cb.equal(root.get("propertyCompanyId"), scoped),
+                            cb.equal(root.get("isDistributor"), true)))
                     .stream()
                     .map(Merchant::getId)
                     .toList();
-            if (merchantIds.isEmpty()) {
-                return PageResponse.of(List.of(), page, pageSize, 0);
-            }
+        } else {
+            merchantIds = merchantRepository.findAll((root, query, cb) ->
+                            cb.equal(root.get("isDistributor"), true))
+                    .stream()
+                    .map(Merchant::getId)
+                    .toList();
+        }
+        if (merchantIds.isEmpty()) {
+            return PageResponse.of(List.of(), page, pageSize, 0);
         }
 
         final List<String> scopedMerchantIds = merchantIds;

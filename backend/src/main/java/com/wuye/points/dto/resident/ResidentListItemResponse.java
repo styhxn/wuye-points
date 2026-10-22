@@ -53,6 +53,9 @@ public class ResidentListItemResponse {
     @Schema(description = "楼栋", example = "1栋")
     private String building;
 
+    @Schema(description = "楼层", example = "5")
+    private String floor;
+
     @Schema(description = "单元", example = "1单元")
     private String unit;
 

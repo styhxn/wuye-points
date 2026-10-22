@@ -21,7 +21,15 @@ public class CommunityConverter {
 
     private final ObjectMapper objectMapper;
 
-    public CommunityPostResponse toPostResponse(CommunityPost post, boolean likedByMe) {
+    /**
+     * 帖子响应转换。
+     *
+     * @param likedByMe   当前用户是否已点赞
+     * @param adminView   管理端视图：为 true 时才回显 shadowBanned 影子封禁标记。
+     *                    C 端（住户）一律不返回该标记——被禁言用户应无感知，
+     *                    不能让其从响应中得知自己已被封禁。
+     */
+    public CommunityPostResponse toPostResponse(CommunityPost post, boolean likedByMe, boolean adminView) {
         return CommunityPostResponse.builder()
                 .id(post.getId())
                 .authorId(post.getAuthorId())
@@ -33,12 +41,19 @@ public class CommunityConverter {
                 .likeCount(post.getLikeCount() == null ? 0 : post.getLikeCount())
                 .commentCount(post.getCommentCount() == null ? 0 : post.getCommentCount())
                 .likedByMe(likedByMe)
+                .shadowBanned(adminView ? Boolean.TRUE.equals(post.getShadowBanned()) : null)
                 .createdAt(DateTimeUtil.toIsoUtc(post.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(post.getUpdatedAt()))
                 .build();
     }
 
-    public CommunityCommentResponse toCommentResponse(CommunityComment comment) {
+    /** C 端视图（不回显影子封禁标记） */
+    public CommunityPostResponse toPostResponse(CommunityPost post, boolean likedByMe) {
+        return toPostResponse(post, likedByMe, false);
+    }
+
+    /** 管理端视图（回显影子封禁标记） */
+    public CommunityCommentResponse toCommentResponse(CommunityComment comment, boolean adminView) {
         return CommunityCommentResponse.builder()
                 .id(comment.getId())
                 .postId(comment.getPostId())
@@ -50,8 +65,14 @@ public class CommunityConverter {
                 .replyToUserId(comment.getReplyToUserId())
                 .replyToUserName(comment.getReplyToUserName())
                 .status(comment.getStatus())
+                .shadowBanned(adminView ? Boolean.TRUE.equals(comment.getShadowBanned()) : null)
                 .createdAt(DateTimeUtil.toIsoUtc(comment.getCreatedAt()))
                 .build();
+    }
+
+    /** C 端视图（不回显影子封禁标记） */
+    public CommunityCommentResponse toCommentResponse(CommunityComment comment) {
+        return toCommentResponse(comment, false);
     }
 
     public ContentReportResponse toReportResponse(ContentReport report, String targetContent, String targetAuthorName) {

@@ -17,7 +17,7 @@ public final class BuildingLeaderSpecifications {
             String propertyCompanyId,
             String status,
             String communityId,
-            String building,
+            String unit,
             String keyword) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
@@ -31,8 +31,8 @@ public final class BuildingLeaderSpecifications {
             if (StringUtils.hasText(communityId)) {
                 predicates.add(cb.equal(root.get("communityId"), communityId));
             }
-            if (StringUtils.hasText(building)) {
-                predicates.add(cb.equal(root.get("building"), building));
+            if (StringUtils.hasText(unit)) {
+                predicates.add(cb.equal(root.get("unit"), unit));
             }
             if (StringUtils.hasText(keyword)) {
                 var subquery = query.subquery(String.class);

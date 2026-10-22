@@ -9,20 +9,24 @@ import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.CourierManager;
 import com.wuye.points.entity.IndividualLeader;
 import com.wuye.points.entity.PropertyCompany;
+import com.wuye.points.entity.PropertyManager;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.entity.WithdrawalRecord;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.WechatSplitOwnerTypes;
 import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.CourierManagerRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.PropertyManagerRepository;
 import com.wuye.points.repository.ResidentMerchantSettlementRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
+import com.wuye.points.repository.WalletFlowRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.repository.spec.WithdrawalRecordSpecifications;
 import com.wuye.points.util.DateTimeUtil;
@@ -58,6 +62,7 @@ public class RoleWithdrawalService {
     private static final String WITHDRAWAL_TYPE_SECTOR_LEADER = "sector_leader";
     private static final String WITHDRAWAL_TYPE_BUILDING_LEADER = "building_leader";
     private static final String WITHDRAWAL_TYPE_RESIDENT_SELLER = "resident_seller";
+    private static final String WITHDRAWAL_TYPE_PROPERTY_MANAGER = "property_manager";
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
@@ -69,6 +74,8 @@ public class RoleWithdrawalService {
     private final BuildingLeaderRepository buildingLeaderRepository;
     private final DistributionRecordRepository distributionRecordRepository;
     private final ResidentMerchantSettlementRepository settlementRepository;
+    private final PropertyManagerRepository propertyManagerRepository;
+    private final WalletFlowRepository walletFlowRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
     private final WithdrawableService withdrawableService;
@@ -81,7 +88,7 @@ public class RoleWithdrawalService {
     @Transactional
     public RoleWithdrawalItemResponse applyForIndividualLeader(
             String individualLeaderId, ApplyRoleWithdrawalRequest request) {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         IndividualLeaderWorkbenchService.assertSelf(current, individualLeaderId);
         assertNotBlocked(current.getResidentId());
@@ -91,7 +98,10 @@ public class RoleWithdrawalService {
                 .sumIndividualLeaderShareByIndividualLeaderId(current.getId()));
         BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_INDIVIDUAL_LEADER, null));
-        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
+                WechatSplitOwnerTypes.INDIVIDUAL_LEADER.name(), current.getId());
+        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -128,7 +138,7 @@ public class RoleWithdrawalService {
             String auditStatus,
             String startDate,
             String endDate) {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         IndividualLeaderWorkbenchService.assertSelf(current, individualLeaderId);
 
@@ -155,7 +165,7 @@ public class RoleWithdrawalService {
     @Transactional
     public RoleWithdrawalItemResponse applyForCoordinator(
             String coordinatorId, ApplyRoleWithdrawalRequest request) {
-        roleGuard.requireAnyRole("coordinator");
+        roleGuard.requireAnyRole("resident");
         Coordinator current = getCurrentCoordinator();
         if (!current.getId().equals(coordinatorId)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他统筹");
@@ -166,7 +176,10 @@ public class RoleWithdrawalService {
                 .sumCoordinatorShareByCoordinatorId(current.getId()));
         BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_COORDINATOR, null));
-        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
+                WechatSplitOwnerTypes.COORDINATOR.name(), current.getId());
+        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -183,7 +196,7 @@ public class RoleWithdrawalService {
             String auditStatus,
             String startDate,
             String endDate) {
-        roleGuard.requireAnyRole("coordinator");
+        roleGuard.requireAnyRole("resident");
         Coordinator current = getCurrentCoordinator();
         if (!current.getId().equals(coordinatorId)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他统筹");
@@ -197,7 +210,7 @@ public class RoleWithdrawalService {
     @Transactional
     public RoleWithdrawalItemResponse applyForSectorLeader(
             String sectorLeaderId, ApplyRoleWithdrawalRequest request) {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader current = getCurrentSectorLeader();
         if (!current.getId().equals(sectorLeaderId)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他板块负责人");
@@ -208,7 +221,10 @@ public class RoleWithdrawalService {
                 .sumSectorLeaderShareBySectorLeaderId(current.getId()));
         BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_SECTOR_LEADER, null));
-        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
+                WechatSplitOwnerTypes.SECTOR_LEADER.name(), current.getId());
+        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -225,7 +241,7 @@ public class RoleWithdrawalService {
             String auditStatus,
             String startDate,
             String endDate) {
-        roleGuard.requireAnyRole("sector_leader");
+        roleGuard.requireAnyRole("resident");
         SectorLeader current = getCurrentSectorLeader();
         if (!current.getId().equals(sectorLeaderId)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他板块负责人");
@@ -250,7 +266,10 @@ public class RoleWithdrawalService {
                 .sumBuildingLeaderShareByBuildingLeaderId(current.getId()));
         BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, null));
-        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
+        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
+                WechatSplitOwnerTypes.BUILDING_LEADER.name(), current.getId());
+        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -319,6 +338,48 @@ public class RoleWithdrawalService {
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
         return listByType(WITHDRAWAL_TYPE_RESIDENT_SELLER, residentId,
                 resident.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
+    }
+
+    // ============== 物业经理提现 ==============
+
+    /**
+     * 物业经理提现申请：可提现余额 = 经理抽成流水（property_manager_share，含冲正）− 已占用提现。
+     */
+    @Transactional
+    public RoleWithdrawalItemResponse applyForPropertyManager(ApplyRoleWithdrawalRequest request) {
+        roleGuard.requireAnyRole("resident");
+        PropertyManager current = getCurrentPropertyManager();
+        assertNotBlocked(current.getResidentId());
+
+        BigDecimal earned = defaultDecimal(walletFlowRepository
+                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType(
+                        "property_manager", current.getResidentId(), "withdrawable"));
+        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
+                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_PROPERTY_MANAGER, null));
+        // 微信分账已实时到账的经理抽成不再走内部提现（防一笔钱分两次付）；
+        // 主体键与分账记录一致：ownerType=PROPERTY_MANAGER、ownerId=经理 residentId
+        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
+                WechatSplitOwnerTypes.PROPERTY_MANAGER.name(), current.getResidentId());
+        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        if (request.getAmount().compareTo(withdrawable) > 0) {
+            throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
+        }
+
+        return buildAndSave(current.getId(), current.getResidentId(), current.getPropertyCompanyId(),
+                WITHDRAWAL_TYPE_PROPERTY_MANAGER, request.getAmount());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RoleWithdrawalItemResponse> listForPropertyManager(
+            int page,
+            int pageSize,
+            String auditStatus,
+            String startDate,
+            String endDate) {
+        roleGuard.requireAnyRole("resident");
+        PropertyManager current = getCurrentPropertyManager();
+        return listByType(WITHDRAWAL_TYPE_PROPERTY_MANAGER, current.getId(),
+                current.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
     }
 
     // ============== 快递员提现 ==============
@@ -401,6 +462,14 @@ public class RoleWithdrawalService {
         return buildingLeaderRepository
                 .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(userId, propertyCompanyId, "active")
                 .orElseThrow(() -> new BizException(ErrorCode.BUILDING_LEADER_NOT_FOUND, "当前用户不是楼长"));
+    }
+
+    private PropertyManager getCurrentPropertyManager() {
+        String userId = UserContext.currentUserId();
+        String propertyCompanyId = UserContext.currentPropertyCompanyId();
+        return propertyManagerRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByIdAsc(userId, propertyCompanyId, "active")
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_MANAGER_NOT_FOUND, "当前用户不是物业经理"));
     }
 
     private SectorLeader getCurrentSectorLeader() {

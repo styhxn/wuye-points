@@ -54,7 +54,7 @@ public class AdminTransferToPropertyService {
     @Transactional(readOnly = true)
     public PageResponse<TransferToPropertyListItemResponse> listPointTransfers(
             int page, int pageSize, String propertyCompanyId, String residentId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
         String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
         validateResidentId(residentId);
 
@@ -82,7 +82,7 @@ public class AdminTransferToPropertyService {
     @Transactional(readOnly = true)
     public PageResponse<TransferToPropertyListItemResponse> listCoinTransfers(
             int page, int pageSize, String propertyCompanyId, String residentId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
         String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
         validateResidentId(residentId);
 

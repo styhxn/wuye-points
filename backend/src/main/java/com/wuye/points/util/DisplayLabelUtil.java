@@ -15,16 +15,18 @@ public final class DisplayLabelUtil {
             "property_coin", "物业币支付",
             "mixed", "混合支付");
 
-    private static final Map<String, String> DELIVERY_STATUS_LABELS = Map.of(
-            "pending", "待抢单",
-            "accepted", "已接单",
-            "picked", "已取货",
-            "delivering", "配送中",
-            "completed", "已完成",
-            "delivered", "已完成",
-            "failed", "配送失败",
-            "property_fallback", "物业兜底",
-            "merchant_self", "商家自配中");
+    private static final Map<String, String> DELIVERY_STATUS_LABELS = Map.ofEntries(
+            Map.entry("pending", "待抢单"),
+            Map.entry("accepted", "已接单"),
+            Map.entry("picked", "已取货"),
+            Map.entry("delivering", "配送中"),
+            Map.entry("completed", "已完成"),
+            Map.entry("delivered", "已完成"),
+            Map.entry("failed", "配送失败"),
+            Map.entry("property_fallback", "物业兜底"),
+            Map.entry("merchant_self", "商家自配待配送"),
+            Map.entry("merchant_delivering", "商家自配配送中"),
+            Map.entry("refunded", "已退款"));
 
     private static final Map<String, String> FULFILLMENT_MODE_LABELS = Map.of(
             "pending_choice", "待选择",

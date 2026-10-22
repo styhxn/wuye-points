@@ -12,6 +12,9 @@ import java.math.BigDecimal;
 @Schema(description = "一级经销商上架商品")
 public class CreateDistributorProductRequest {
 
+    @Schema(description = "一级代理商家ID（管理端必传，须已开通 is_distributor 权限；代理工作台自建时忽略，取当前商家）")
+    private String distributorMerchantId;
+
     @NotBlank
     private String name;
 

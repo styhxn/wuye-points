@@ -127,7 +127,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
         if (permissionCode != null) {
             // 2026-09-07 前端问题 C：coordinator 持有只读权限码（如 sector:read）时放行 GET 查询；
             // 2026-09-08 前端问题：sector:manage 等白名单写权限码同样按权限码放行，其余写操作仍走 requireAdmin。
-            if ("coordinator".equals(role)
+            // 2026-10-20 负责人标签化：coordinator 身份改由 coordinators 表 active 记录判定（兼容存量 JWT role 值）。
+            if (roleGuard.isCoordinator()
                     && (permissionCode.endsWith(":read") || COORDINATOR_WRITABLE_CODES.contains(permissionCode))) {
                 permissionGuard.requirePermissionOrAdminAllowingCoordinator(permissionCode);
             } else {

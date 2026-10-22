@@ -5,7 +5,11 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Data;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import jakarta.persistence.EntityListeners;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
@@ -18,6 +22,7 @@ import java.time.LocalDateTime;
  */
 @Data
 @Entity
+@EntityListeners(AuditingEntityListener.class)
 @Table(name = "wechat_split_record")
 public class WechatSplitRecord {
 
@@ -68,9 +73,11 @@ public class WechatSplitRecord {
     private String remark;
 
     @Column(name = "created_at")
+    @CreatedDate
     private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
+    @LastModifiedDate
     private LocalDateTime updatedAt;
 
     @Column(name = "group_no", length = 32)

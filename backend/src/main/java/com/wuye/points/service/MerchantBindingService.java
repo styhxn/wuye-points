@@ -96,6 +96,7 @@ public class MerchantBindingService {
         merchant.setStatus("active");
         merchant.setServeAllCommunities(true);
         merchant.setMerchantSource(merchantSource);
+        merchant.setMerchantType(resolveMerchantType(merchantSource));
         merchantRepository.save(merchant);
         log.info("自动创建商家店铺: merchantId={}, merchantSource={}, residentId={}, propertyCompanyId={}",
                 merchant.getId(), merchantSource, resident.getId(), resident.getPropertyCompanyId());
@@ -128,6 +129,14 @@ public class MerchantBindingService {
             case "group_leader" -> "活动组";
             case "technician" -> "社区服务";
             default -> "其他";
+        };
+    }
+
+    private String resolveMerchantType(String merchantSource) {
+        return switch (merchantSource) {
+            case "group_leader" -> "group_leader";
+            case "technician" -> "technician";
+            default -> "goods";
         };
     }
 }

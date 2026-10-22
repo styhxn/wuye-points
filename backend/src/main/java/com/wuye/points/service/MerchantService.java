@@ -208,14 +208,11 @@ public class MerchantService {
         merchant.setFreeDeliveryThreshold(request.getFreeDeliveryThreshold());
         merchant.setStatus("active");
         // 个体负责人提交的商家入驻：绑定归属个体负责人
-        if ("individual_leader".equals(UserContext.currentRole())) {
-            IndividualLeader leader = individualLeaderRepository
-                    .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
-                            applicant.getId(), propertyCompanyId, "active")
-                    .orElseThrow(() -> new BizException(ErrorCode.INDIVIDUAL_LEADER_NOT_FOUND,
-                            "当前用户不是个体负责人"));
-            merchant.setIndividualLeaderId(leader.getId());
-        }
+        // 2026-10-20 负责人标签化：身份由 individual_leaders 表 active 记录判定（不再看 role）
+        individualLeaderRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                        applicant.getId(), propertyCompanyId, "active")
+                .ifPresent(leader -> merchant.setIndividualLeaderId(leader.getId()));
         merchantRepository.save(merchant);
 
         MerchantPropertyConfig config = new MerchantPropertyConfig();
@@ -393,7 +390,8 @@ public class MerchantService {
 
     @Transactional(readOnly = true)
     public MerchantDetailResponse getMyMerchant() {
-        roleGuard.requireAnyRole("merchant", "activity_leader", "technician");
+        // 2026-10-21 组长标签化：组长身份由 activity_leader_identities 表判定（role 归一为 resident）
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("merchant", "technician");
         Merchant merchant = resolveOwnedMerchant();
         MerchantPropertyConfig config = merchantPropertyConfigRepository
                 .findByMerchantIdAndPropertyCompanyId(merchant.getId(), merchant.getPropertyCompanyId())
@@ -477,7 +475,8 @@ public class MerchantService {
      */
     @Transactional
     public MerchantDetailResponse updateMyDeliveryFees(UpdateDeliveryFeesRequest request) {
-        roleGuard.requireAnyRole("merchant", "activity_leader", "technician",
+        // 2026-10-21 组长标签化：组长身份由 activity_leader_identities 表判定（role 归一为 resident）
+        roleGuard.requireAnyRoleOrActivityLeaderIdentity("merchant", "technician",
                 "property_admin", "platform_admin");
         Merchant merchant = resolveOwnedMerchant();
         assertCanManageMerchant(merchant);

@@ -11,9 +11,15 @@ import com.wuye.points.dto.auth.ResidentAuthSummaryResponse;
 import com.wuye.points.dto.auth.TokenResponse;
 import com.wuye.points.dto.auth.WechatLoginRequest;
 import com.wuye.points.entity.Community;
+import com.wuye.points.entity.ActivityLeaderIdentity;
 import com.wuye.points.entity.BuildingLeader;
+import com.wuye.points.entity.Coordinator;
+import com.wuye.points.entity.IndividualLeader;
+import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.Resident;
+import com.wuye.points.entity.ResidentMerchantApplication;
+import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
@@ -23,6 +29,7 @@ import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.JwtUtil;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -34,6 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Set;
 
 @Service
@@ -50,6 +58,8 @@ public class AuthService {
     private final BuildingLeaderRepository buildingLeaderRepository;
     private final JwtUtil jwtUtil;
     private final SnowflakeIdGenerator idGenerator;
+    private final LeaderIdentityGuard leaderIdentityGuard;
+    private final ResidentIdentityTags residentIdentityTags;
 
     @Transactional
     public AuthLoginResponse wechatLogin(WechatLoginRequest request) {
@@ -89,7 +99,14 @@ public class AuthService {
         assertAccountActive(resident);
 
         String role = RoleGuard.normalizeRole(resident.getRole());
-        if ("resident".equals(role) || "tenant".equals(role)) {
+        // 2026-10-20 负责人标签化：统筹/板块/个体负责人 role 归一化为 resident，
+        // 但其管理端登录权限不变——持有任意一种启用中负责人身份的住户仍可登录管理端。
+        // 2026-10-21 组长标签化：活动组组长同为住户子身份，持组长身份的住户同样可登录管理端
+        // （组长小店/提现等能力经 admin-login 使用）。
+        if (("resident".equals(role) || "tenant".equals(role))
+                && !leaderIdentityGuard.hasAnyLeaderIdentity(
+                        resident.getId(), resident.getPropertyCompanyId())
+                && !residentIdentityTags.isActivityLeader(resident)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "该账号无管理端登录权限");
         }
 
@@ -255,6 +272,14 @@ public class AuthService {
 
     private ResidentAuthSummaryResponse toAuthSummary(Resident resident, boolean newUser) {
         BuildingLeader leader = findActiveBuildingLeader(resident);
+        List<String> sectorLeaderIds = leaderIdentityGuard.activeSectorLeaders(
+                        resident.getId(), resident.getPropertyCompanyId()).stream()
+                .map(SectorLeader::getId)
+                .toList();
+        ActivityLeaderIdentity activityLeader = residentIdentityTags.activeActivityLeader(resident).orElse(null);
+        ResidentMerchantApplication residentMerchant = residentIdentityTags
+                .activeResidentMerchant(resident.getId()).orElse(null);
+        Merchant distributor = residentIdentityTags.enabledDistributor(resident.getId()).orElse(null);
         return ResidentAuthSummaryResponse.builder()
                 .id(resident.getId())
                 .name(resident.getName())
@@ -266,6 +291,26 @@ public class AuthService {
                 .familyId(resident.getFamilyId())
                 .wechatBound(Boolean.TRUE.equals(resident.getWechatBound()))
                 .isBuildingLeader(leader != null)
+                // 2026-10-20 负责人标签：统筹/板块负责人/个体负责人身份（住户子身份，role 仍为 resident）
+                .isCoordinator(leaderIdentityGuard.activeCoordinator(
+                        resident.getId(), resident.getPropertyCompanyId()).isPresent())
+                .coordinatorId(leaderIdentityGuard.activeCoordinator(
+                        resident.getId(), resident.getPropertyCompanyId())
+                        .map(Coordinator::getId).orElse(null))
+                .isSectorLeader(!sectorLeaderIds.isEmpty())
+                .sectorLeaderIds(sectorLeaderIds)
+                .isIndividualLeader(leaderIdentityGuard.activeIndividualLeader(
+                        resident.getId(), resident.getPropertyCompanyId()).isPresent())
+                .individualLeaderId(leaderIdentityGuard.activeIndividualLeader(
+                        resident.getId(), resident.getPropertyCompanyId())
+                        .map(IndividualLeader::getId).orElse(null))
+                // 2026-10-21：「我的」页四图标标签（小店/组长/一级代理，均为住户子身份）
+                .isActivityLeader(activityLeader != null)
+                .activityLeaderId(activityLeader != null ? activityLeader.getId() : null)
+                .isResidentMerchant(residentMerchant != null)
+                .residentMerchantId(residentMerchant != null ? residentMerchant.getId() : null)
+                .isDistributor(distributor != null)
+                .distributorId(distributor != null ? distributor.getId() : null)
                 .newUser(newUser)
                 .status(resident.getStatus())
                 .build();
@@ -273,6 +318,18 @@ public class AuthService {
 
     private ProfileResponse toProfile(Resident resident, String propertyName, String communityName) {
         BuildingLeader leader = findActiveBuildingLeader(resident);
+        List<String> sectorLeaderIds = leaderIdentityGuard.activeSectorLeaders(
+                        resident.getId(), resident.getPropertyCompanyId()).stream()
+                .map(SectorLeader::getId)
+                .toList();
+        Coordinator coordinator = leaderIdentityGuard.activeCoordinator(
+                resident.getId(), resident.getPropertyCompanyId()).orElse(null);
+        IndividualLeader individualLeader = leaderIdentityGuard.activeIndividualLeader(
+                resident.getId(), resident.getPropertyCompanyId()).orElse(null);
+        ActivityLeaderIdentity activityLeader = residentIdentityTags.activeActivityLeader(resident).orElse(null);
+        ResidentMerchantApplication residentMerchant = residentIdentityTags
+                .activeResidentMerchant(resident.getId()).orElse(null);
+        Merchant distributor = residentIdentityTags.enabledDistributor(resident.getId()).orElse(null);
         return ProfileResponse.builder()
                 .id(resident.getId())
                 .openid(resident.getOpenid())
@@ -291,6 +348,7 @@ public class AuthService {
                 .communityId(resident.getCommunityId())
                 .communityName(communityName)
                 .building(resident.getBuilding())
+                .floor(resident.getFloor())
                 .unit(resident.getUnit())
                 .room(resident.getRoom())
                 .familyId(resident.getFamilyId())
@@ -301,6 +359,20 @@ public class AuthService {
                 .wechatBound(Boolean.TRUE.equals(resident.getWechatBound()))
                 .isBuildingLeader(leader != null)
                 .buildingLeaderId(leader != null ? leader.getId() : null)
+                // 2026-10-20 负责人标签：统筹/板块负责人/个体负责人身份（住户子身份，role 仍为 resident）
+                .isCoordinator(coordinator != null)
+                .coordinatorId(coordinator != null ? coordinator.getId() : null)
+                .isSectorLeader(!sectorLeaderIds.isEmpty())
+                .sectorLeaderIds(sectorLeaderIds)
+                .isIndividualLeader(individualLeader != null)
+                .individualLeaderId(individualLeader != null ? individualLeader.getId() : null)
+                // 2026-10-21：「我的」页四图标标签（小店/组长/一级代理，均为住户子身份）
+                .isActivityLeader(activityLeader != null)
+                .activityLeaderId(activityLeader != null ? activityLeader.getId() : null)
+                .isResidentMerchant(residentMerchant != null)
+                .residentMerchantId(residentMerchant != null ? residentMerchant.getId() : null)
+                .isDistributor(distributor != null)
+                .distributorId(distributor != null ? distributor.getId() : null)
                 .status(resident.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(resident.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(resident.getUpdatedAt()))

@@ -33,6 +33,7 @@ import com.wuye.points.repository.ServiceOrderRepository;
 import com.wuye.points.repository.ServiceSubscriptionRepository;
 import com.wuye.points.repository.spec.CommunityServiceSpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -78,6 +79,7 @@ public class CommunityServiceService {
     private final PropertyCoinService propertyCoinService;
     private final MerchantBindingService merchantBindingService;
     private final RoleGuard roleGuard;
+    private final LeaderIdentityGuard leaderIdentityGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final PaymentRecordRepository paymentRecordRepository;
     private final PayChannel wechatPayService;
@@ -150,7 +152,9 @@ public class CommunityServiceService {
         service.setId(idGenerator.generateId("svc"));
         applyCreateFields(service, request);
         service.setProviderId(provider.getId());
-        service.setProviderType(resolveProviderType(provider.getRole()));
+        // 2026-10-20 负责人标签化：个体负责人身份由 individual_leaders 表 active 记录判定，
+        // providerType 仍按「有效角色」记录，保持 individual_leader 类型不丢失
+        service.setProviderType(resolveProviderType(leaderIdentityGuard.currentEffectiveRole()));
         service.setPropertyCompanyId(provider.getPropertyCompanyId());
         service.setStatus("active");
         if (service.getRankOrder() == null) {

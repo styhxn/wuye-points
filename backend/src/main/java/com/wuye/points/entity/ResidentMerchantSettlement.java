@@ -45,6 +45,10 @@ public class ResidentMerchantSettlement extends BaseEntity {
     @Column(name = "platform_commission", precision = 10, scale = 2)
     private BigDecimal platformCommission;
 
+    /** 本单结算件数 */
+    @Column(name = "quantity", nullable = false)
+    private Integer quantity;
+
     @Column(name = "status", length = 20)
     private String status;
 

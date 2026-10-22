@@ -5,7 +5,6 @@ import com.wuye.points.entity.PaymentSettleOutbox;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PaymentSettleOutboxRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
-import com.wuye.points.payment.WechatSplitApiService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -22,7 +21,10 @@ import java.util.List;
  * 支付业务 finalize（异步）。
  *
  * <p>职责：收到 {@link PaymentSettledEvent}（事务提交后触发）或调度器调用后，完成：
- * ① 冻结分账（微信，幂等）；② 按业务类型完成落地（订单 paid、配送、返积分/物业币、分账计算等）。</p>
+ * 按业务类型完成落地（订单 paid、配送、返积分/物业币、分账计算等）。</p>
+ *
+ * <p>微信分账不在此触发：分账在「订单确认收货后」由
+ * {@code WechatSplitService#freezeOnOrderCompleted} 发起（P0-0 修复，触发点与分成记录生成时点对齐）。</p>
  *
  * <p>设计要点：</p>
  * <ul>
@@ -43,9 +45,7 @@ public class PaymentSettleService {
     private final SnowflakeIdGenerator snowflake;
     private final PaymentSettleOutboxRepository outboxRepository;
     private final PaymentRecordRepository paymentRecordRepository;
-    private final WechatSplitService wechatSplitService;
     private final PaymentBizDispatcher bizDispatcher;
-    private final WechatSplitApiService wechatSplitApiService;
 
     /** 事务提交后异步触发（由 PaymentCompletionService 发布）。 */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -89,15 +89,10 @@ public class PaymentSettleService {
         }
 
         try {
-            // 先冻结分账（幂等：已冻结则跳过）。按物业公司灰度：仅白名单内且全局开启时执行分账。
-            try {
-                if (wechatSplitApiService.isEnabled() && wechatSplitService.isEnabledForProperty(record.getPropertyCompanyId())) {
-                    wechatSplitService.freezeOnPaymentSuccess(record);
-                }
-            } catch (Exception e) {
-                log.error("[finalize] 分账冻结异常 recordId={}", recordId, e);
-            }
-            // 完成业务落地
+            // 完成业务落地（订单 paid、配送、返积分/物业币等）。
+            // 注意：微信分账不在此触发——分账改由「订单确认收货后」发起
+            // （WechatSplitService#freezeOnOrderCompleted，由 OrderCompletionService 事务提交后调用），
+            // 与分成记录生成时点对齐；支付成功时分成记录尚未生成，曾导致分账被静默跳过。
             bizDispatcher.complete(record);
 
             outbox.markDone();

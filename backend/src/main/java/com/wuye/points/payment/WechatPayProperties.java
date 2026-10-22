@@ -66,6 +66,12 @@ public class WechatPayProperties {
     /** 自定义关系说明（relation_type=CUSTOM 时必填）。 */
     private String receiverCustomRelation;
 
+    /**
+     * 平台作为分账接收方时的商户全称（平台佣金/配送分成落平台商户号）。
+     * 添加分账接收方时 MERCHANT_ID 的 name 为必传项，留空则按无名称提交（可能被微信拒绝，需联调补全）。
+     */
+    private String platformReceiverName;
+
     /** 微信支付网关（默认官方地址）。 */
     private String gateway = "https://api.mch.weixin.qq.com";
 

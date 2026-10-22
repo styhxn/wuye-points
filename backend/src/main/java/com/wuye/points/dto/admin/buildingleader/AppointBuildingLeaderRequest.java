@@ -17,13 +17,13 @@ public class AppointBuildingLeaderRequest {
     @Schema(description = "小区ID；不传则取住户所属小区")
     private String communityId;
 
-    @Schema(description = "楼栋；不传则取住户所属楼栋")
-    private String building;
+    @Schema(description = "单元；不传则取住户所属单元")
+    private String unit;
 
     @Schema(description = "楼长分成比例（占物业公司分成的比例，0~1）；不传默认 0.1000", example = "0.1000")
     private BigDecimal commissionRate;
 
-    @Schema(description = "备注/说明", example = "1号楼楼长")
+    @Schema(description = "备注/说明", example = "1单元楼长")
     private String description;
 
     @Schema(description = "状态 active/inactive；不传默认 active", example = "active")

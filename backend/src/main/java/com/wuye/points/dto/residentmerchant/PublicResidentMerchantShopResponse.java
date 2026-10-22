@@ -30,6 +30,21 @@ public class PublicResidentMerchantShopResponse {
     @Schema(description = "保证金金额")
     private BigDecimal depositAmount;
 
+    @Schema(description = "店铺名称（对齐普通商家店铺名）")
+    private String shopName;
+
+    @Schema(description = "店铺简介")
+    private String description;
+
+    @Schema(description = "营业时间")
+    private String businessHours;
+
+    @Schema(description = "联系电话（未设置时为空，前端可回退展示店主手机号）")
+    private String contactPhone;
+
+    @Schema(description = "店铺封面图URL")
+    private String coverUrl;
+
     @Schema(description = "对外展示的商品列表（仅上架且启用的）")
     private List<PublicResidentMerchantListingItemResponse> listings;
 

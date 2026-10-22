@@ -99,6 +99,9 @@ public class MerchantListItemResponse {
     @Schema(description = "推荐排序（越大越靠前）", example = "100")
     private Integer recommendedSort;
 
+    @Schema(description = "是否一级代理（后台开通 is_distributor=1，可维护货源商品并接收业主小店货款）", example = "false")
+    private Boolean isDistributor;
+
     @Schema(description = "创建时间", example = "2024-01-01T00:00:00")
     private String createdAt;
 }

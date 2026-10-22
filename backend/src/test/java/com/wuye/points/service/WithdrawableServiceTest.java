@@ -8,6 +8,7 @@ import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.ServiceOrderRepository;
 import com.wuye.points.repository.WalletFlowRepository;
+import com.wuye.points.repository.WechatSplitRecordRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,6 +55,8 @@ class WithdrawableServiceTest {
     private com.wuye.points.repository.DeliveryRepository deliveryRepository;
     @Mock
     private WalletFlowRepository walletFlowRepository;
+    @Mock
+    private WechatSplitRecordRepository splitRecordRepository;
 
     @InjectMocks
     private WithdrawableService withdrawableService;
@@ -193,5 +197,60 @@ class WithdrawableServiceTest {
         assertAmount(new BigDecimal("400"), r.withdrawableAmount());
         assertAmount(new BigDecimal("500"), r.totalRevenue());
         assertEquals(2L, r.totalOrders());
+    }
+
+    // ============== 微信分账实时到账后的双重出款防护（2026-10-18 加固） ==============
+
+    @Test
+    @DisplayName("calcCourierResidentWithdrawable: 微信分账已到账的配送报酬从可提现中扣除")
+    void courierResident_deductsSplitSettled() {
+        Resident courier = new Resident();
+        courier.setId("res_c1");
+        when(residentRepository.findById("res_c1")).thenReturn(Optional.of(courier));
+        when(deliveryRepository.sumDeliveredEarningByCourierIds(List.of("res_c1")))
+                .thenReturn(new BigDecimal("100"));
+        when(withdrawalRecordRepository.sumAmountByApplicant("res_c1", "courier", "completed"))
+                .thenReturn(BigDecimal.ZERO);
+        when(withdrawalRecordRepository.sumAmountByApplicant("res_c1", "courier", null))
+                .thenReturn(BigDecimal.ZERO);
+        // 微信已分账到账 60（frozen/finished/reverted 任一口径都算已到账）
+        when(splitRecordRepository.sumFreezeAmountByOwnerAndStatusIn(
+                eq("COURIER"), eq("res_c1"), anyList()))
+                .thenReturn(new BigDecimal("60"));
+
+        WithdrawableService.CourierWithdrawable r =
+                withdrawableService.calcCourierResidentWithdrawable("res_c1");
+        // 100 - 0 - 60 = 40
+        assertAmount(new BigDecimal("40"), r.withdrawableAmount());
+    }
+
+    @Test
+    @DisplayName("calcCourierResidentWithdrawable: 分账未启用（无分账记录）时可提现不受影响")
+    void courierResident_noSplitRecords_fullWithdrawable() {
+        Resident courier = new Resident();
+        courier.setId("res_c2");
+        when(residentRepository.findById("res_c2")).thenReturn(Optional.of(courier));
+        when(deliveryRepository.sumDeliveredEarningByCourierIds(List.of("res_c2")))
+                .thenReturn(new BigDecimal("100"));
+        when(withdrawalRecordRepository.sumAmountByApplicant("res_c2", "courier", "completed"))
+                .thenReturn(new BigDecimal("30"));
+        when(withdrawalRecordRepository.sumAmountByApplicant("res_c2", "courier", null))
+                .thenReturn(new BigDecimal("30"));
+        when(splitRecordRepository.sumFreezeAmountByOwnerAndStatusIn(
+                anyString(), anyString(), anyList()))
+                .thenReturn(BigDecimal.ZERO);
+
+        WithdrawableService.CourierWithdrawable r =
+                withdrawableService.calcCourierResidentWithdrawable("res_c2");
+        // 100 - 30 - 0 = 70（与加固前行为一致）
+        assertAmount(new BigDecimal("70"), r.withdrawableAmount());
+    }
+
+    @Test
+    @DisplayName("calcSplitSettledAmount: 主体为空时返回 0（不查库）")
+    void splitSettled_blankOwner_returnsZero() {
+        assertAmount(BigDecimal.ZERO, withdrawableService.calcSplitSettledAmount(null, "x"));
+        assertAmount(BigDecimal.ZERO, withdrawableService.calcSplitSettledAmount("COURIER", " "));
+        assertAmount(BigDecimal.ZERO, withdrawableService.calcSplitSettledAmountForOwners("COURIER", List.of()));
     }
 }

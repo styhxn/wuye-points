@@ -48,6 +48,13 @@ public class CommunityPost extends BaseEntity {
     @Column(name = "status", length = 20)
     private String status;
 
+    /**
+     * 影子封禁标记：作者被物业禁言期间发布的内容为 true。
+     * 禁言用户发帖无感知（接口正常成功），但除作者本人与管理端外任何人均不可见（仅自己可见）。
+     */
+    @Column(name = "shadow_banned")
+    private Boolean shadowBanned = false;
+
     @Column(name = "like_count")
     private Integer likeCount = 0;
 

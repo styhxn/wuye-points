@@ -52,6 +52,7 @@ public class CommunityForumService {
     private final CommunityConverter converter;
     private final SensitiveWordService sensitiveWordService;
     private final RoleGuard roleGuard;
+    private final ForumBanService forumBanService;
 
     public CommunityPostResponse createPost(CreateCommunityPostRequest req) {
         roleGuard.requireAnyRole("resident");
@@ -66,6 +67,8 @@ public class CommunityForumService {
             throw new BizException(ErrorCode.PARAM_INVALID, "图片最多9张");
         }
         sensitiveWordService.assertNotSensitive(req.getContent());
+        // 影子封禁：被禁言用户发帖无感知（照常成功），内容打标后仅本人与管理端可见
+        boolean shadowBanned = forumBanService.isCurrentlyBanned(resident);
         CommunityPost post = new CommunityPost();
         post.setId(idGenerator.generateId("cp_"));
         post.setCommunityId(resident.getCommunityId());
@@ -76,6 +79,7 @@ public class CommunityForumService {
         post.setContent(req.getContent());
         post.setImageUrls(converter.toJson(req.getImageUrls()));
         post.setStatus("published");
+        post.setShadowBanned(shadowBanned);
         post.setLikeCount(0);
         post.setCommentCount(0);
         return converter.toPostResponse(postRepository.save(post), false);
@@ -101,6 +105,10 @@ public class CommunityForumService {
             throw new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND);
         }
         assertSameCommunity(post, resident);
+        // 影子封禁：被禁作者的帖子仅本人可见，其他住户按不存在处理
+        if (Boolean.TRUE.equals(post.getShadowBanned()) && !post.getAuthorId().equals(resident.getId())) {
+            throw new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND);
+        }
         return converter.toPostResponse(post, isLikedByMe(post));
     }
 
@@ -177,9 +185,15 @@ public class CommunityForumService {
         comment.setReplyToUserId(req.getReplyToUserId());
         comment.setReplyToUserName(req.getReplyToUserName());
         comment.setStatus("published");
+        // 影子封禁：被禁言用户评论无感知（照常成功），内容打标后仅本人与管理端可见；
+        // 打标评论不参与帖子评论计数（避免其他住户看到"有评论但列表为空"）
+        boolean shadowBanned = forumBanService.isCurrentlyBanned(resident);
+        comment.setShadowBanned(shadowBanned);
         CommunityComment saved = commentRepository.save(comment);
-        post.setCommentCount((post.getCommentCount() == null ? 0 : post.getCommentCount()) + 1);
-        postRepository.save(post);
+        if (!shadowBanned) {
+            post.setCommentCount((post.getCommentCount() == null ? 0 : post.getCommentCount()) + 1);
+            postRepository.save(post);
+        }
         return converter.toCommentResponse(saved);
     }
 
@@ -192,9 +206,13 @@ public class CommunityForumService {
             throw new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND);
         }
         assertSameCommunity(post, resident);
+        // 影子封禁：被禁作者的评论仅本人可见，其他住户看不到
         Specification<CommunityComment> spec = (root, query, cb) -> cb.and(
                 cb.equal(root.get("postId"), postId),
-                cb.equal(root.get("status"), "published"));
+                cb.equal(root.get("status"), "published"),
+                cb.or(
+                        cb.equal(root.get("shadowBanned"), false),
+                        cb.equal(root.get("authorId"), resident.getId())));
         Pageable pageable = PageRequest.of(Math.max(0, page - 1),
                 Math.min(Math.max(pageSize, 1), 100), Sort.by(Sort.Direction.ASC, "createdAt"));
         Page<CommunityComment> result = commentRepository.findAll(spec, pageable);
@@ -211,7 +229,10 @@ public class CommunityForumService {
         }
         comment.setStatus("deleted");
         commentRepository.save(comment);
-        decrementPostComment(comment.getPostId());
+        // 影子封禁评论未参与计数，删除时不再扣减（避免重复扣）
+        if (!Boolean.TRUE.equals(comment.getShadowBanned())) {
+            decrementPostComment(comment.getPostId());
+        }
     }
 
     public Page<CommunityPostResponse> adminListPosts(int page, int pageSize, String status, String keyword) {
@@ -221,7 +242,7 @@ public class CommunityForumService {
         Pageable pageable = PageRequest.of(Math.max(0, page - 1),
                 Math.min(Math.max(pageSize, 1), 50), Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<CommunityPost> result = postRepository.findAll(spec, pageable);
-        return result.map(p -> converter.toPostResponse(p, false));
+        return result.map(p -> converter.toPostResponse(p, false, true));
     }
 
     /**
@@ -247,7 +268,7 @@ public class CommunityForumService {
         Pageable pageable = PageRequest.of(Math.max(0, page - 1),
                 Math.min(Math.max(pageSize, 1), 100), Sort.by(Sort.Direction.ASC, "createdAt"));
         Page<CommunityComment> result = commentRepository.findAll(spec, pageable);
-        return result.map(converter::toCommentResponse);
+        return result.map(c -> converter.toCommentResponse(c, true));
     }
 
     public void adminDeletePost(String id) {
@@ -273,7 +294,10 @@ public class CommunityForumService {
         }
         comment.setStatus("deleted");
         commentRepository.save(comment);
-        decrementPostComment(comment.getPostId());
+        // 影子封禁评论未参与计数，删除时不再扣减（避免重复扣）
+        if (!Boolean.TRUE.equals(comment.getShadowBanned())) {
+            decrementPostComment(comment.getPostId());
+        }
     }
 
     /**

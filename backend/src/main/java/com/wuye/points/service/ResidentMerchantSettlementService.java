@@ -6,13 +6,17 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.residentmerchant.SellerWalletResponse;
 import com.wuye.points.entity.DistributorProduct;
 import com.wuye.points.entity.Order;
+import com.wuye.points.entity.OrderItem;
 import com.wuye.points.entity.ResidentMerchantListing;
 import com.wuye.points.entity.ResidentMerchantSettlement;
+import com.wuye.points.entity.WalletFlow;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.DistributorProductRepository;
+import com.wuye.points.repository.OrderItemRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentMerchantSettlementRepository;
+import com.wuye.points.repository.WalletFlowRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
@@ -32,9 +36,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 业主商户卖货结算：
- * 订单完成（确认收货）时，若订单来自业主商户上架（listing），则生成卖货明细，
- * 按平台佣金比例扣除手续费，差价归业主商户，并自动下架该商品。
+ * 业主商户卖货结算（件数制）：
+ * 订单完成（确认收货）时，若订单来自业主商户上架（listing），按件数结算——
+ * 商品额=零售价×件数（订单 totalAmount），货款=进货价×件数归一级代理（merchant 钱包），
+ * 平台佣金=商品额×佣金率，差价=商品额−货款−佣金归店主（resident_merchant 钱包）；
+ * sold_quantity 累加，卖满（sold=took）自动下架并标记 sold_out_unlisted。
+ * 退款时冲正：负向钱包流水 + 结算单置 reversed + sold_quantity 回退。
  */
 @Slf4j
 @Service
@@ -45,6 +52,9 @@ public class ResidentMerchantSettlementService {
     private final ResidentMerchantListingRepository listingRepository;
     private final DistributorProductRepository distributorProductRepository;
     private final WithdrawalRecordRepository withdrawalRecordRepository;
+    private final OrderItemRepository orderItemRepository;
+    private final WalletFlowRepository walletFlowRepository;
+    private final WalletFlowWriter walletFlowWriter;
     private final PlatformSettingService platformSettingService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
@@ -52,8 +62,13 @@ public class ResidentMerchantSettlementService {
     /** 业主卖货钱包提现类型（与 RoleWithdrawalService.WITHDRAWAL_TYPE_RESIDENT_SELLER 保持一致） */
     private static final String WITHDRAWAL_TYPE_RESIDENT_SELLER = "resident_seller";
 
+    /** 店主差价入账流水类型 */
+    private static final String ENTRY_RESELLER_PROFIT = "reseller_profit";
+    /** 一级代理货款入账流水类型（商家钱包聚合口径，见 WithdrawableService） */
+    private static final String ENTRY_DISTRIBUTOR_WHOLESALE_INCOME = "distributor_wholesale_income";
+
     /**
-     * 订单完成时调用：幂等，非 listing 订单直接跳过。
+     * 订单完成时调用：幂等（existsByOrderId + 流水幂等键），非 listing 订单直接跳过。
      */
     @Transactional
     public void settleOnOrderCompleted(Order order) {
@@ -76,11 +91,21 @@ public class ResidentMerchantSettlementService {
             return;
         }
 
-        BigDecimal orderAmount = defaultAmount(order.getTotalAmount());
-        BigDecimal wholesale = defaultAmount(product.getWholesalePrice());
+        // 件数取订单明细（listing 订单单 item，dpr_ 货源商品）
+        int quantity = resolveOrderQuantity(order.getId());
+        if (quantity <= 0) {
+            log.warn("[ResidentMerchantSettle] 订单明细件数异常 orderId={} quantity={}", order.getId(), quantity);
+            return;
+        }
+
+        // 商品额=零售价×件数（不含配送费，即 order.totalAmount）；货款=进货价×件数
+        BigDecimal productAmount = defaultAmount(order.getTotalAmount());
+        BigDecimal wholesaleUnit = defaultAmount(product.getWholesalePrice());
+        BigDecimal wholesaleAmount = wholesaleUnit.multiply(BigDecimal.valueOf(quantity))
+                .setScale(2, RoundingMode.HALF_UP);
         BigDecimal commissionRate = platformSettingService.getResidentMerchantDistributorCommissionRate();
-        BigDecimal platformCommission = orderAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal resellerProfit = orderAmount.subtract(wholesale).subtract(platformCommission);
+        BigDecimal platformCommission = productAmount.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal resellerProfit = productAmount.subtract(wholesaleAmount).subtract(platformCommission);
         if (resellerProfit.compareTo(BigDecimal.ZERO) < 0) {
             resellerProfit = BigDecimal.ZERO;
         }
@@ -91,17 +116,88 @@ public class ResidentMerchantSettlementService {
         settlement.setListingId(listing.getId());
         settlement.setResidentId(listing.getResidentId());
         settlement.setDistributorMerchantId(product.getDistributorMerchantId());
-        settlement.setOrderAmount(orderAmount);
-        settlement.setWholesaleAmount(wholesale);
+        settlement.setOrderAmount(productAmount);
+        settlement.setWholesaleAmount(wholesaleAmount);
         settlement.setResellerProfit(resellerProfit);
         settlement.setPlatformCommission(platformCommission);
+        settlement.setQuantity(quantity);
         settlement.setStatus("settled");
         settlement.setSettleAt(LocalDateTime.now());
         settlementRepository.save(settlement);
 
-        // 产品卖出去后自动下架
-        listing.setEnabled(false);
+        // 店主差价入账（业主卖货钱包，独立事务写流水，幂等键保证重复结算不重复入账）
+        walletFlowWriter.write(null, order.getId(), null,
+                "resident_merchant", listing.getResidentId(), ENTRY_RESELLER_PROFIT,
+                resellerProfit, "withdrawable",
+                "settlement:listing:" + order.getId() + ":reseller", null);
+        // 一级代理货款入账（merchant 钱包，entryType=distributor_wholesale_income）
+        walletFlowWriter.write(null, order.getId(), null,
+                "merchant", product.getDistributorMerchantId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME,
+                wholesaleAmount, "withdrawable",
+                "settlement:listing:" + order.getId() + ":distributor", null);
+
+        // 已卖件数累加；卖满（sold=took）自动下架并标记卖完下架（替代原"卖1单即下架"）
+        int sold = (listing.getSoldQuantity() == null ? 0 : listing.getSoldQuantity()) + quantity;
+        listing.setSoldQuantity(sold);
+        int took = listing.getTookQuantity() == null ? 0 : listing.getTookQuantity();
+        if (took > 0 && sold >= took) {
+            listing.setEnabled(false);
+            listing.setSoldOutUnlisted(true);
+        }
         listingRepository.save(listing);
+    }
+
+    /**
+     * 退款冲正（auditRefund 通过后调用）：
+     * 已结算（settled）的结算单写 2 条负向钱包流水（幂等键加 :refund，refRecordId 指向原流水）、
+     * 结算单置 reversed、sold_quantity 回退件数；未结算的订单退款无需冲正（件数恢复由库存恢复链路处理）。
+     */
+    @Transactional
+    public void refundOnOrderRefunded(Order order) {
+        if (order == null || order.getListingId() == null) {
+            return;
+        }
+        ResidentMerchantSettlement settlement = settlementRepository.findFirstByOrderId(order.getId())
+                .orElse(null);
+        if (settlement == null || !"settled".equals(settlement.getStatus())) {
+            return;
+        }
+        int quantity = settlement.getQuantity() == null ? 0 : settlement.getQuantity();
+
+        // 负向冲正流水：店主差价
+        String resellerKey = "settlement:listing:" + order.getId() + ":reseller";
+        WalletFlow resellerFlow = walletFlowRepository.findByIdempotencyKey(resellerKey).orElse(null);
+        walletFlowWriter.write(null, order.getId(), null,
+                "resident_merchant", settlement.getResidentId(), ENTRY_RESELLER_PROFIT,
+                settlement.getResellerProfit().negate(), "withdrawable",
+                resellerKey + ":refund", resellerFlow != null ? resellerFlow.getId() : null);
+        // 负向冲正流水：一级代理货款
+        String distributorKey = "settlement:listing:" + order.getId() + ":distributor";
+        WalletFlow distributorFlow = walletFlowRepository.findByIdempotencyKey(distributorKey).orElse(null);
+        walletFlowWriter.write(null, order.getId(), null,
+                "merchant", settlement.getDistributorMerchantId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME,
+                settlement.getWholesaleAmount().negate(), "withdrawable",
+                distributorKey + ":refund", distributorFlow != null ? distributorFlow.getId() : null);
+
+        settlement.setStatus("reversed");
+        settlementRepository.save(settlement);
+
+        // 已卖件数回退（可售件数的恢复由库存恢复链路 restoreStock→ListingStockService 完成）
+        listingRepository.findById(settlement.getListingId()).ifPresent(listing -> {
+            int sold = listing.getSoldQuantity() == null ? 0 : listing.getSoldQuantity();
+            listing.setSoldQuantity(Math.max(sold - quantity, 0));
+            listingRepository.save(listing);
+        });
+        log.info("[ResidentMerchantSettle] 退款冲正完成 orderId={} quantity={}", order.getId(), quantity);
+    }
+
+    /** 解析订单的 listing 件数（dpr_ 明细总件数）。 */
+    private int resolveOrderQuantity(String orderId) {
+        List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
+        return items.stream()
+                .filter(item -> item.getProductId() != null && item.getProductId().startsWith("dpr_"))
+                .mapToInt(item -> item.getQuantity() == null ? 0 : item.getQuantity())
+                .sum();
     }
 
     /**

@@ -18,9 +18,12 @@ import com.wuye.points.dto.resident.UpdateResidentStatusRequest;
 import com.wuye.points.dto.resident.BindCommunityRequest;
 import com.wuye.points.dto.resident.BookingContactInfoResponse;
 import com.wuye.points.entity.BuildingChangeRequest;
+import com.wuye.points.entity.ActivityLeaderIdentity;
 import com.wuye.points.entity.Community;
 import com.wuye.points.entity.Family;
+import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.PropertyCompany;
+import com.wuye.points.entity.ResidentMerchantApplication;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
@@ -28,6 +31,7 @@ import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.BuildingChangeRequestRepository;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.FamilyRepository;
+import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PointRecordRepository;
 import com.wuye.points.repository.PropertyCoinRecordRepository;
@@ -72,11 +76,13 @@ public class ResidentService {
     private final PropertyCoinRecordRepository propertyCoinRecordRepository;
     private final ResidentConverter residentConverter;
     private final RoleGuard roleGuard;
+    private final MerchantRepository merchantRepository;
     private final PropertyFeeRepository propertyFeeRepository;
     private final WebSocketService webSocketService;
     private final SnowflakeIdGenerator idGenerator;
     private final BuildingChangeRequestRepository buildingChangeRequestRepository;
     private final CommunityRepository communityRepository;
+    private final ResidentIdentityTags residentIdentityTags;
 
     @Transactional(readOnly = true)
     public PageResponse<ResidentListItemResponse> listResidents(
@@ -89,7 +95,8 @@ public class ResidentService {
             String role,
             String propertyCompanyId,
             String sort) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator");
+        // 2026-10-20 负责人标签化：统筹身份改由 coordinators 表 active 记录判定
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("property_admin", "platform_admin", "coordinator");
         if (pageSize > 100) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -146,6 +153,7 @@ public class ResidentService {
         resident.setPropertyCompanyId(propertyCompanyId);
         resident.setCommunityId(request.getCommunityId());
         resident.setBuilding(request.getBuilding());
+        resident.setFloor(request.getFloor());
         resident.setUnit(request.getUnit());
         resident.setRoom(request.getRoom());
         resident.setPointBalance(0);
@@ -173,7 +181,16 @@ public class ResidentService {
             throw new BizException(ErrorCode.TOKEN_MISSING);
         }
         Resident resident = getResidentOrThrow(userId);
-        return buildDetail(resident);
+        ResidentDetailResponse detail = buildDetail(resident);
+        detail.setIsDistributor(hasEnabledDistributor(userId));
+        return detail;
+    }
+
+    /** 名下是否已有 is_distributor=1 且审核通过的商家载体（用于 /residents/me 返回 isDistributor） */
+    private boolean hasEnabledDistributor(String residentId) {
+        return merchantRepository.findByResidentId(residentId).stream()
+                .anyMatch(m -> Boolean.TRUE.equals(m.getIsDistributor())
+                        && "approved".equals(m.getAuditStatus()));
     }
 
     /**
@@ -415,6 +432,9 @@ public class ResidentService {
             if (request.getBuilding() != null) {
                 resident.setBuilding(request.getBuilding());
             }
+            if (request.getFloor() != null) {
+                resident.setFloor(request.getFloor());
+            }
             if (request.getUnit() != null) {
                 resident.setUnit(request.getUnit());
             }
@@ -433,7 +453,16 @@ public class ResidentService {
     private ResidentDetailResponse buildDetail(Resident resident) {
         BigDecimal totalConsumption = orderRepository.sumCompletedOrderAmount(resident.getId());
         Long totalOrders = orderRepository.countCompletedOrders(resident.getId());
-        return residentConverter.toDetail(resident, totalConsumption, totalOrders);
+        ResidentDetailResponse detail = residentConverter.toDetail(resident, totalConsumption, totalOrders);
+        // 2026-10-21：「我的」页四图标标签（组长/业主小店，均为住户子身份）
+        ActivityLeaderIdentity activityLeader = residentIdentityTags.activeActivityLeader(resident).orElse(null);
+        detail.setIsActivityLeader(activityLeader != null);
+        detail.setActivityLeaderId(activityLeader != null ? activityLeader.getId() : null);
+        ResidentMerchantApplication residentMerchant = residentIdentityTags
+                .activeResidentMerchant(resident.getId()).orElse(null);
+        detail.setIsResidentMerchant(residentMerchant != null);
+        detail.setResidentMerchantId(residentMerchant != null ? residentMerchant.getId() : null);
+        return detail;
     }
 
     private Pageable buildPageable(int page, int pageSize, String sort) {
@@ -655,6 +684,7 @@ public class ResidentService {
                     .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
             resident.setCommunityId(req.getCommunityId());
             resident.setBuilding(req.getBuilding());
+            resident.setFloor(req.getFloor());
             resident.setUnit(req.getUnit());
             resident.setRoom(req.getRoom());
             residentRepository.save(resident);

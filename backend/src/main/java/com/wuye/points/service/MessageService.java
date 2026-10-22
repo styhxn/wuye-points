@@ -30,6 +30,7 @@ import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.MessageSpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -70,6 +71,7 @@ public class MessageService {
     private final ResidentRepository residentRepository;
     private final MessageConverter messageConverter;
     private final RoleGuard roleGuard;
+    private final LeaderIdentityGuard leaderIdentityGuard;
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
@@ -95,7 +97,7 @@ public class MessageService {
 
         String propertyCompanyId;
         String currentUserId = UserContext.currentUserId();
-        String currentRole = UserContext.currentRole();
+        java.util.Set<String> currentRoles = new java.util.HashSet<>();
         boolean propertyAdminView = roleGuard.isPropertyAdmin();
 
         if (roleGuard.isPlatformAdmin()) {
@@ -103,9 +105,14 @@ public class MessageService {
         } else if (roleGuard.isResident() || roleGuard.isActivityLeader()) {
             Resident resident = getActiveResident(currentUserId);
             propertyCompanyId = resident.getPropertyCompanyId();
-            currentRole = resident.getRole();
+            // 2026-10-20 负责人标签化：有效角色集合 = 库内角色 + 负责人身份角色码，
+            // 保证按原负责人角色（coordinator 等）群发的广播消息仍可送达
+            currentRoles.addAll(leaderIdentityGuard.leaderRoleCodes(
+                    resident.getId(), resident.getPropertyCompanyId()));
+            currentRoles.add(resident.getRole());
         } else {
             propertyCompanyId = UserContext.currentPropertyCompanyId();
+            currentRoles.add(UserContext.currentRole());
         }
 
         Pageable pageable = buildPageable(page, pageSize, sort);
@@ -113,7 +120,7 @@ public class MessageService {
                 MessageSpecifications.withFilters(
                         propertyCompanyId,
                         currentUserId,
-                        currentRole,
+                        currentRoles,
                         propertyAdminView,
                         messageType,
                         chatType,
@@ -148,7 +155,10 @@ public class MessageService {
         validateSendPayload(request);
 
         Resident sender = getActiveResident(UserContext.currentUserId());
-        assertMessageTypeAllowed(sender.getRole(), request.getMessageType(), request.getChatType());
+        // 2026-10-20 负责人标签化：发送方角色取「有效角色」——持有负责人身份时按原负责人角色码
+        // 校验可发送的消息类型，保持与改造前一致（coordinator 仍可发 platform/system 消息）。
+        String effectiveRole = leaderIdentityGuard.currentEffectiveRole();
+        assertMessageTypeAllowed(effectiveRole, request.getMessageType(), request.getChatType());
 
         String propertyCompanyId = sender.getPropertyCompanyId();
         if (roleGuard.isPropertyAdmin()) {
@@ -157,7 +167,7 @@ public class MessageService {
 
         if ("private".equals(request.getChatType())
                 && "resident_message".equals(request.getMessageType())
-                && roleGuard.isResident()) {
+                && "resident".equals(effectiveRole)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "业主私聊请使用 /messages/neighbor-chat 接口");
         }
 

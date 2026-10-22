@@ -8,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -29,9 +28,16 @@ public class SplitFailureScheduler {
     private final WechatSplitRecordRepository splitRecordRepository;
     private final WechatSplitService wechatSplitService;
 
+    /**
+     * 失败态补偿轮询。
+     *
+     * <p><b>不持有外层事务（上线前加固）</b>：每条 {@code retryFailed} 自行管理事务，
+     * 单条记录的微信调用 + 状态落库独立提交，避免批量重试时一个长事务包裹全部 HTTP 调用
+     * （连接长时间占用、批量回滚）。重试路径本身按单号幂等（分账单号 / 回退单号确定性生成），
+     * 即使极端情况下重复调用也不会产生重复资金动作。</p>
+     */
     @Scheduled(fixedDelayString = "${wechat-split.split-failure-poll-delay-ms:120000}")
     @SchedulerLock(name = "split_failure_retry", lockAtMostFor = "PT10M", lockAtLeastFor = "PT0S")
-    @Transactional
     public void pollSplitFailures() {
         if (!wechatSplitService.isEnabled()) {
             return;

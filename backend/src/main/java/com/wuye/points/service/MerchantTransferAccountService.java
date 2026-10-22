@@ -11,6 +11,7 @@ import com.wuye.points.payment.WechatCrypto;
 import com.wuye.points.payment.WechatCertManager;
 import com.wuye.points.payment.WechatPayProperties;
 import com.wuye.points.repository.MerchantTransferAccountRepository;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +44,7 @@ public class MerchantTransferAccountService {
     private final WechatCertManager certManager;
     private final SnowflakeIdGenerator idGenerator;
     private final RoleGuard roleGuard;
+    private final LeaderIdentityGuard leaderIdentityGuard;
 
     /** 绑定当前登录角色自己的收款账号（zero/bank 二选一，同渠道幂等覆盖）。 */
     @Transactional
@@ -107,7 +109,7 @@ public class MerchantTransferAccountService {
     // 辅助
     // ---------------------------------------------------------------------
 
-    /** 由当前登录角色推导四层树（ownerType, ownerId）。 */
+    /** 由当前登录身份推导四层树（ownerType, ownerId）。 */
     private OwnerRef resolveCurrentOwner() {
         String role = RoleGuard.normalizeRole(UserContext.currentRole());
         if ("property_admin".equals(role)) {
@@ -118,13 +120,20 @@ public class MerchantTransferAccountService {
             return new OwnerRef("PROPERTY", propertyCompanyId);
         }
         String userId = UserContext.currentUserId();
-        return switch (role) {
-            case "coordinator" -> new OwnerRef("COORDINATOR", userId);
-            case "sector_leader" -> new OwnerRef("SECTOR_LEADER", userId);
-            case "individual_leader" -> new OwnerRef("INDIVIDUAL_LEADER", userId);
-            default -> throw new BizException(ErrorCode.PERMISSION_DENIED,
-                    "当前角色不支持绑定结算收款账号（仅物业/统筹/板块/个体负责人）");
-        };
+        String propertyCompanyId = UserContext.currentPropertyCompanyId();
+        // 2026-10-20 负责人标签化：统筹/板块/个体负责人身份由业务表 active 记录判定（不再看 role），
+        // 顺序与原 switch 一致：统筹 > 板块负责人 > 个体负责人。
+        if (leaderIdentityGuard.activeCoordinator(userId, propertyCompanyId).isPresent()) {
+            return new OwnerRef("COORDINATOR", userId);
+        }
+        if (!leaderIdentityGuard.activeSectorLeaders(userId, propertyCompanyId).isEmpty()) {
+            return new OwnerRef("SECTOR_LEADER", userId);
+        }
+        if (leaderIdentityGuard.activeIndividualLeader(userId, propertyCompanyId).isPresent()) {
+            return new OwnerRef("INDIVIDUAL_LEADER", userId);
+        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED,
+                "当前角色不支持绑定结算收款账号（仅物业/统筹/板块/个体负责人）");
     }
 
     /** 取当前平台证书公钥 + 序列号；无证书（占位未配置）时 fail-closed。 */

@@ -45,7 +45,7 @@ public class MerchantCommunityDistanceService {
      */
     @Transactional(readOnly = true)
     public List<CommunityDistanceItemResponse> getMerchantDistances(String merchantId) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
         Merchant merchant = resolveMerchant(merchantId);
         adminSupport.assertSameProperty(merchant.getPropertyCompanyId());
 
@@ -72,7 +72,7 @@ public class MerchantCommunityDistanceService {
     @Transactional
     public List<CommunityDistanceItemResponse> updateMerchantDistances(
             String merchantId, UpdateMerchantCommunityDistancesRequest request) {
-        roleGuard.requireAnyRole("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
+        roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin", "coordinator", "sector_leader", "individual_leader");
         Merchant merchant = resolveMerchant(merchantId);
         adminSupport.assertSameProperty(merchant.getPropertyCompanyId());
 

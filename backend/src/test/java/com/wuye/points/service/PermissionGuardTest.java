@@ -32,7 +32,7 @@ class PermissionGuardTest {
     @Test
     @DisplayName("领导专属权限码（冒号/点号）")
     void leaderOnlyCodes_normalized() {
-        PermissionGuard guard = new PermissionGuard(null, null, null, null, null, null);
+        PermissionGuard guard = new PermissionGuard(null, null, null, null, null, null, null);
         assertTrue(guard.isPropertyLeaderOnlyPermission("config.set"));
         assertTrue(guard.isPropertyLeaderOnlyPermission("permission:manage"));
         assertTrue(guard.isPropertyLeaderOnlyPermission("permission.read"));

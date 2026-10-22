@@ -39,6 +39,10 @@ public class UpdateResidentRequest {
     @Schema(description = "楼栋", example = "1栋")
     private String building;
 
+    @Size(max = 20, message = "楼层长度不能超过20")
+    @Schema(description = "楼层", example = "5")
+    private String floor;
+
     @Size(max = 20, message = "单元长度不能超过20")
     @Schema(description = "单元", example = "1单元")
     private String unit;

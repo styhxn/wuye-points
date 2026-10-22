@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Data
 @Builder
@@ -56,6 +57,9 @@ public class ResidentDetailResponse {
     @Schema(description = "楼栋", example = "1栋")
     private String building;
 
+    @Schema(description = "楼层", example = "5")
+    private String floor;
+
     @Schema(description = "单元", example = "1单元")
     private String unit;
 
@@ -97,4 +101,37 @@ public class ResidentDetailResponse {
 
     @Schema(description = "是否准时缴费用户", example = "true")
     private Boolean onTimePaymentBadge;
+
+    @Schema(description = "是否已开通一级代理（名下有 is_distributor=1 且审核通过的商家载体）", example = "false")
+    private Boolean isDistributor;
+
+    @Schema(description = "是否为统筹（负责人标签：住户子身份，role 仍为 resident；身份由 coordinators 表 active 记录判定）", example = "false")
+    private Boolean isCoordinator;
+
+    @Schema(description = "统筹ID（非统筹时为 null）", example = "coo_abc123")
+    private String coordinatorId;
+
+    @Schema(description = "是否为板块/区域负责人（负责人标签：住户子身份，身份由 sector_leaders 表 active 记录判定，可跨板块多个）", example = "false")
+    private Boolean isSectorLeader;
+
+    @Schema(description = "板块负责人记录ID列表（非板块负责人时为空数组；同一住户可负责多个板块）", example = "[\"sl_abc123\"]")
+    private List<String> sectorLeaderIds;
+
+    @Schema(description = "是否为个体负责人（负责人标签：住户子身份，身份由 individual_leaders 表 active 记录判定）", example = "false")
+    private Boolean isIndividualLeader;
+
+    @Schema(description = "个体负责人ID（非个体负责人时为 null）", example = "il_abc123")
+    private String individualLeaderId;
+
+    @Schema(description = "是否为活动组组长（住户子身份标签，role 仍为 resident；身份由 activity_leader_identities 表 active 记录判定）", example = "false")
+    private Boolean isActivityLeader;
+
+    @Schema(description = "活动组组长身份记录ID（非组长时为 null）", example = "ali_abc123")
+    private String activityLeaderId;
+
+    @Schema(description = "是否为业主小店店主（营业中；身份由 resident_merchant_applications active 记录判定）", example = "false")
+    private Boolean isResidentMerchant;
+
+    @Schema(description = "业主小店申请记录ID（非营业中时为 null）", example = "rma_abc123")
+    private String residentMerchantId;
 }

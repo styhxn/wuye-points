@@ -38,8 +38,8 @@ public class BuildingLeaderDetailResponse {
     @Schema(description = "小区名称")
     private String communityName;
 
-    @Schema(description = "楼栋", example = "1号楼")
-    private String building;
+    @Schema(description = "单元", example = "1单元")
+    private String unit;
 
     @Schema(description = "楼长分成比例（占物业公司分成的比例）", example = "0.1000")
     private BigDecimal commissionRate;

@@ -64,7 +64,7 @@ public class BuildingLeaderWorkbenchService {
                 .propertyCompanyId(leader.getPropertyCompanyId())
                 .communityId(leader.getCommunityId())
                 .communityName(community != null ? community.getName() : null)
-                .building(leader.getBuilding())
+                .unit(leader.getUnit())
                 .commissionRate(leader.getCommissionRate())
                 .status(leader.getStatus())
                 .totalEarning(totalEarning)

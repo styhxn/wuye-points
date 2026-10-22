@@ -37,4 +37,20 @@ public class ResidentMerchantListing extends BaseEntity {
 
     @Column(name = "share_count")
     private Integer shareCount;
+
+    /** 拿货件数（从一级代理库存一次性扣减） */
+    @Column(name = "took_quantity", nullable = false)
+    private Integer tookQuantity;
+
+    /** 已卖出件数（订单完成结算时累加） */
+    @Column(name = "sold_quantity", nullable = false)
+    private Integer soldQuantity;
+
+    /** 是否因卖完自动下架（退款恢复余量后可自动重新上架） */
+    @Column(name = "sold_out_unlisted", nullable = false)
+    private Boolean soldOutUnlisted;
+
+    /** 可售件数（未锁定未售出；买家下单锁定时扣减，取消/退款恢复） */
+    @Column(name = "quantity_remaining", nullable = false)
+    private Integer quantityRemaining;
 }

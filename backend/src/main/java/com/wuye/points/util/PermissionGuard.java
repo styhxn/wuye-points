@@ -37,6 +37,7 @@ public class PermissionGuard {
             "config.set", "permission.manage", "permission.read", "property_operator.manage");
 
     private final RoleGuard roleGuard;
+    private final LeaderIdentityGuard leaderIdentityGuard;
     private final PermissionRepository permissionRepository;
     private final UserPermissionRepository userPermissionRepository;
     private final RolePresetRepository rolePresetRepository;
@@ -161,12 +162,33 @@ public class PermissionGuard {
             return true;
         }
 
-        Optional<RolePreset> presetOpt = rolePresetRepository.findByCode(resident.getRole());
-        if (presetOpt.isEmpty()) {
-            return false;
+        // 2026-10-20 负责人标签化：住户角色保持 resident，负责人身份由业务表 active 记录判定。
+        // 权限预设按「有效角色集合」取并集：库内角色 + 全部负责人身份角色码，
+        // 保证统筹/板块/个体负责人标签化后不丢原有角色预设权限（兼容存量 role 仍为负责人角色值的数据）。
+        for (String roleCode : effectiveRoleCodes(resident)) {
+            Optional<RolePreset> presetOpt = rolePresetRepository.findByCode(roleCode);
+            if (presetOpt.isEmpty()) {
+                continue;
+            }
+            List<RolePresetPermission> links = rolePresetPermissionRepository.findByPresetId(presetOpt.get().getId());
+            if (links.stream().anyMatch(link -> permissionId.equals(link.getPermissionId()))) {
+                return true;
+            }
         }
-        List<RolePresetPermission> links = rolePresetPermissionRepository.findByPresetId(presetOpt.get().getId());
-        return links.stream().anyMatch(link -> permissionId.equals(link.getPermissionId()));
+        return false;
+    }
+
+    /**
+     * 有效角色码集合：库内 residents.role + 该住户持有的全部负责人身份角色码。
+     * 负责人标签化后 role 为 resident，此处把 coordinators/sector_leaders/individual_leaders
+     * 的 active 记录还原为角色码，供角色预设（role_presets）权限解析使用。
+     */
+    private Set<String> effectiveRoleCodes(Resident resident) {
+        Set<String> codes = new HashSet<>();
+        codes.add(resident.getRole());
+        codes.addAll(leaderIdentityGuard.leaderRoleCodes(
+                resident.getId(), resident.getPropertyCompanyId()));
+        return codes;
     }
 
     public Set<String> listEffectivePermissionCodes(String userId, String propertyCompanyId) {
@@ -185,11 +207,14 @@ public class PermissionGuard {
                     .filter(code -> !PLATFORM_ONLY_CODES.contains(code))
                     .forEach(codes::add);
         } else {
-            rolePresetRepository.findByCode(resident.getRole()).ifPresent(preset -> {
-                rolePresetPermissionRepository.findByPresetId(preset.getId()).forEach(link ->
-                        permissionRepository.findById(link.getPermissionId())
-                                .ifPresent(p -> codes.add(p.getCode())));
-            });
+            // 2026-10-20 负责人标签化：按有效角色集合（库内角色 + 负责人身份）取预设并集
+            for (String roleCode : effectiveRoleCodes(resident)) {
+                rolePresetRepository.findByCode(roleCode).ifPresent(preset -> {
+                    rolePresetPermissionRepository.findByPresetId(preset.getId()).forEach(link ->
+                            permissionRepository.findById(link.getPermissionId())
+                                    .ifPresent(p -> codes.add(p.getCode())));
+                });
+            }
         }
         userPermissionRepository.findByResidentIdAndPropertyCompanyId(userId, propertyCompanyId)
                 .forEach(override -> permissionRepository.findById(override.getPermissionId())

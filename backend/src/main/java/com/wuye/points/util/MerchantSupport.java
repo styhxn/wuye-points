@@ -58,10 +58,15 @@ public class MerchantSupport {
      * 保证技工端「我的服务」提现列表/申请不会因店铺缺失而失败）；
      * 商家（merchant）沿用手机号 + 物业匹配原口径。
      * 审核/启停状态校验与 {@link #requireCurrentMerchant()} 一致。
+     *
+     * <p>2026-10-21 组长标签化：组长 role 归一为 resident，身份按
+     * {@code activity_leader_identities} 表 active 记录判定（兼容存量 JWT role=activity_leader）。</p>
      */
     public Merchant requireCurrentWithdrawableMerchant() {
         String role = roleGuard.normalizeRole(UserContext.currentRole());
-        if (!"merchant".equals(role) && !"activity_leader".equals(role) && !"technician".equals(role)) {
+        boolean activityLeader = roleGuard.isActivityLeader();
+        if (!"merchant".equals(role) && !"activity_leader".equals(role) && !"technician".equals(role)
+                && !activityLeader) {
             throw new BizException(ErrorCode.PERMISSION_DENIED);
         }
         Resident merchantUser = requireCurrentUser();
@@ -69,7 +74,7 @@ public class MerchantSupport {
             throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
         }
 
-        Merchant merchant = resolveWithdrawalMerchant(merchantUser, role);
+        Merchant merchant = resolveWithdrawalMerchant(merchantUser, role, activityLeader);
         if (!"approved".equals(merchant.getAuditStatus())) {
             throw new BizException(ErrorCode.MERCHANT_AUDITING);
         }
@@ -84,14 +89,15 @@ public class MerchantSupport {
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
     }
 
-    private Merchant resolveWithdrawalMerchant(Resident user, String role) {
+    private Merchant resolveWithdrawalMerchant(Resident user, String role, boolean activityLeader) {
         if ("technician".equals(role)) {
             return merchantRepository
                     .findByContactPhoneAndPropertyCompanyIdAndMerchantSource(
                             user.getPhone(), user.getPropertyCompanyId(), "technician")
                     .orElseGet(() -> merchantBindingService.ensureMerchant(user.getId(), "technician"));
         }
-        if ("activity_leader".equals(role)) {
+        // 组长（含标签化后的 resident+组长身份、存量 JWT role=activity_leader）定位 group_leader 店
+        if (activityLeader || "activity_leader".equals(role)) {
             return merchantRepository
                     .findByContactPhoneAndPropertyCompanyIdAndMerchantSource(
                             user.getPhone(), user.getPropertyCompanyId(), "group_leader")

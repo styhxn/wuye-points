@@ -1,9 +1,11 @@
 package com.wuye.points.service;
 
+import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.roleaccount.CreateRoleAccountRequest;
 import com.wuye.points.dto.admin.roleaccount.CreateRoleAccountResponse;
 import com.wuye.points.dto.admin.roleaccount.DeleteRoleAccountResponse;
 import com.wuye.points.dto.admin.roleaccount.DisableRoleAccountResponse;
+import com.wuye.points.entity.ActivityLeaderIdentity;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantPropertyConfig;
 import com.wuye.points.entity.PlatformMerchant;
@@ -11,6 +13,7 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.ActivityLeaderIdentityRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.PlatformMerchantRepository;
@@ -57,6 +60,7 @@ public class AdminRoleAccountService {
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
+    private final ActivityLeaderIdentityRepository activityLeaderIdentityRepository;
 
     /**
      * 直接创建业务角色账号。
@@ -92,7 +96,8 @@ public class AdminRoleAccountService {
         resident.setPhone(request.getPhone());
         resident.setName(request.getName().trim());
         resident.setPassword(PasswordUtil.hashPassword(request.getPassword()));
-        resident.setRole(role);
+        // 2026-10-21 组长标签化：组长是住户子身份，role 恒为 resident，身份建 activity_leader_identities 记录
+        resident.setRole("activity_leader".equals(role) ? "resident" : role);
         resident.setUserType("owner");
         resident.setGender(0);
         resident.setHasChildren(false);
@@ -109,11 +114,14 @@ public class AdminRoleAccountService {
         resident.setStatus(ResidentStatus.active.name());
         residentRepository.save(resident);
 
-        // 2. 按角色创建关联店铺/绑定
+        // 2. 按角色创建关联店铺/绑定/身份
         String merchantId = null;
         switch (role) {
             case "merchant" -> merchantId = createMerchantShop(resident, request);
-            case "activity_leader" -> merchantBindingService.ensureGroupLeaderMerchant(resident.getId());
+            case "activity_leader" -> {
+                merchantBindingService.ensureGroupLeaderMerchant(resident.getId());
+                createLeaderIdentity(resident, "appoint", null);
+            }
             case "technician" -> merchantBindingService.ensureTechnicianMerchant(resident.getId());
             case "courier" -> { /* 配送员无额外绑定 */ }
         }
@@ -127,6 +135,49 @@ public class AdminRoleAccountService {
                 .merchantId(merchantId)
                 .status(resident.getStatus())
                 .build();
+    }
+
+    /**
+     * 创建活动组组长身份记录（标签化后 appoint 来源）。
+     */
+    private void createLeaderIdentity(Resident resident, String source, String applicationId) {
+        ActivityLeaderIdentity identity = new ActivityLeaderIdentity();
+        identity.setId(idGenerator.generateId("ali"));
+        identity.setResidentId(resident.getId());
+        identity.setPropertyCompanyId(resident.getPropertyCompanyId());
+        identity.setSource(source);
+        identity.setApplicationId(applicationId);
+        identity.setStatus("active");
+        identity.setCreatedBy(UserContext.currentUserId());
+        activityLeaderIdentityRepository.save(identity);
+    }
+
+    /**
+     * 当前账号是否属于业务角色（merchant/technician/courier 或持组长身份的 resident）。
+     * 2026-10-21 组长标签化：组长 role 归一为 resident，按 identity 表 active 记录判定。
+     */
+    private boolean isBusinessRoleAccount(Resident resident) {
+        if (SUPPORTED_ROLES.contains(resident.getRole())) {
+            return true;
+        }
+        return "resident".equals(resident.getRole())
+                && activityLeaderIdentityRepository.existsByResidentIdAndPropertyCompanyIdAndStatus(
+                        resident.getId(), resident.getPropertyCompanyId(), "active");
+    }
+
+    /**
+     * 撤销该账号的组长身份（删号/禁用/软删时联动，避免身份残留）。
+     */
+    private void revokeLeaderIdentityIfAny(String residentId, String propertyCompanyId) {
+        activityLeaderIdentityRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                        residentId, propertyCompanyId, "active")
+                .ifPresent(identity -> {
+                    identity.setStatus("revoked");
+                    identity.setRevokedBy(UserContext.currentUserId());
+                    identity.setRevokedAt(LocalDateTime.now());
+                    activityLeaderIdentityRepository.save(identity);
+                });
     }
 
     /**
@@ -209,7 +260,7 @@ public class AdminRoleAccountService {
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
         roleGuard.assertSamePropertyOrPlatform(resident.getPropertyCompanyId());
 
-        if (!SUPPORTED_ROLES.contains(resident.getRole())) {
+        if (!isBusinessRoleAccount(resident)) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "该账号不属于业务角色（merchant/activity_leader/technician/courier），无法通过此接口删除。"
                             + "如需删除区域负责人/物业领导/普通住户，请改用 DELETE /residents/{id}（软删除）");
@@ -257,7 +308,7 @@ public class AdminRoleAccountService {
         if (ResidentStatus.deleted.name().equals(resident.getStatus())) {
             throw new BizException(ErrorCode.ROLE_ACCOUNT_ALREADY_DELETED, "该账号已删除，无法禁用");
         }
-        if (!SUPPORTED_ROLES.contains(resident.getRole())) {
+        if (!isBusinessRoleAccount(resident)) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "该账号不属于业务角色（merchant/activity_leader/technician/courier），无法使用本接口禁用。"
                             + "请改用 PATCH /residents/{id}/status");
@@ -265,6 +316,7 @@ public class AdminRoleAccountService {
 
         resident.setStatus(ResidentStatus.disabled.name());
         residentRepository.save(resident);
+        revokeLeaderIdentityIfAny(residentId, resident.getPropertyCompanyId());
 
         String merchantStatus = stopActiveMerchantShops(residentId);
 
@@ -293,7 +345,7 @@ public class AdminRoleAccountService {
         if (ResidentStatus.deleted.name().equals(resident.getStatus())) {
             throw new BizException(ErrorCode.ROLE_ACCOUNT_ALREADY_DELETED, "该账号已删除");
         }
-        if (!SUPPORTED_ROLES.contains(resident.getRole())) {
+        if (!isBusinessRoleAccount(resident)) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "该账号不属于业务角色（merchant/activity_leader/technician/courier），无法使用本接口软删除。"
                             + "请改用 DELETE /residents/{id}");
@@ -302,6 +354,7 @@ public class AdminRoleAccountService {
         resident.setStatus(ResidentStatus.deleted.name());
         resident.setDeletedAt(LocalDateTime.now());
         residentRepository.save(resident);
+        revokeLeaderIdentityIfAny(residentId, resident.getPropertyCompanyId());
 
         // 软删仅停用店铺（保留记录便于审计），不物理删除
         stopActiveMerchantShops(residentId);

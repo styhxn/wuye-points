@@ -28,8 +28,8 @@ import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.DeliverySpecifications;
-import com.wuye.points.payment.WechatSplitService;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.DisplayLabelUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -72,7 +72,6 @@ public class DeliveryService {
     private final DeliveryConverter deliveryConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
-    private final WechatSplitService wechatSplitService;
     private final OrderCompletionService orderCompletionService;
     private final PlatformSettingService platformSettingService;
 
@@ -447,12 +446,9 @@ public class DeliveryService {
 
         syncOrderAfterDeliveryComplete(delivery.getOrderId(), now);
 
-        // 电商收付通：配送完成后把配送费直分给快递员（幂等；内部判断开关/进件/账户校验）
-        try {
-            wechatSplitService.freezeCourierDeliveryEarning(delivery);
-        } catch (Exception e) {
-            log.error("[配送] 配送费直分快递员异常 deliveryId={} orderId={}", delivery.getId(), delivery.getOrderId(), e);
-        }
+        // 快递员配送费分账：不在配送完成时发起——按「用户确认收货后再分账」规则，
+        // 快递员配送费与平台佣金一并在订单完成时点分账（WechatSplitService#freezeOnOrderCompleted），
+        // 避免退款窗口内用户退款时配送费已划走、需平台垫付的问题。
 
         return buildCompleteResponse(delivery, orderRepository.findById(delivery.getOrderId()).orElse(null));
     }
@@ -460,10 +456,13 @@ public class DeliveryService {
     /** 组装完成配送响应（骑手送达 / 商家自配确认送达共用），补齐配送结算链与凭证字段。 */
     private CompleteDeliveryResponse buildCompleteResponse(Delivery delivery, Order order) {
         DeliveryConverter.DeliverySettlement settlement = deliveryConverter.resolveSettlement(delivery, order);
+        String orderStatus = order != null ? order.getOrderStatus() : null;
         return CompleteDeliveryResponse.builder()
                 .id(delivery.getId())
                 .orderId(delivery.getOrderId())
                 .status(delivery.getStatus())
+                .orderStatus(orderStatus)
+                .orderStatusLabel(DisplayLabelUtil.orderStatusLabel(orderStatus))
                 .courierEarning(defaultDecimal(delivery.getCourierEarning()))
                 .fee(defaultDecimal(delivery.getFee()))
                 .originalDeliveryFee(settlement.originalDeliveryFee())
@@ -605,9 +604,13 @@ public class DeliveryService {
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<Delivery> deliveryPage;
 
-        if (StringUtils.hasText(status)) {
+        // 历史兼容：前端可能按旧部署的完成态 delivered 过滤，统一归一为 completed 再查库
+        String normalizedStatus = StringUtils.hasText(status)
+                ? DisplayLabelUtil.normalizeDeliveryStatus(status)
+                : status;
+        if (StringUtils.hasText(normalizedStatus)) {
             deliveryPage = deliveryRepository.findAll(
-                    DeliverySpecifications.withFilters(null, courierId, status, null, null),
+                    DeliverySpecifications.withFilters(null, courierId, normalizedStatus, null, null),
                     pageable);
         } else {
             deliveryPage = deliveryRepository.findAll(
@@ -800,7 +803,8 @@ public class DeliveryService {
      */
     @Transactional(readOnly = true)
     public PageResponse<CourierOptionResponse> listCouriers(int page, int pageSize, String propertyCompanyId) {
-        roleGuard.requireAnyRole("merchant", "property_admin", "platform_admin",
+        // 2026-10-20 负责人标签化：统筹/板块/个体负责人身份由业务表 active 记录判定
+        roleGuard.requireAnyRoleOrLeaderIdentity("merchant", "property_admin", "platform_admin",
                 "coordinator", "sector_leader", "individual_leader");
 
         String scopedPropertyCompanyId = roleGuard.isPlatformAdmin() && StringUtils.hasText(propertyCompanyId)

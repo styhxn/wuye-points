@@ -8,6 +8,7 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.IndividualLeaderApplicationRepository;
+import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SectorCatalog;
@@ -26,6 +27,7 @@ import org.springframework.util.StringUtils;
 public class IndividualLeaderApplyService {
 
     private final IndividualLeaderApplicationRepository applicationRepository;
+    private final IndividualLeaderRepository individualLeaderRepository;
     private final ResidentRepository residentRepository;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
@@ -52,8 +54,10 @@ public class IndividualLeaderApplyService {
             throw new BizException(ErrorCode.PARAM_INVALID, "您已有待审核的申请，请勿重复提交");
         }
 
-        // 校验是否已是个体负责人
-        if ("individual_leader".equals(resident.getRole())) {
+        // 校验是否已是个体负责人（2026-10-20 负责人标签化：按 individual_leaders 表 active 记录判定，
+        // 不再看 residents.role——role 已归一为 resident）
+        if (individualLeaderRepository.findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                resident.getId(), resident.getPropertyCompanyId(), "active").isPresent()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "您已是个体负责人，无需重复申请");
         }
 
@@ -83,8 +87,8 @@ public class IndividualLeaderApplyService {
 
         Resident resident = getActiveResident(UserContext.currentUserId());
         IndividualLeaderApplication application = applicationRepository
-                .findFirstByResidentIdAndPropertyCompanyIdAndAuditStatusOrderByCreatedAtDesc(
-                        resident.getId(), resident.getPropertyCompanyId(), null)
+                .findFirstByResidentIdAndPropertyCompanyIdOrderByCreatedAtDesc(
+                        resident.getId(), resident.getPropertyCompanyId())
                 .orElse(null);
 
         if (application == null) {

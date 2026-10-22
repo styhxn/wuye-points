@@ -77,6 +77,9 @@ public class Resident extends BaseEntity {
     @Column(name = "building", length = 20)
     private String building;
 
+    @Column(name = "floor", length = 20)
+    private String floor;
+
     @Column(name = "unit", length = 20)
     private String unit;
 

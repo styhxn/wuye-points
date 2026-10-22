@@ -8,6 +8,7 @@ import com.wuye.points.entity.Delivery;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.Order;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.DisplayLabelUtil;
 import com.wuye.points.util.PhoneUtil;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -50,6 +51,8 @@ public class DeliveryConverter {
                 .courierShare(defaultDecimal(delivery.getCourierEarning()))
                 .settlementStatus(resolveSettlementStatus(delivery))
                 .status(delivery.getStatus())
+                .statusLabel(DisplayLabelUtil.deliveryStatusLabel(
+                        DisplayLabelUtil.normalizeDeliveryStatus(delivery.getStatus())))
                 .carrierType(delivery.getCarrierType())
                 .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
                 .timeoutMinutes(timeoutMinutes)
@@ -66,6 +69,8 @@ public class DeliveryConverter {
             contactPhone = PhoneUtil.mask(contactPhone);
         }
         DeliverySettlement settlement = resolveSettlement(delivery, order);
+        String normalizedStatus = DisplayLabelUtil.normalizeDeliveryStatus(delivery.getStatus());
+        String orderStatus = order != null ? order.getOrderStatus() : null;
 
         return MyDeliveryItemResponse.builder()
                 .id(delivery.getId())
@@ -87,6 +92,9 @@ public class DeliveryConverter {
                 .courierShare(defaultDecimal(delivery.getCourierEarning()))
                 .settlementStatus(resolveSettlementStatus(delivery))
                 .status(delivery.getStatus())
+                .statusLabel(DisplayLabelUtil.deliveryStatusLabel(normalizedStatus))
+                .orderStatus(orderStatus)
+                .orderStatusLabel(DisplayLabelUtil.orderStatusLabel(orderStatus))
                 .carrierType(delivery.getCarrierType())
                 .merchantDeliveryFeeShare(delivery.getMerchantDeliveryFeeShare())
                 .acceptedAt(DateTimeUtil.toIsoUtc(delivery.getAcceptedAt()))

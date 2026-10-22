@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 单元楼长管理模块（管理端）
  *
- * <p>物业公司可选定/添加/删除单元楼长角色。楼长与活动组无关，是与「小区 + 楼栋」绑定的推广角色。
+ * <p>物业公司可选定/添加/删除单元楼长角色。楼长与活动组无关，是与「小区 + 单元」绑定的推广角色。
  */
 @Tag(name = "管理端 — 单元楼长管理", description = "单元楼长列表、指定、详情、更新、撤销")
 @RestController
@@ -43,13 +43,13 @@ public class AdminBuildingLeaderController {
             @Parameter(description = "搜索关键词（住户姓名/手机号）") @RequestParam(required = false) String keyword,
             @Parameter(description = "状态 active/inactive") @RequestParam(required = false) String status,
             @Parameter(description = "小区ID") @RequestParam(required = false) String communityId,
-            @Parameter(description = "楼栋") @RequestParam(required = false) String building,
+            @Parameter(description = "单元") @RequestParam(required = false) String unit,
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId) {
         return ApiResponse.success(adminBuildingLeaderService.listBuildingLeaders(
-                page, pageSize, keyword, status, communityId, building, propertyCompanyId));
+                page, pageSize, keyword, status, communityId, unit, propertyCompanyId));
     }
 
-    @Operation(summary = "指定单元楼长", description = "指定住户为某楼栋楼长；楼长为「住户 + 楼长」复合身份，住户角色不变。角色: property_admin, platform_admin")
+    @Operation(summary = "指定单元楼长", description = "指定住户为某单元楼长；楼长为「住户 + 楼长」复合身份，住户角色不变。角色: property_admin, platform_admin")
     @PostMapping
     public ApiResponse<BuildingLeaderDetailResponse> appointBuildingLeader(
             @Valid @RequestBody AppointBuildingLeaderRequest request) {

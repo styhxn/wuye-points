@@ -53,7 +53,7 @@ public class IndividualLeaderWorkbenchService {
 
     @Transactional(readOnly = true)
     public IndividualLeaderMyResponse getMyInfo() {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         Resident resident = residentRepository.findById(current.getResidentId()).orElse(null);
         PropertyCompany company = propertyCompanyRepository.findById(current.getPropertyCompanyId()).orElse(null);
@@ -81,7 +81,7 @@ public class IndividualLeaderWorkbenchService {
     @Transactional
     public PriceApprovalResponse setMerchantDistribution(
             String individualLeaderId, SetMerchantDistributionRequest request) {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         assertSelf(current, individualLeaderId);
 
@@ -115,7 +115,7 @@ public class IndividualLeaderWorkbenchService {
     @Transactional
     public MerchantDeliveryFeeResponse setDeliveryFee(
             String individualLeaderId, SetFreeDeliveryThresholdRequest request) {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         assertSelf(current, individualLeaderId);
 
@@ -165,7 +165,7 @@ public class IndividualLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public List<IndividualLeaderMerchantRevenueItemResponse> listMyMerchantRevenues() {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         List<Merchant> merchants = merchantRepository.findByIndividualLeaderId(current.getId());
         if (merchants.isEmpty()) {
@@ -204,7 +204,7 @@ public class IndividualLeaderWorkbenchService {
      */
     @Transactional(readOnly = true)
     public List<PriceApprovalResponse> listMyApprovals() {
-        roleGuard.requireAnyRole("individual_leader");
+        roleGuard.requireAnyRole("resident");
         IndividualLeader current = getCurrentIndividualLeader();
         return priceApprovalRepository.findByApplicantIdOrderByCreatedAtDesc(current.getResidentId()).stream()
                 .filter(a -> ITEM_TYPE_MERCHANT_DISTRIBUTION.equals(a.getItemType()))

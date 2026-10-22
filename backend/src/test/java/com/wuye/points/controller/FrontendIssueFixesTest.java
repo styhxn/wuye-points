@@ -102,6 +102,7 @@ class FrontendIssueFixesTest extends ControllerTestBase {
         // 一级经销商店（§94.4 场景）
         Merchant distributor = saveMerchant("mch_dist01", "精选货源", "platform", "13900000007", "res_dist01");
         distributor.setMerchantLevel("official_certified");
+        distributor.setIsDistributor(true);
         merchantRepository.save(distributor);
 
         saveConfig("mpc_test001", normalMerchant.getId());
@@ -205,6 +206,10 @@ class FrontendIssueFixesTest extends ControllerTestBase {
         listing.setRetailPrice(new BigDecimal("65.00"));
         listing.setEnabled(true);
         listing.setShareCount(0);
+        listing.setTookQuantity(10);
+        listing.setSoldQuantity(0);
+        listing.setSoldOutUnlisted(false);
+        listing.setQuantityRemaining(10);
         listing.setCreatedAt(LocalDateTime.now());
         listing.setUpdatedAt(LocalDateTime.now());
         listingRepository.save(listing);

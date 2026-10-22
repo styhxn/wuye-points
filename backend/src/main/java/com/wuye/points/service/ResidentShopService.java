@@ -15,6 +15,7 @@ import com.wuye.points.dto.residentmerchant.PublicResidentMerchantShopResponse;
 import com.wuye.points.dto.residentmerchant.ResidentMerchantListingItemResponse;
 import com.wuye.points.dto.residentmerchant.ShareListingResponse;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantListingRequest;
+import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantShopRequest;
 import com.wuye.points.dto.residentmerchant.UpdateResidentMerchantVisibilityRequest;
 import com.wuye.points.entity.DistributorProduct;
 import com.wuye.points.entity.PaymentRecord;
@@ -99,6 +100,7 @@ public class ResidentShopService {
     private final PaymentRecordRepository paymentRecordRepository;
     private final PlatformSettingService platformSettingService;
     private final TransactionTemplate transactionTemplate;
+    private final ResidentShopMerchantService residentShopMerchantService;
 
     @Value("${app.share.base-url:https://test.yuanxusoftware.top/h5/shop}")
     private String shareBaseUrl;
@@ -138,6 +140,15 @@ public class ResidentShopService {
         application.setDepositAmount(resolveDepositAmount());
         application.setStatus("pending_deposit");
         application.setVisibility(VISIBILITY_PRIVATE);
+        // 小店名称：申请时可指定，默认「{业主姓名}的小店」；审核通过后作为店铺主体商家名
+        if (StringUtils.hasText(request.getShopName())) {
+            application.setShopName(request.getShopName().trim());
+        } else if (!StringUtils.hasText(application.getShopName())) {
+            application.setShopName(defaultShopName(resident));
+        }
+        // 店铺资料（对齐普通商家：简介/营业时间/联系电话/封面，均为可选）
+        applyShopProfile(application, request.getDescription(), request.getBusinessHours(),
+                request.getContactPhone(), request.getCoverUrl());
         application.setAuditRemark(null);
         application.setAuditedBy(null);
         application.setAuditedAt(null);
@@ -319,6 +330,8 @@ public class ResidentShopService {
         application.setStatus("quitting");
         application.setQuitRequestedAt(LocalDateTime.now());
         applicationRepository.save(application);
+        // 退出时店铺主体置非营业
+        residentShopMerchantService.deactivateShopMerchant(application);
 
         return myStatus();
     }
@@ -332,12 +345,16 @@ public class ResidentShopService {
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND);
         }
-        // 拿货名额：产品数量即该区域可拿货的业主商户数量
-        int stock = product.getStock() != null ? product.getStock() : 0;
-        if (stock <= 0) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该产品拿货名额已满");
+        // 件数制：拿货件数从一级代理库存（stock=库存件数）一次性扣减
+        int quantity = request.getQuantity() == null ? 1 : request.getQuantity();
+        if (quantity < 1) {
+            throw new BizException(ErrorCode.LISTING_QUANTITY_INVALID);
         }
-        product.setStock(stock - 1);
+        int stock = product.getStock() != null ? product.getStock() : 0;
+        if (stock < quantity) {
+            throw new BizException(ErrorCode.DISTRIBUTOR_STOCK_INSUFFICIENT);
+        }
+        product.setStock(stock - quantity);
         distributorProductRepository.save(product);
         assertRetailPriceInMarkupRange(product, request.getRetailPrice());
 
@@ -349,6 +366,10 @@ public class ResidentShopService {
         listing.setRetailPrice(request.getRetailPrice());
         listing.setEnabled(request.getEnabled() == null || request.getEnabled());
         listing.setShareCount(0);
+        listing.setTookQuantity(quantity);
+        listing.setSoldQuantity(0);
+        listing.setSoldOutUnlisted(false);
+        listing.setQuantityRemaining(quantity);
         listingRepository.save(listing);
 
         return toListingItem(listing, product);
@@ -371,7 +392,9 @@ public class ResidentShopService {
     }
 
     /**
-     * 取消拿货：业主商户删除自己从一级经销商拿货的上架记录。
+     * 取消拿货：业主商户删除自己从一级代理拿货的上架记录。
+     * 仅退回未卖出件数（quantity_remaining），已卖出部分不退；
+     * 存在未完成订单（未完成 = 非 completed/cancelled/refunded）时禁止取消。
      */
     @Transactional
     public void cancelListing(String id) {
@@ -382,16 +405,23 @@ public class ResidentShopService {
         if (!resident.getId().equals(listing.getResidentId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权取消其他商户的拿货记录");
         }
-        releasePickupQuota(listing.getDistributorProductId());
+        if (orderRepository.countUnfinishedByListingId(listing.getId()) > 0) {
+            throw new BizException(ErrorCode.LISTING_NOT_CANCELLABLE);
+        }
+        releaseUnsoldQuantity(listing);
         listingRepository.delete(listing);
     }
 
     /**
-     * 释放拿货名额（产品数量 +1），其他业主商户可继续拿货。
+     * 退回未卖出件数到一级代理库存（仅 quantity_remaining，已卖出部分不退）。
      */
-    private void releasePickupQuota(String distributorProductId) {
-        distributorProductRepository.findById(distributorProductId).ifPresent(product -> {
-            product.setStock((product.getStock() != null ? product.getStock() : 0) + 1);
+    private void releaseUnsoldQuantity(ResidentMerchantListing listing) {
+        int remaining = listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining();
+        if (remaining <= 0) {
+            return;
+        }
+        distributorProductRepository.findById(listing.getDistributorProductId()).ifPresent(product -> {
+            product.setStock((product.getStock() != null ? product.getStock() : 0) + remaining);
             distributorProductRepository.save(product);
         });
     }
@@ -444,7 +474,8 @@ public class ResidentShopService {
     @Transactional(readOnly = true)
     public PageResponse<DistributorProductItemResponse> listDistributorProducts(
             String categoryId, String keyword, int page, int pageSize) {
-        roleGuard.requireAnyRole("resident");
+        // 选品池拦截：仅营业中(active)的业主小店可访问（与 requireActiveMerchantApplication 同款校验）
+        requireActiveMerchantApplication();
         if (page < 1) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
@@ -473,6 +504,42 @@ public class ResidentShopService {
         application.setVisibility(request.getVisibility());
         applicationRepository.save(application);
         return myStatus();
+    }
+
+    /**
+     * 店主修改店铺资料（营业中业主商户）：店名/简介/营业时间/联系电话/封面。
+     * 未传字段不修改；店名修改后同步店铺主体商家名，保持橱窗与订单展示一致。
+     */
+    @Transactional
+    public MyResidentMerchantResponse updateShop(UpdateResidentMerchantShopRequest request) {
+        ResidentMerchantApplication application = requireActiveMerchantApplication();
+        if (StringUtils.hasText(request.getShopName())) {
+            application.setShopName(request.getShopName().trim());
+        }
+        applyShopProfile(application, request.getDescription(), request.getBusinessHours(),
+                request.getContactPhone(), request.getCoverUrl());
+        applicationRepository.save(application);
+        // 同步店铺主体（merchantSource=resident_shop）的店名/资料，避免管理端与商家详情页看到旧值
+        residentShopMerchantService.syncShopProfile(application);
+        return myStatus();
+    }
+
+    /** 店铺资料字段：仅当入参有值时覆盖（空串视为清空） */
+    private void applyShopProfile(ResidentMerchantApplication application,
+                                  String description, String businessHours,
+                                  String contactPhone, String coverUrl) {
+        if (description != null) {
+            application.setDescription(description.trim().isEmpty() ? null : description.trim());
+        }
+        if (businessHours != null) {
+            application.setBusinessHours(businessHours.trim().isEmpty() ? null : businessHours.trim());
+        }
+        if (contactPhone != null) {
+            application.setContactPhone(contactPhone.trim().isEmpty() ? null : contactPhone.trim());
+        }
+        if (coverUrl != null) {
+            application.setCoverUrl(coverUrl.trim().isEmpty() ? null : coverUrl.trim());
+        }
     }
 
     /**
@@ -526,6 +593,7 @@ public class ResidentShopService {
                         .residentId(a.getResidentId())
                         .residentName(residentNames.get(a.getResidentId()))
                         .propertyCompanyId(a.getPropertyCompanyId())
+                        .shopName(a.getShopName())
                         .visibility(defaultVisibility(a.getVisibility()))
                         .status(a.getStatus())
                         .depositAmount(a.getDepositAmount())
@@ -579,6 +647,11 @@ public class ResidentShopService {
                 .visibility(defaultVisibility(application.getVisibility()))
                 .status(application.getStatus())
                 .depositAmount(application.getDepositAmount())
+                .shopName(application.getShopName())
+                .description(application.getDescription())
+                .businessHours(application.getBusinessHours())
+                .contactPhone(resolveContactPhone(application))
+                .coverUrl(application.getCoverUrl())
                 .listings(items)
                 .listingCount(items.size())
                 .build();
@@ -705,6 +778,11 @@ public class ResidentShopService {
                 .depositAmount(application.getDepositAmount())
                 .balance(resident.getCoinBalance() == null ? BigDecimal.ZERO : resident.getCoinBalance())
                 .listingCount(listingCount)
+                .shopName(application.getShopName())
+                .description(application.getDescription())
+                .businessHours(application.getBusinessHours())
+                .contactPhone(application.getContactPhone())
+                .coverUrl(application.getCoverUrl())
                 .build();
     }
 
@@ -729,6 +807,10 @@ public class ResidentShopService {
                 .wholesalePrice(product == null ? null : product.getWholesalePrice())
                 .retailPrice(listing.getRetailPrice())
                 .enabled(Boolean.TRUE.equals(listing.getEnabled()))
+                .tookQuantity(listing.getTookQuantity() == null ? 0 : listing.getTookQuantity())
+                .soldQuantity(listing.getSoldQuantity() == null ? 0 : listing.getSoldQuantity())
+                .quantityRemaining(listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining())
+                .soldOutUnlisted(Boolean.TRUE.equals(listing.getSoldOutUnlisted()))
                 .shareCount(listing.getShareCount() == null ? 0 : listing.getShareCount())
                 .createdAt(DateTimeUtil.toLocalDateTimeString(listing.getCreatedAt()))
                 .build();
@@ -779,6 +861,24 @@ public class ResidentShopService {
 
     private String defaultVisibility(String visibility) {
         return StringUtils.hasText(visibility) ? visibility : VISIBILITY_PRIVATE;
+    }
+
+    /**
+     * 公开橱窗联系电话：店铺未设置联系电话时回退为店主手机号（与普通商家橱窗展示口径一致）。
+     */
+    private String resolveContactPhone(ResidentMerchantApplication application) {
+        if (StringUtils.hasText(application.getContactPhone())) {
+            return application.getContactPhone();
+        }
+        return residentRepository.findById(application.getResidentId())
+                .map(Resident::getPhone)
+                .orElse(null);
+    }
+
+    /** 小店默认名称：「{业主姓名}的小店」（无姓名时用手机号） */
+    private String defaultShopName(Resident resident) {
+        String base = StringUtils.hasText(resident.getName()) ? resident.getName() : resident.getPhone();
+        return (base == null ? "业主" : base) + "的小店";
     }
 
     private Resident getActiveResident(String id) {

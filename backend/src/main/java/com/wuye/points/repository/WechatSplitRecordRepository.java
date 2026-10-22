@@ -30,6 +30,8 @@ public interface WechatSplitRecordRepository extends JpaRepository<WechatSplitRe
 
     boolean existsByOrderIdAndOwnerType(String orderId, String ownerType);
 
+    Optional<WechatSplitRecord> findFirstByOrderId(String orderId);
+
     @Query("""
             SELECT COALESCE(SUM(s.freezeAmount), 0) FROM WechatSplitRecord s
             WHERE s.ownerType = :ownerType AND s.ownerId = :ownerId AND s.status IN :statuses
@@ -37,4 +39,12 @@ public interface WechatSplitRecordRepository extends JpaRepository<WechatSplitRe
     BigDecimal sumFreezeAmountByOwnerAndStatusIn(@Param("ownerType") String ownerType,
                                                  @Param("ownerId") String ownerId,
                                                  @Param("statuses") List<String> statuses);
+
+    @Query("""
+            SELECT COALESCE(SUM(s.freezeAmount), 0) FROM WechatSplitRecord s
+            WHERE s.ownerType = :ownerType AND s.ownerId IN :ownerIds AND s.status IN :statuses
+            """)
+    BigDecimal sumFreezeAmountByOwnerIdsAndStatusIn(@Param("ownerType") String ownerType,
+                                                    @Param("ownerIds") java.util.Collection<String> ownerIds,
+                                                    @Param("statuses") List<String> statuses);
 }

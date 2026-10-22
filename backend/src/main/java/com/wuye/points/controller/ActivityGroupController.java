@@ -62,6 +62,18 @@ public class ActivityGroupController {
         return ApiResponse.success(activityGroupService.listMyJoinedGroups(page, pageSize));
     }
 
+    @Operation(summary = "我管理的活动组列表",
+            description = "仅返回本人担任组长（leaderId=当前用户）的活动组，不过滤 status/reviewStatus。"
+                    + "组长（含 2026-10-21 标签化后的住户+组长身份）用于组长管理页。")
+    @GetMapping("/my-led")
+    public ApiResponse<PageResponse<ActivityGroupListItemResponse>> listMyLedGroups(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
+            @Parameter(description = "排序字段（-降序，+升序）", example = "-createdAt")
+            @RequestParam(defaultValue = "-createdAt") String sort) {
+        return ApiResponse.success(activityGroupService.listMyLedGroups(page, pageSize, sort));
+    }
+
     @Operation(summary = "活动组列表", description = "获取活动组列表（分页/筛选）")
     @GetMapping
     public ApiResponse<PageResponse<ActivityGroupListItemResponse>> listActivityGroups(

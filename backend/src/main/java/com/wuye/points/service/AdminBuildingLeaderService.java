@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
 /**
  * 管理端 · 单元楼长管理（物业公司选定/添加/删除楼长角色）
  *
- * <p>楼长与活动组无关，是与「小区 + 楼栋」绑定的推广角色：该楼栋内住户消费时按比例分成。
+ * <p>楼长与活动组无关，是与「小区 + 单元」绑定的推广角色：该单元内住户消费时按比例分成。
  * 订单创建时快照绑定楼长，分成定向从订单产生那一刻生效，后续变更楼长不影响已产生订单。
  */
 @Service
@@ -64,16 +64,30 @@ public class AdminBuildingLeaderService {
             String keyword,
             String status,
             String communityId,
-            String building,
+            String unit,
             String propertyCompanyId) {
         permissionGuard.requirePermissionOrAdmin("buildingLeader.read");
-        validateStatus(status);
-
         String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+        return listBuildingLeadersForScope(scopedPropertyCompanyId, page, pageSize, keyword, status, communityId, unit);
+    }
+
+    /**
+     * 楼长列表查询核心逻辑（供管理端与物业经理工作台复用，权限校验由调用方完成）。
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<BuildingLeaderListItemResponse> listBuildingLeadersForScope(
+            String propertyCompanyId,
+            int page,
+            int pageSize,
+            String keyword,
+            String status,
+            String communityId,
+            String unit) {
+        validateStatus(status);
         Pageable pageable = adminSupport.buildPageable(page, pageSize, "createdAt");
         Page<BuildingLeader> leaderPage = buildingLeaderRepository.findAll(
                 BuildingLeaderSpecifications.withFilters(
-                        scopedPropertyCompanyId, status, communityId, building, keyword),
+                        propertyCompanyId, status, communityId, unit, keyword),
                 pageable);
 
         List<BuildingLeader> leaders = leaderPage.getContent();
@@ -99,11 +113,29 @@ public class AdminBuildingLeaderService {
     @Transactional
     public BuildingLeaderDetailResponse appointBuildingLeader(AppointBuildingLeaderRequest request) {
         permissionGuard.requirePermissionOrAdmin("buildingLeader.manage");
+        return appointBuildingLeaderForScope(request, null);
+    }
+
+    /**
+     * 指定单元楼长核心逻辑（供管理端与物业经理工作台复用，权限校验由调用方完成）。
+     *
+     * @param scopedPropertyCompanyId 非空时限定目标住户必须属于该物业公司（物业经理工作台传入）；
+     *                                为空时按管理端登录态做同物业校验（assertSameProperty）
+     */
+    @Transactional
+    public BuildingLeaderDetailResponse appointBuildingLeaderForScope(
+            AppointBuildingLeaderRequest request, String scopedPropertyCompanyId) {
         adminSupport.validateIdPrefix(request.getResidentId(), "res_");
 
         Resident resident = residentRepository.findById(request.getResidentId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        adminSupport.assertSameProperty(resident.getPropertyCompanyId());
+        if (StringUtils.hasText(scopedPropertyCompanyId)) {
+            if (!scopedPropertyCompanyId.equals(resident.getPropertyCompanyId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED, "该住户不属于当前物业公司");
+            }
+        } else {
+            adminSupport.assertSameProperty(resident.getPropertyCompanyId());
+        }
         String propertyCompanyId = resident.getPropertyCompanyId();
 
         String communityId = StringUtils.hasText(request.getCommunityId())
@@ -111,14 +143,14 @@ public class AdminBuildingLeaderService {
         if (!StringUtils.hasText(communityId)) {
             throw new BizException(ErrorCode.PARAM_MISSING, "该住户未关联小区，请指定communityId");
         }
-        String building = StringUtils.hasText(request.getBuilding())
-                ? request.getBuilding().trim() : resident.getBuilding();
-        if (!StringUtils.hasText(building)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "该住户未关联楼栋，请指定building");
+        String unit = StringUtils.hasText(request.getUnit())
+                ? request.getUnit().trim() : resident.getUnit();
+        if (!StringUtils.hasText(unit)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "该住户未关联单元，请指定unit");
         }
 
-        if (buildingLeaderRepository.existsByCommunityIdAndBuildingAndStatus(communityId, building, "active")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该楼栋已存在启用中的楼长，请先撤销后再指派");
+        if (buildingLeaderRepository.existsByCommunityIdAndUnitAndStatus(communityId, unit, "active")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "该小区该单元已存在启用中的楼长，请先撤销后再指派");
         }
         if (buildingLeaderRepository.existsByResidentIdAndPropertyCompanyIdAndStatus(
                 resident.getId(), propertyCompanyId, "active")) {
@@ -130,7 +162,7 @@ public class AdminBuildingLeaderService {
         leader.setResidentId(resident.getId());
         leader.setPropertyCompanyId(propertyCompanyId);
         leader.setCommunityId(communityId);
-        leader.setBuilding(building);
+        leader.setUnit(unit);
         leader.setCommissionRate(resolveRate(request.getCommissionRate()));
         leader.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : "active");
         validateStatus(leader.getStatus());
@@ -271,7 +303,7 @@ public class AdminBuildingLeaderService {
                 .propertyCompanyName(company != null ? company.getName() : null)
                 .communityId(leader.getCommunityId())
                 .communityName(community != null ? community.getName() : null)
-                .building(leader.getBuilding())
+                .unit(leader.getUnit())
                 .commissionRate(leader.getCommissionRate())
                 .description(leader.getDescription())
                 .totalEarning(totalEarning != null ? totalEarning : BigDecimal.ZERO)
@@ -298,7 +330,7 @@ public class AdminBuildingLeaderService {
                 .propertyCompanyName(company != null ? company.getName() : null)
                 .communityId(leader.getCommunityId())
                 .communityName(community != null ? community.getName() : null)
-                .building(leader.getBuilding())
+                .unit(leader.getUnit())
                 .commissionRate(leader.getCommissionRate())
                 .description(leader.getDescription())
                 .totalEarning(totalEarning != null ? totalEarning : BigDecimal.ZERO)

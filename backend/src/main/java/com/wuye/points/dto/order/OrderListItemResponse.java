@@ -36,6 +36,13 @@ public class OrderListItemResponse {
     @Schema(description = "订单状态", example = "pending")
     private String orderStatus;
 
+    @Schema(description = "配送单状态码（订单冗余，取关联配送单；历史值 delivered 归一化为 completed）",
+            example = "completed", allowableValues = {"pending", "accepted", "delivering", "merchant_self", "completed", "failed", "property_fallback"})
+    private String deliveryStatusCode;
+
+    @Schema(description = "配送单状态中文（后端下发，无需前端再维护映射）", example = "已完成")
+    private String deliveryStatusLabel;
+
     @Schema(description = "订单总金额", example = "99.90")
     private BigDecimal totalAmount;
 

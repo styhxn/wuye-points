@@ -49,7 +49,7 @@ public class AdminRoleWithdrawalService {
 
     private static final Set<String> WITHDRAWAL_TYPES = Set.of(
             "individual_leader", "courier", "coordinator", "sector_leader",
-            "building_leader", "resident_seller");
+            "building_leader", "resident_seller", "property_manager");
     private static final Set<String> AUDIT_RESULTS = Set.of("approved", "rejected", "completed");
     private static final Set<String> AUDIT_STATUS = Set.of(
             "pending", "pending_audit", "approved", "rejected", "completed");

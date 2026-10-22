@@ -62,6 +62,7 @@ public class AdminIndividualLeaderService {
     private final DistributionConverter distributionConverter;
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
+    private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
@@ -297,8 +298,8 @@ public class AdminIndividualLeaderService {
         leader.setStatus("active");
         individualLeaderRepository.save(leader);
 
-        resident.setRole("individual_leader");
-        residentRepository.save(resident);
+        // 2026-10-20 负责人标签化：不再改写 residents.role（保持 resident），
+        // 个体负责人身份由 individual_leaders 表 active 记录判定，与楼长/物业经理同模式。
 
         application.setAuditStatus("approved");
         application.setIndividualLeaderId(leader.getId());
@@ -351,21 +352,24 @@ public class AdminIndividualLeaderService {
     }
 
     private void requireIndividualRead() {
-        if ("sector_leader".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：板块负责人身份由 sector_leaders 表 active 记录判定
+        if (roleGuard.isSectorLeader()) {
             sectorLeaderRepository.findByResidentIdAndPropertyCompanyIdAndStatus(
                             UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
                     .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
             return;
         }
         // 2026-09-07 前端问题 C：统筹为只读下级角色，可查看个体负责人列表
-        if ("coordinator".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：统筹身份由 coordinators 表 active 记录判定
+        if (roleGuard.isCoordinator()) {
             return;
         }
         permissionGuard.requirePermissionOrAdmin("individual.read");
     }
 
     private void requireIndividualManage() {
-        if ("sector_leader".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：板块负责人身份由 sector_leaders 表 active 记录判定
+        if (roleGuard.isSectorLeader()) {
             sectorLeaderRepository.findByResidentIdAndPropertyCompanyIdAndStatus(
                             UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
                     .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
@@ -375,7 +379,8 @@ public class AdminIndividualLeaderService {
     }
 
     private String resolveScopedSectorLeaderId(String requestedSectorLeaderId) {
-        if ("sector_leader".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：板块负责人身份由 sector_leaders 表 active 记录判定
+        if (roleGuard.isSectorLeader()) {
             SectorLeader current = sectorLeaderRepository.findByResidentIdAndPropertyCompanyIdAndStatus(
                             UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
                     .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
@@ -407,7 +412,8 @@ public class AdminIndividualLeaderService {
     }
 
     private void assertSectorLeaderScope(SectorLeader sectorLeader) {
-        if (!"sector_leader".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：板块负责人身份由 sector_leaders 表 active 记录判定
+        if (!roleGuard.isSectorLeader()) {
             return;
         }
         SectorLeader current = sectorLeaderRepository.findByResidentIdAndPropertyCompanyIdAndStatus(
@@ -419,7 +425,8 @@ public class AdminIndividualLeaderService {
     }
 
     private void assertSectorLeaderScopeOnLeader(IndividualLeader leader) {
-        if (!"sector_leader".equals(UserContext.currentRole())) {
+        // 2026-10-20 负责人标签化：板块负责人身份由 sector_leaders 表 active 记录判定
+        if (!roleGuard.isSectorLeader()) {
             return;
         }
         SectorLeader current = sectorLeaderRepository.findByResidentIdAndPropertyCompanyIdAndStatus(

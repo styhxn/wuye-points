@@ -9,6 +9,7 @@ import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.entity.WithdrawalRecord;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.WechatSplitOwnerTypes;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.repository.spec.WithdrawalRecordSpecifications;
@@ -42,6 +43,7 @@ public class PropertyCompanySettlementService {
 
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final WithdrawalRecordRepository withdrawalRecordRepository;
+    private final WithdrawableService withdrawableService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final PlatformSettingService platformSetting;
@@ -50,9 +52,13 @@ public class PropertyCompanySettlementService {
     public SettlementBalanceResponse getBalance(String propertyCompanyId) {
         roleGuard.requireAnyRole("property_admin", "platform_admin");
         PropertyCompany company = getScopedCompany(propertyCompanyId);
+        // 展示口径与提现校验一致：扣除微信分账已实时到账部分（防界面显示可提、实际被拒）
+        BigDecimal splitSettled = withdrawableService.calcMerchantSplitSettledAmount(
+                WechatSplitOwnerTypes.PROPERTY.name(), company.getId());
         return SettlementBalanceResponse.builder()
                 .propertyCompanyId(company.getId())
-                .settlementBalance(defaultDecimal(company.getSettlementBalance()))
+                .settlementBalance(defaultDecimal(company.getSettlementBalance()).subtract(splitSettled)
+                        .max(BigDecimal.ZERO))
                 .build();
     }
 
@@ -66,7 +72,13 @@ public class PropertyCompanySettlementService {
             throw new BizException(ErrorCode.PARAM_INVALID, "提现金额无效");
         }
         BigDecimal balance = defaultDecimal(company.getSettlementBalance());
-        if (amount.compareTo(balance) > 0) {
+        // 微信分账已实时到账的物业分成不再走内部提现（防一笔钱分两次付）。
+        // 物业公司为 MERCHANT_ID 接收方：reverted 表示资金已退回分账方，内部余额仍应可提，
+        // 因此只扣 frozen/finished 两种「资金已真实到账」状态。
+        BigDecimal splitSettled = withdrawableService.calcMerchantSplitSettledAmount(
+                WechatSplitOwnerTypes.PROPERTY.name(), company.getId());
+        BigDecimal available = balance.subtract(splitSettled).max(BigDecimal.ZERO);
+        if (amount.compareTo(available) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "分成账户余额不足");
         }
 

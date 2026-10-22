@@ -93,9 +93,13 @@ wechat:
     account-type: ${WECHAT_PAY_ACCOUNT_TYPE:BASIC}
     # 提现结果异步通知地址（提现成功/失败/退票/关单回调，须 HTTPS）
     withdraw-notify-url: ${WECHAT_PAY_WITHDRAW_NOTIFY_URL:}
-    # 普通分账：添加分账接收方时的关系类型（必须与实际业务关系一致），枚举见微信文档
-    receiver-relation-type: ${WECHAT_PAY_RECEIVER_RELATION_TYPE:SERVICE_PROVIDER}
+    # 普通分账：添加分账接收方时的关系类型（必须与实际业务关系一致），枚举见微信文档。
+    # 平台自身作接收方时固定用 SERVICE_PROVIDER（服务商抽成）；本项作用于物业/协调员/负责人/快递员等
+    # 合作方，缺省 PARTNER（合作伙伴）
+    receiver-relation-type: ${WECHAT_PAY_RECEIVER_RELATION_TYPE:PARTNER}
     receiver-custom-relation: ${WECHAT_PAY_RECEIVER_CUSTOM_RELATION:}
+    # 平台作为分账接收方的商户全称（MERCHANT_ID 添加分账接收方时 name 必传）
+    platform-receiver-name: ${WECHAT_PAY_PLATFORM_RECEIVER_NAME:}
 
 # 微信支付分账（普通分账 / profit sharing）配置，前缀 wechat-split。
 # 资金分账已走微信官方支付分账（WechatSplitApiService），以下为分账业务参数（不含第三方聚合支付配置）。

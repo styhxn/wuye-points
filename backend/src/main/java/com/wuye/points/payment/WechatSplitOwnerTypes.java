@@ -23,6 +23,10 @@ public enum WechatSplitOwnerTypes {
     SECTOR_LEADER,
     /** 独立团长 */
     INDIVIDUAL_LEADER,
+    /** 单元楼长（分成从物业公司分成中定向扣除，落库为扣经理抽成后的净额） */
+    BUILDING_LEADER,
+    /** 物业经理（抽成从楼长分成毛额中抽取；ownerId 为经理的 residentId，与钱包流水的主体键一致） */
+    PROPERTY_MANAGER,
     /** 平台 */
     PLATFORM
 }

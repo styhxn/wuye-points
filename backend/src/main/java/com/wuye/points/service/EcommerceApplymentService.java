@@ -60,6 +60,33 @@ public class EcommerceApplymentService {
             java.util.Map.entry("PARTNER_REJECT", "rejected"),
             java.util.Map.entry("FROZEN", "rejected"));
 
+    /**
+     * 开户银行名称 → 微信进件银行编号（account_bank）映射。
+     *
+     * <p><b>联调注意</b>：以下编号为微信支付常用银行编码，首次对接「电商收付通进件」时
+     * 必须与微信最新《银行编号列表》（或查询银行列表接口）逐项核对后再放量；
+     * 未收录银行 fail-closed 抛错提示补充，绝不提交空值（空值会被微信拒绝且原因不可见）。</p>
+     */
+    private static final java.util.Map<String, String> BANK_CODE_MAP = java.util.Map.ofEntries(
+            java.util.Map.entry("工商银行", "1001"),
+            java.util.Map.entry("农业银行", "1002"),
+            java.util.Map.entry("中国银行", "1003"),
+            java.util.Map.entry("建设银行", "1004"),
+            java.util.Map.entry("招商银行", "1005"),
+            java.util.Map.entry("邮政储蓄银行", "1006"),
+            java.util.Map.entry("邮储银行", "1006"),
+            java.util.Map.entry("交通银行", "1007"),
+            java.util.Map.entry("中信银行", "1008"),
+            java.util.Map.entry("光大银行", "1009"),
+            java.util.Map.entry("民生银行", "1010"),
+            java.util.Map.entry("兴业银行", "1011"),
+            java.util.Map.entry("浦发银行", "1012"),
+            java.util.Map.entry("平安银行", "1013"),
+            java.util.Map.entry("华夏银行", "1014"),
+            java.util.Map.entry("广发银行", "1015"),
+            java.util.Map.entry("北京银行", "1016"),
+            java.util.Map.entry("上海银行", "1017"));
+
     private final MerchantApplymentRepository applymentRepository;
     private final MerchantRepository merchantRepository;
     private final MerchantWechatAccountRepository wechatAccountRepository;
@@ -69,6 +96,7 @@ public class EcommerceApplymentService {
     private final WechatPayProperties wechatPayProperties;
     private final WechatCertManager certManager;
     private final SnowflakeIdGenerator idGenerator;
+    private final com.wuye.points.util.RoleGuard roleGuard;
 
     // ---------------------------------------------------------------------
     // 商家端
@@ -320,7 +348,7 @@ public class EcommerceApplymentService {
                 .idCardNumberEnc(a.getIdCardNumberEnc())
                 .owner(true)
                 .bankAccountType(a.getBankAccountType())
-                .accountBank("") // 占位：微信银行编号（account_bank）需按微信最新银行列表联调对齐
+                .accountBank(resolveBankCode(a.getBankName()))
                 .bankName(a.getBankName())
                 .accountNameEnc(a.getBankAccountNameEnc())
                 .accountNumberEnc(a.getBankAccountNumberEnc())
@@ -336,6 +364,32 @@ public class EcommerceApplymentService {
             return "SUBJECT_TYPE_MICRO";
         }
         return "SUBJECT_TYPE_INDIVIDUAL";
+    }
+
+    /**
+     * 解析微信进件银行编号（account_bank）：先精确匹配，再按名称包含匹配
+     * （兼容「中国工商银行股份有限公司xx支行」类全称）。
+     * 未收录银行 fail-closed 抛错，提示运营补充映射——避免提交空值被微信拒绝后原因不可见。
+     */
+    private static String resolveBankCode(String bankName) {
+        if (!StringUtils.hasText(bankName)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "请先填写开户银行名称（进件资料）");
+        }
+        String key = bankName.trim().replace(" ", "").replace("　", "");
+        String code = BANK_CODE_MAP.get(key);
+        if (code == null) {
+            for (java.util.Map.Entry<String, String> entry : BANK_CODE_MAP.entrySet()) {
+                if (key.contains(entry.getKey())) {
+                    code = entry.getValue();
+                    break;
+                }
+            }
+        }
+        if (code == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "暂不支持的开户银行「" + bankName + "」：请联系运营在银行编号映射中补充后再提交进件");
+        }
+        return code;
     }
 
     private void validateRequest(ApplymentSubmitRequest request) {
@@ -367,8 +421,11 @@ public class EcommerceApplymentService {
     }
 
     private Merchant getMerchantForCurrentUser(String merchantId) {
-        String role = UserContext.currentRole();
-        if ("merchant".equals(role) || "activity_leader".equals(role) || "technician".equals(role)) {
+        // 2026-10-21 组长标签化：组长身份由 activity_leader_identities 表判定（role 归一为 resident）
+        String role = roleGuard.normalizeRole(UserContext.currentRole());
+        boolean activityLeader = "resident".equals(role) && roleGuard.isActivityLeader();
+        if ("merchant".equals(role) || "activity_leader".equals(role)
+                || "technician".equals(role) || activityLeader) {
             Merchant owned = resolveOwnedMerchant();
             if (!owned.getId().equals(merchantId)) {
                 throw new BizException(ErrorCode.PERMISSION_DENIED);

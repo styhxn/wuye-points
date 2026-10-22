@@ -70,7 +70,7 @@ public class CoordinatorWorkbenchService {
 
     @Transactional(readOnly = true)
     public CoordinatorMyResponse getMyInfo() {
-        roleGuard.requireAnyRole("coordinator");
+        roleGuard.requireAnyRole("resident");
 
         String userId = UserContext.currentUserId();
         String propertyCompanyId = UserContext.currentPropertyCompanyId();
@@ -113,7 +113,7 @@ public class CoordinatorWorkbenchService {
 
     @Transactional
     public SectorLeaderCreatedResponse addSectorLeader(String coordinatorId, AddSectorLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin");
         adminSupport.validateIdPrefix(coordinatorId, "coo_");
         adminSupport.validateIdPrefix(request.getResidentId(), "res_");
         String sector = SectorCatalog.normalizeOrThrow(request.getSector());
@@ -159,7 +159,7 @@ public class CoordinatorWorkbenchService {
 
     @Transactional
     public IndividualLeaderCreatedResponse addIndividualLeader(String coordinatorId, AddIndividualLeaderRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin");
         adminSupport.validateIdPrefix(coordinatorId, "coo_");
         adminSupport.validateIdPrefix(request.getResidentId(), "res_");
         adminSupport.validateIdPrefix(request.getSectorLeaderId(), "sl_");
@@ -220,7 +220,7 @@ public class CoordinatorWorkbenchService {
 
     @Transactional
     public CoordinatorMerchantCreatedResponse addMerchant(String coordinatorId, AddCoordinatorMerchantRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin");
         adminSupport.validateIdPrefix(coordinatorId, "coo_");
         adminSupport.validateIdPrefix(request.getPlatformMerchantId(), "pm_");
 
@@ -289,7 +289,7 @@ public class CoordinatorWorkbenchService {
 
     @Transactional
     public MerchantFreezeResponse freezeMerchant(String coordinatorId, String merchantId, FreezeMerchantRequest request) {
-        roleGuard.requireAnyRole("coordinator", "property_admin");
+        roleGuard.requireAnyRoleOrCoordinatorIdentity("coordinator", "property_admin");
         adminSupport.validateIdPrefix(coordinatorId, "coo_");
         adminSupport.validateIdPrefix(merchantId, "mch_");
 

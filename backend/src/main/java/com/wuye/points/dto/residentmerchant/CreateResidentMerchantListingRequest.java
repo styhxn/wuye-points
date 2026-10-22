@@ -17,5 +17,8 @@ public class CreateResidentMerchantListingRequest {
     @NotNull
     private BigDecimal retailPrice;
 
+    @Schema(description = "拿货件数（从一级代理库存一次性扣减，默认1，须≥1）")
+    private Integer quantity;
+
     private Boolean enabled;
 }
