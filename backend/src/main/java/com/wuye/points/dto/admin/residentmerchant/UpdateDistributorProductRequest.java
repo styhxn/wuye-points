@@ -37,6 +37,9 @@ public class UpdateDistributorProductRequest {
     @Schema(description = "服务区间 city(本市)/community(小区)")
     private String serviceScope;
 
+    @Schema(description = "供给范围 company=本物业公司/platform=全平台（仅管理端可设置）", example = "company")
+    private String supplyScope;
+
     @Schema(description = "是否下架（status=inactive），传 false 恢复上架")
     private Boolean inactive;
 }

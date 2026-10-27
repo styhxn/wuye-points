@@ -41,6 +41,10 @@ public class PropertyCompanyConverter {
                 .withdrawalFeeRate(company.getWithdrawalFeeRate())
                 .pointToFeeRate(company.getPointToFeeRate())
                 .twoYearClearEnabled(company.getTwoYearClearEnabled())
+                .pointTransferEnabled(company.getPointTransferEnabled() != null
+                        ? company.getPointTransferEnabled() : false)
+                .pointTransferMinYears(company.getPointTransferMinYears() != null
+                        ? company.getPointTransferMinYears() : 5)
                 .neighborDailyContactLimit(company.getNeighborDailyContactLimit())
                 .build();
     }
@@ -93,6 +97,10 @@ public class PropertyCompanyConverter {
                 .withdrawalFeeRate(company.getWithdrawalFeeRate())
                 .pointToFeeRate(company.getPointToFeeRate())
                 .twoYearClearEnabled(company.getTwoYearClearEnabled())
+                .pointTransferEnabled(company.getPointTransferEnabled() != null
+                        ? company.getPointTransferEnabled() : false)
+                .pointTransferMinYears(company.getPointTransferMinYears() != null
+                        ? company.getPointTransferMinYears() : 5)
                 .neighborDailyContactLimit(company.getNeighborDailyContactLimit())
                 .communities(communities)
                 .adminAccounts(adminAccounts)

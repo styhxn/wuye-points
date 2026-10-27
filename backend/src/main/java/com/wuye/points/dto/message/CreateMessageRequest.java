@@ -30,4 +30,10 @@ public class CreateMessageRequest {
 
     @Schema(description = "群组ID", example = "grp_xyz789")
     private String groupId;
+
+    @Schema(description = "关联商品ID（商品详情联系店主时传入）", example = "prd_xxx")
+    private String relatedProductId;
+
+    @Schema(description = "关联业主上架ID（业主小店商品联系店主时传入）", example = "rml_xxx")
+    private String relatedListingId;
 }

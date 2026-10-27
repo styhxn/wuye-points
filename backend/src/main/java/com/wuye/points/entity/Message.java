@@ -53,6 +53,14 @@ public class Message extends BaseEntity {
     @Column(name = "related_task_id", length = 32)
     private String relatedTaskId;
 
+    /** 关联商品ID（商品详情「联系店主」会话上下文） */
+    @Column(name = "related_product_id", length = 32)
+    private String relatedProductId;
+
+    /** 关联业主上架ID（业主小店商品「联系店主」会话上下文） */
+    @Column(name = "related_listing_id", length = 32)
+    private String relatedListingId;
+
     /** 发送方身份标识 */
     @Column(name = "sender_identity", length = 50)
     private String senderIdentity;

@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -24,6 +25,13 @@ public interface BuildingLeaderRepository extends JpaRepository<BuildingLeader, 
 
     /** 校验某小区+单元是否已有启用中的楼长 */
     boolean existsByCommunityIdAndUnitAndStatus(String communityId, String unit, String status);
+
+    /** 某住户名下全部楼长记录（统一收益聚合用） */
+    List<BuildingLeader> findByResidentId(String residentId);
+
+    /** 批量判定会话对方是否楼长（会话列表置顶标识用） */
+    List<BuildingLeader> findByResidentIdInAndPropertyCompanyIdAndStatus(
+            java.util.Collection<String> residentIds, String propertyCompanyId, String status);
 
     /** 校验某住户是否已是启用中的楼长 */
     boolean existsByResidentIdAndPropertyCompanyIdAndStatus(

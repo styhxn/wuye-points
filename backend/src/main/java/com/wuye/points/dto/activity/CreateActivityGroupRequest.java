@@ -31,4 +31,12 @@ public class CreateActivityGroupRequest {
     @Schema(description = "年费", example = "300.00")
     @DecimalMin(value = "0.00", message = "yearlyFee不能为负数")
     private BigDecimal yearlyFee;
+
+    @Schema(description = "按季度收费金额")
+    @DecimalMin(value = "0.00", message = "quarterlyFee不能为负数")
+    private BigDecimal quarterlyFee;
+
+    @Schema(description = "按次收费金额")
+    @DecimalMin(value = "0.00", message = "perTimeFee不能为负数")
+    private BigDecimal perTimeFee;
 }

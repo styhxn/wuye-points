@@ -823,13 +823,14 @@ public class CommunityServiceService {
             BigDecimal amount,
             PaymentBreakdown breakdown,
             String remark) {
+        boolean useFamilyPool = StringUtils.hasText(resident.getFamilyId());
         if (breakdown.pointUsed() > 0) {
             pointService.spendPoints(
-                    resident, breakdown.pointUsed(), "manual", referenceId, remark, null, false);
+                    resident, breakdown.pointUsed(), "manual", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
             propertyCoinService.spendCoins(
-                    resident, breakdown.coinUsed(), "manual", referenceId, remark, null, false);
+                    resident, breakdown.coinUsed(), "manual", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
             // 微信支付由前端完成，后端先创建订单

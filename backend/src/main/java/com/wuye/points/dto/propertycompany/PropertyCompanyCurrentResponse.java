@@ -50,6 +50,12 @@ public class PropertyCompanyCurrentResponse {
     @Schema(description = "两年清零是否启用", example = "false")
     private Boolean twoYearClearEnabled;
 
+    @Schema(description = "是否允许积分转物业抵扣物业费（默认 false）", example = "false")
+    private Boolean pointTransferEnabled;
+
+    @Schema(description = "积分转物业所需最低入住年限（年，默认 5）", example = "5")
+    private Integer pointTransferMinYears;
+
     @Schema(description = "邻居每日联系上限", example = "10")
     private Integer neighborDailyContactLimit;
 

@@ -16,6 +16,8 @@ public class PointConverter {
                 .pointType(record.getPointType())
                 .amount(record.getAmount())
                 .balance(record.getBalance())
+                .familyAmount(record.getFamilyAmount())
+                .familyBalance(record.getFamilyBalance())
                 .source(record.getSource())
                 .sourceId(record.getSourceId())
                 .description(record.getDescription())

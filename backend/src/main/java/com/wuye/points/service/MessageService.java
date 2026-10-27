@@ -69,6 +69,7 @@ public class MessageService {
     private final NeighborContactLimitRepository neighborContactLimitRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
+    private final com.wuye.points.repository.BuildingLeaderRepository buildingLeaderRepository;
     private final MessageConverter messageConverter;
     private final RoleGuard roleGuard;
     private final LeaderIdentityGuard leaderIdentityGuard;
@@ -188,6 +189,8 @@ public class MessageService {
                 request.getChatType(),
                 request.getGroupId(),
                 propertyCompanyId);
+        message.setRelatedProductId(request.getRelatedProductId());
+        message.setRelatedListingId(request.getRelatedListingId());
 
         messageRepository.save(message);
         return messageConverter.toDetail(message, sender, receiver);
@@ -296,6 +299,8 @@ public class MessageService {
                 "private",
                 null,
                 sender.getPropertyCompanyId());
+        message.setRelatedProductId(request.getRelatedProductId());
+        message.setRelatedListingId(request.getRelatedListingId());
         messageRepository.save(message);
 
         int remaining = Math.max(dailyLimit - limitRecord.getContactCount(), 0);
@@ -329,6 +334,12 @@ public class MessageService {
 
         List<Resident> neighbors = residentRepository
                 .findByPropertyCompanyIdAndStatus(propertyCompanyId, "active");
+        // v8.21：楼长/单元负责人置顶（与平台管理员同层级展示），其余保持原有顺序
+        Set<String> unitLeaderIds = buildingLeaderRepository
+                .findByResidentIdInAndPropertyCompanyIdAndStatus(
+                        neighbors.stream().map(Resident::getId).toList(), propertyCompanyId, "active")
+                .stream().map(com.wuye.points.entity.BuildingLeader::getResidentId)
+                .collect(Collectors.toSet());
 
         List<NeighborSearchResponse> results = neighbors.stream()
                 .filter(r -> !r.getId().equals(currentResident.getId()))
@@ -361,7 +372,12 @@ public class MessageService {
                         .room(r.getRoom())
                         .communityName(null)
                         .chatStatus("not_chatted")
+                        .isBuildingLeader(unitLeaderIds.contains(r.getId()))
+                        .isUnitLeader(unitLeaderIds.contains(r.getId()))
                         .build())
+                .sorted((a, b) -> Boolean.compare(
+                        Boolean.TRUE.equals(b.getIsBuildingLeader()),
+                        Boolean.TRUE.equals(a.getIsBuildingLeader())))
                 .toList();
 
         int total = results.size();
@@ -519,6 +535,16 @@ public class MessageService {
         Map<String, Resident> residentMap = residentRepository.findAllById(latestByPeer.keySet()).stream()
                 .collect(Collectors.toMap(Resident::getId, Function.identity(), (a, b) -> a));
 
+        // v8.21：会话列表标记对方是否单元楼长，供前端置顶（楼长 role 仍为 resident）
+        Set<String> buildingLeaderIds = propertyCompanyId == null || residentMap.isEmpty()
+                ? Set.of()
+                : buildingLeaderRepository
+                        .findByResidentIdInAndPropertyCompanyIdAndStatus(
+                                residentMap.keySet(), propertyCompanyId, "active")
+                        .stream()
+                        .map(com.wuye.points.entity.BuildingLeader::getResidentId)
+                        .collect(Collectors.toSet());
+
         List<ConversationItemResponse> all = latestByPeer.entrySet().stream()
                 .map(entry -> {
                     String peerId = entry.getKey();
@@ -527,6 +553,7 @@ public class MessageService {
                     Resident peer = peerId.startsWith("res_") ? residentMap.get(peerId) : null;
                     String name = peer != null ? maskName(peer.getName()) : null;
                     boolean fromMe = currentUserId.equals(m.getFromId());
+                    boolean leader = buildingLeaderIds.contains(peerId);
                     return ConversationItemResponse.builder()
                             .peerId(peerId)
                             .peerName(name)
@@ -540,6 +567,9 @@ public class MessageService {
                             .lastMessageTime(DateTimeUtil.toIsoUtc(m.getCreatedAt()))
                             .lastMessageFromMe(fromMe)
                             .unreadCount(unreadByPeer.getOrDefault(peerId, 0L).intValue())
+                            .isBuildingLeader(leader)
+                            .isUnitLeader(leader)
+                            .leaderRole(leader ? "building_leader" : "")
                             .build();
                 })
                 .filter(Objects::nonNull)

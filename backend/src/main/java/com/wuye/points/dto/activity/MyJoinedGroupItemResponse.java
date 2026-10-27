@@ -1,6 +1,7 @@
 package com.wuye.points.dto.activity;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.DecimalMin;
 import lombok.Builder;
 import lombok.Data;
 
@@ -34,6 +35,14 @@ public class MyJoinedGroupItemResponse {
 
     @Schema(description = "年费金额", example = "100.00")
     private BigDecimal yearlyFee;
+
+    @Schema(description = "按季度收费金额")
+    @DecimalMin(value = "0.00", message = "quarterlyFee不能为负数")
+    private BigDecimal quarterlyFee;
+
+    @Schema(description = "按次收费金额")
+    @DecimalMin(value = "0.00", message = "perTimeFee不能为负数")
+    private BigDecimal perTimeFee;
 
     @Schema(description = "组长ID", example = "user_001")
     private String leaderId;

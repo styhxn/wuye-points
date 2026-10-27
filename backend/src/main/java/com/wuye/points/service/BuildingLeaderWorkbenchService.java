@@ -9,9 +9,7 @@ import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CommunityRepository;
-import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.ResidentRepository;
-import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.util.RoleGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -26,14 +24,11 @@ import java.math.BigDecimal;
 @RequiredArgsConstructor
 public class BuildingLeaderWorkbenchService {
 
-    private static final String WITHDRAWAL_TYPE_BUILDING_LEADER = "building_leader";
-
     private final BuildingLeaderRepository buildingLeaderRepository;
-    private final DistributionRecordRepository distributionRecordRepository;
-    private final WithdrawalRecordRepository withdrawalRecordRepository;
     private final CommunityRepository communityRepository;
     private final ResidentRepository residentRepository;
     private final RoleGuard roleGuard;
+    private final UnifiedEarningsService unifiedEarningsService;
 
     @Transactional(readOnly = true)
     public BuildingLeaderMyResponse getMyInfo() {
@@ -43,15 +38,13 @@ public class BuildingLeaderWorkbenchService {
                         UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
                 .orElseThrow(() -> new BizException(ErrorCode.BUILDING_LEADER_NOT_FOUND, "当前用户不是楼长"));
 
-        BigDecimal totalEarning = defaultDecimal(distributionRecordRepository
-                .sumBuildingLeaderShareByBuildingLeaderId(leader.getId()));
-        BigDecimal withdrawn = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(leader.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, "completed"));
-        BigDecimal pending = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(leader.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, "pending"))
-                .add(defaultDecimal(withdrawalRecordRepository
-                        .sumAmountByApplicant(leader.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, "approved")));
-        BigDecimal withdrawable = totalEarning.subtract(withdrawn).subtract(pending).max(BigDecimal.ZERO);
+        // v8.21：楼长收益并入账号统一收益账户（楼长分成 + 业主卖货 + 名下商家），不再单列
+        UnifiedEarningsService.UnifiedEarnings unified =
+                unifiedEarningsService.calc(leader.getResidentId());
+        BigDecimal totalEarning = unified.totalEarning();
+        BigDecimal withdrawn = unified.withdrawnAmount();
+        BigDecimal pending = unified.pendingAmount();
+        BigDecimal withdrawable = unified.withdrawableAmount();
 
         Resident resident = residentRepository.findById(leader.getResidentId()).orElse(null);
         Community community = leader.getCommunityId() != null
@@ -72,9 +65,5 @@ public class BuildingLeaderWorkbenchService {
                 .pendingAmount(pending)
                 .withdrawableAmount(withdrawable)
                 .build();
-    }
-
-    private BigDecimal defaultDecimal(BigDecimal value) {
-        return value != null ? value : BigDecimal.ZERO;
     }
 }

@@ -41,7 +41,9 @@ public class WechatMpService {
     private final AtomicReference<CachedAccessToken> accessTokenCache = new AtomicReference<>();
 
     public WechatSession code2Session(String code) {
-        if (skipApi || isDevCode(code)) {
+        // dev_ 伪造登录只在显式 skip-api=true 时生效（dev 配置或测试服环境变量）；
+        // 生产默认 false，绝不能凭 code 前缀绕过微信鉴权。
+        if (skipApi) {
             return WechatSession.builder()
                     .openid("dev_openid_" + sanitizeDevSuffix(code))
                     .sessionKey("dev_session_key")
@@ -63,7 +65,7 @@ public class WechatMpService {
     }
 
     public String getPhoneNumber(String code) {
-        if (skipApi || isDevPhoneCode(code)) {
+        if (skipApi) {
             return extractDevPhone(code);
         }
 
@@ -99,14 +101,6 @@ public class WechatMpService {
         int expiresIn = json.getInt("expires_in", 7200);
         accessTokenCache.set(new CachedAccessToken(token, System.currentTimeMillis() + (expiresIn - 300L) * 1000));
         return token;
-    }
-
-    private boolean isDevCode(String code) {
-        return code != null && code.startsWith("dev_");
-    }
-
-    private boolean isDevPhoneCode(String code) {
-        return code != null && code.startsWith("dev_phone_");
     }
 
     private String sanitizeDevSuffix(String code) {

@@ -99,7 +99,10 @@ public class PointController {
     @Operation(summary = "家庭内积分转移", description = "家庭内积分转移，需登录，角色：resident")
     @PostMapping("/transfer")
     public ApiResponse<TransferPointResponse> transfer(@Valid @RequestBody TransferPointRequest request) {
-        return ApiResponse.success(pointService.transfer(request));
+        // v8.21：积分用途收敛——仅可转物业抵扣物业费，家庭内转赠已下线
+        throw new com.wuye.points.exception.BizException(
+                com.wuye.points.exception.ErrorCode.PARAM_INVALID,
+                "积分仅可用于抵扣物业费，暂不支持家庭内转赠");
     }
 
     /**

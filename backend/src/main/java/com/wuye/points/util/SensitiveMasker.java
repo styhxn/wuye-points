@@ -25,6 +25,13 @@ public final class SensitiveMasker {
                     + "|secret|appSecret|apiKey|accessToken|apiV3Key|privateKey|authorization"
                     + "|accountNo|accountNumber|cardNo|bankCard|settleCardNo|idCard|idNumber)\"\\s*:\\s*\"([^\"]*)\"");
 
+    /** 无引号 key=value / key: value（DTO toString、日志 key-value 场景） */
+    private static final Pattern SENSITIVE_KEY_VALUE = Pattern.compile(
+            "(?i)(password|passwd|oldPassword|newPassword|token|accessToken|refreshToken"
+                    + "|secret|appSecret|apiKey|apiV3Key|privateKey|authorization"
+                    + "|accountNo|accountNumber|cardNo|bankCard|settleCardNo|idCard|idNumber)"
+                    + "\\s*[=:]\\s*([^,\\s;]+)");
+
     /** 中国大陆手机号 */
     private static final Pattern PHONE = Pattern.compile("(?<!\\d)(1[3-9]\\d{9})(?!\\d)");
 
@@ -105,7 +112,10 @@ public final class SensitiveMasker {
             m.appendReplacement(sb, Matcher.quoteReplacement("\"" + m.group(1) + "\":\"" + replacement + "\""));
         }
         m.appendTail(sb);
-        return sb.toString();
+        // DTO toString() 常见形式：AdminLoginRequest(phone=138..., password=xxx)
+        // 该分支只处理无引号键值，避免与上面的 JSON 分支重复。
+        return SENSITIVE_KEY_VALUE.matcher(sb.toString())
+                .replaceAll("$1=******");
     }
 
     private static String maskByPattern(String text) {

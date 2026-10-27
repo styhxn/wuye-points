@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一张图看懂 · 物业积分系统角色流程</title>
+<style>
+  :root{
+    --bg:#f6f8f5;--surface:#ffffff;--ink:#1d2b26;--ink-soft:#42524c;--muted:#6d7b75;
+    --line:#e2e7e2;--line-strong:#cfd8d2;
+    --blue:#2f6fb0;--blue-soft:#eaf3fb;
+    --orange:#b9741c;--orange-soft:#fdf2e2;
+    --green:#2c7a5b;--green-soft:#e8f4ee;
+    --purple:#6b5aa6;--purple-soft:#f0edf9;
+    --pink:#b5526b;--pink-soft:#fbecef;
+    --yellow:#a8861f;--yellow-soft:#fbf6df;
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --serif:"Songti SC","Noto Serif SC",Georgia,serif;
+    --shadow:0 1px 0 rgba(29,43,38,.03),0 18px 40px -34px rgba(29,43,38,.5);
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  a{color:var(--green)}
+  .wrap{width:min(1120px,calc(100% - 48px));margin:0 auto}
+  .top{position:sticky;top:0;z-index:30;background:rgba(246,248,245,.96);border-bottom:1px solid var(--line);backdrop-filter:blur(8px)}
+  .top-inner{min-height:58px;display:flex;align-items:center;gap:16px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:14px;white-space:nowrap}
+  .brand b{display:grid;place-items:center;width:27px;height:27px;border:1px solid var(--ink);border-radius:7px;font-family:var(--serif);font-size:14px}
+  .top-nav{display:flex;gap:4px;margin-left:auto;overflow-x:auto;scrollbar-width:none}
+  .top-nav::-webkit-scrollbar{display:none}
+  .top-nav a{font-size:12px;color:var(--muted);text-decoration:none;padding:6px 9px;border-radius:7px;white-space:nowrap}
+  .top-nav a:hover{background:var(--surface);color:var(--ink)}
+  .btn{border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:9px;padding:7px 11px;font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .btn:hover{border-color:var(--ink)}
+  .btn.dark{background:var(--ink);border-color:var(--ink);color:#fff}
+
+  .hero{padding:52px 0 26px}
+  .kicker{color:var(--green);font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+  h1{margin:12px 0 14px;font-family:var(--serif);font-size:clamp(34px,5vw,56px);line-height:1.1;letter-spacing:-.03em;font-weight:600}
+  .lead{max-width:820px;margin:0;color:var(--ink-soft);font-size:17px;line-height:1.9}
+  .lead strong{color:var(--ink)}
+  .legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .tag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--ink-soft)}
+  .tag i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .tag.blue i{background:var(--blue)}.tag.orange i{background:var(--orange)}
+  .tag.green i{background:var(--green)}.tag.purple i{background:var(--purple)}
+  .tag.pink i{background:var(--pink)}.tag.yellow i{background:var(--yellow)}
+
+  section{scroll-margin-top:78px;padding:26px 0 8px}
+  .sec-head{margin-bottom:16px}
+  .sec-head h2{margin:0 0 4px;font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.02em}
+  .sec-head p{margin:0;color:var(--muted);font-size:14px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:14px}
+
+  /* 四层图 */
+  .layers{display:grid;gap:10px}
+  .layer{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface)}
+  .layer .badge{flex:0 0 auto;display:grid;place-items:center;width:44px;height:44px;border-radius:11px;font-size:12px;font-weight:800;color:#fff}
+  .layer .txt b{display:block;font-size:15px}
+  .layer .txt span{display:block;color:var(--muted);font-size:12.5px;line-height:1.6}
+  .layer.purple{background:var(--purple-soft);border-color:#ded8f0}.layer.purple .badge{background:var(--purple)}
+  .layer.green{background:var(--green-soft);border-color:#cfe6da}.layer.green .badge{background:var(--green)}
+  .layer.blue{background:var(--blue-soft);border-color:#d3e4f4}.layer.blue .badge{background:var(--blue)}
+  .layer.orange{background:var(--orange-soft);border-color:#f1dfc3}.layer.orange .badge{background:var(--orange)}
+  .down{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;padding-left:58px}
+  .down b{font-family:var(--serif);font-size:16px;color:var(--line-strong)}
+  .peer{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:stretch;margin-top:10px}
+  .peer .switch{display:grid;place-items:center;color:var(--muted);font-size:18px}
+  .peer .hint{grid-column:1 / -1;color:var(--muted);font-size:12px;text-align:center;margin-top:2px}
+
+  /* 流程条 */
+  .flow{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .step{flex:1 1 130px;min-width:130px;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:11px 12px;position:relative}
+  .step b{display:flex;align-items:center;gap:7px;font-size:13.5px;margin-bottom:3px}
+  .step b em{display:inline-grid;place-items:center;flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;font-style:normal;font-size:10.5px;font-family:var(--sans)}
+  .step span{display:block;color:var(--muted);font-size:11.8px;line-height:1.55}
+  .arrow{display:grid;place-items:center;flex:0 0 auto;color:var(--line-strong);font-size:16px;font-family:var(--serif);padding:0 1px}
+  .flow.blue .step{border-color:#d3e4f4;background:var(--blue-soft)}
+  .flow.blue .step b em{background:var(--blue)}
+  .flow.orange .step{border-color:#f1dfc3;background:var(--orange-soft)}
+  .flow.orange .step b em{background:var(--orange)}
+  .flow.green .step{border-color:#cfe6da;background:var(--green-soft)}
+  .flow.green .step b em{background:var(--green)}
+  .flow.purple .step{border-color:#ded8f0;background:var(--purple-soft)}
+  .flow.purple .step b em{background:var(--purple)}
+
+  .branch{margin-top:10px;border-left:3px solid var(--pink);background:var(--pink-soft);border-radius:0 9px 9px 0;padding:9px 12px;font-size:12.5px;color:var(--ink-soft);line-height:1.7}
+  .branch b{color:var(--pink)}
+  .note{margin-top:10px;border-left:3px solid var(--line-strong);background:#fafbf9;border-radius:0 9px 9px 0;padding:9px 12px;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .note b{color:var(--ink-soft)}
+  .note.warn{border-left-color:var(--orange);background:var(--orange-soft);color:#6b4a1c}
+  .note.warn b{color:var(--orange)}
+  .note.stop{border-left-color:var(--pink);background:var(--pink-soft);color:#743447}
+  .note.stop b{color:var(--pink)}
+
+  .role-title{display:flex;align-items:center;gap:10px;margin:0 0 4px}
+  .role-title .dot{width:10px;height:10px;border-radius:50%}
+  .role-title h3{margin:0;font-size:20px;font-family:var(--serif);font-weight:600}
+  .role-title .who{color:var(--muted);font-size:12px;margin-left:auto;border:1px solid var(--line);border-radius:999px;padding:3px 9px;background:var(--surface)}
+  .role-desc{color:var(--muted);font-size:13px;margin:0 0 12px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid2 .card{margin:0}
+
+  /* 身份卡 */
+  .identity-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .id-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+  .id-head{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .id-head b{font-size:16px}
+  .id-head span{margin-left:auto;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 8px}
+  .mini{display:grid;gap:4px;margin:8px 0 10px}
+  .mini div{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--ink-soft);line-height:1.6}
+  .mini i{flex:0 0 auto;display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--line);color:var(--ink-soft);font-style:normal;font-size:10px;margin-top:2px}
+  .id-money{font-size:12.3px;color:var(--ink-soft);background:var(--yellow-soft);border:1px solid #efe3b9;border-radius:8px;padding:7px 9px;line-height:1.6}
+  .id-money b{color:var(--yellow)}
+  .id-warn{margin-top:7px;font-size:12px;color:var(--pink);line-height:1.6}
+  .id-warn b{font-weight:800}
+
+  /* 钱 */
+  .money-hero{display:grid;gap:8px;margin:14px 0}
+  .m-box{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:var(--surface);display:flex;align-items:center;gap:12px}
+  .m-box .n{flex:0 0 auto;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;font-weight:800}
+  .m-box b{display:block;font-size:14px}
+  .m-box span{display:block;color:var(--muted);font-size:12px;line-height:1.55}
+  .m-box.pink{background:var(--pink-soft);border-color:#eed3da}.m-box.pink .n{background:var(--pink)}
+  .m-box.orange{background:var(--orange-soft);border-color:#f1dfc3}.m-box.orange .n{background:var(--orange)}
+  .m-box.green{background:var(--green-soft);border-color:#cfe6da}.m-box.green .n{background:var(--green)}
+  .m-box.blue{background:var(--blue-soft);border-color:#d3e4f4}.m-box.blue .n{background:var(--blue)}
+  .m-arrow{text-align:center;color:var(--line-strong);font-size:18px;line-height:1}
+
+  .split{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+  .split div{border:1px solid var(--line);border-radius:9px;background:var(--surface);padding:8px 9px;font-size:12px;line-height:1.6}
+  .split div b{display:block;font-size:13px}
+  .split div span{color:var(--muted);font-size:11.5px}
+
+  .mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}
+  .mode{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px}
+  .mode .pill{display:inline-block;border-radius:999px;font-size:10.5px;font-weight:800;padding:2px 8px;margin-bottom:7px}
+  .mode.now .pill{background:var(--green-soft);color:var(--green)}
+  .mode.a .pill{background:var(--blue-soft);color:var(--blue)}
+  .mode.b .pill{background:var(--purple-soft);color:var(--purple)}
+  .mode b{display:block;font-size:14px;margin-bottom:4px}
+  .mode p{margin:0;color:var(--muted);font-size:12.3px;line-height:1.65}
+
+  /* 提醒 */
+  .warn-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .warn-card{border:1px solid #eed3da;background:var(--pink-soft);border-radius:11px;padding:12px 14px}
+  .warn-card b{display:block;color:#743447;font-size:13.5px;margin-bottom:3px}
+  .warn-card span{display:block;color:#7d4b59;font-size:12.3px;line-height:1.65}
+
+  .three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+  .three .card{margin:0;display:flex;gap:11px;align-items:flex-start}
+  .three .num{flex:0 0 auto;display:grid;place-items:center;width:32px;height:32px;border-radius:50%;background:var(--ink);color:#fff;font-weight:800;font-size:13px}
+  .three b{display:block;font-size:15px;margin-bottom:3px}
+  .three p{margin:0;color:var(--muted);font-size:12.8px;line-height:1.65}
+
+  .backlink{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:26px 0 0;padding:14px 16px;border:1px dashed var(--line-strong);border-radius:12px;background:var(--surface);font-size:12.5px;color:var(--muted)}
+  .backlink a{font-weight:700;text-decoration:none}
+  footer{padding:28px 0 44px;color:var(--muted);font-size:11.5px;line-height:1.8}
+
+  @media(max-width:900px){
+    .grid2,.identity-grid{grid-template-columns:1fr}
+    .split,.mode-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .three{grid-template-columns:1fr}
+  }
+  @media(max-width:640px){
+    .wrap{width:min(100% - 28px,1120px)}
+    .top-nav{display:none}
+    .hero{padding-top:34px}
+    .flow{flex-direction:column}
+    .arrow{transform:rotate(90deg);padding:2px 0}
+    .down{padding-left:0}
+    .peer{grid-template-columns:1fr}
+    .peer .switch{transform:rotate(90deg);height:22px}
+    .split,.mode-grid,.warn-grid{grid-template-columns:1fr}
+    .role-title .who{margin-left:0}
+    h1{font-size:34px}
+  }
+  @media print{
+    @page{margin:14mm}
+    body{background:#fff;font-size:10.5pt}
+    .top,.btn{display:none!important}
+    .card,.id-card,.mode,.warn-card{box-shadow:none;break-inside:avoid}
+    section{break-inside:auto;padding:14px 0}
+    .hero{padding:0 0 12px}
+    a{color:inherit;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <div class="brand"><b>图</b>一张图看懂</div>
+    <nav class="top-nav" aria-label="页面目录">
+      <a href="#all">全局</a>
+      <a href="#order">订单</a>
+      <a href="#resident">住户</a>
+      <a href="#merchant">商家</a>
+      <a href="#property">物业</a>
+      <a href="#platform">平台</a>
+      <a href="#identity">身份</a>
+      <a href="#money">钱</a>
+      <a href="#todo">注意</a>
+    </nav>
+    <button class="btn" type="button" id="printBtn">打印 / 存 PDF</button>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <div class="kicker">给非技术同事的版本</div>
+    <h1>一张图，看懂整个系统</h1>
+    <p class="lead">
+      不管系统里有多少角色，其实只有四件事：<strong>住户花钱、商家卖货、物业管事、平台定规则</strong>。
+      其他的“楼长、经理、组长、店主、代理”，都是住户身上的<strong>第二个身份</strong>，订单完成后按约定分钱。
+    </p>
+    <div class="legend">
+      <span class="tag blue"><i></i>住户 / 业主</span>
+      <span class="tag orange"><i></i>商家 / 骑手 / 技工</span>
+      <span class="tag green"><i></i>物业</span>
+      <span class="tag purple"><i></i>平台</span>
+      <span class="tag pink"><i></i>钱和审核</span>
+      <span class="tag yellow"><i></i>额外身份</span>
+    </div>
+  </div>
+
+  <!-- 全局 -->
+  <section id="all">
+    <div class="sec-head">
+      <h2>先看全局：四层关系</h2>
+      <p>从上往下看，平台管物业，物业管小区，住户在小区里生活，商家和骑手来服务。</p>
+    </div>
+
+    <div class="card">
+      <div class="layers">
+        <div class="layer purple">
+          <div class="badge">平台</div>
+          <div class="txt"><b>定规则的人</b><span>建物业公司、定分钱比例、开关资金功能、看全平台总账。</span></div>
+        </div>
+        <div class="down"><b>↓</b> 给物业定规则、定比例</div>
+
+        <div class="layer green">
+          <div class="badge">物业</div>
+          <div class="txt"><b>管小区的人</b><span>管住户和房间、建物业费账单、审商家和身份、处理退款和提现、发公告。</span></div>
+        </div>
+        <div class="down"><b>↓</b> 服务小区、审核申请</div>
+
+        <div class="peer">
+          <div class="layer blue">
+            <div class="badge">住户</div>
+            <div class="txt"><b>花钱的人</b><span>选小区、逛商城、下单、缴物业费、报事、发帖、看公告。</span></div>
+          </div>
+          <div class="switch">⇄</div>
+          <div class="layer orange">
+            <div class="badge">服务</div>
+            <div class="txt"><b>干活的人</b><span>商家卖货，骑手送货，技工上门做家政和维修。</span></div>
+          </div>
+          <div class="hint">住户下单付钱，商家/骑手/技工把东西和服务送到住户手里。</div>
+        </div>
+      </div>
+
+      <div class="note">
+        <b>那“楼长、经理、统筹、板块、个体、组长、店主、代理”是什么？</b>
+        他们不是另一套 App，也不是独立账号；他们首先是住户，然后身上多了一个身份。订单完成后，系统按这个身份的比例，把物业那部分钱再分给他们。
+      </div>
+    </div>
+  </section>
+
+  <!-- 订单一生 -->
+  <section id="order">
+    <div class="sec-head">
+      <h2>一个订单的一生</h2>
+      <p>住户从下单到平台分钱，中间一共 8 步。看懂这条线，就看懂了 80% 的系统。</p>
+    </div>
+
+    <div class="card">
+      <div class="flow">
+        <div class="step"><b><em>1</em>逛店</b><span>看商家、看商品、看价格</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>2</em>下单</b><span>选商品、填地址、用优惠券</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>3</em>付钱</b><span>积分 / 物业币 / 微信 / 混合</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>4</em>商家接单</b><span>确认订单、选择自己送还是平台送</span></div>
+      </div>
+      <div class="flow" style="margin-top:6px">
+        <div class="step"><b><em>5</em>送货 / 上门</b><span>商家自送、骑手配送、技工上门</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>6</em>确认收货</b><span>住户确认，或超时自动确认</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>7</em>系统分钱</b><span>按比例分给平台、物业、管理团队、骑手</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>8</em>提现</b><span>商家和各类身份申请提现，人工或微信打款</span></div>
+      </div>
+
+      <div class="branch">
+        <b>如果住户不满意：</b>住户申请退款 → 订单进入“退款中” → 物业或平台审核 → 通过就退积分/物业币/现金，驳回就继续履约。
+      </div>
+      <div class="note warn">
+        <b>注意：</b>商家自己不能点“同意退款”，退款审核在物业或平台后台。团购单商家可以“核实拒绝”，那会直接取消并退款。
+      </div>
+    </div>
+  </section>
+
+  <!-- 住户 -->
+  <section id="resident">
+    <div class="sec-head">
+      <h2>住户怎么用</h2>
+      <p>住户是整个系统的入口，也是最基础的身份。</p>
+    </div>
+
+    <div class="card">
+      <div class="role-title"><span class="dot" style="background:var(--blue)"></span><h3>住户 / 业主</h3><span class="who">所有人一开始都是住户</span></div>
+      <p class="role-desc">微信进入，选小区，之后可以买东西、缴物业费、看公告、发帖、叫服务。</p>
+
+      <div class="flow blue">
+        <div class="step"><b><em>1</em>微信进入</b><span>授权登录，第一次要选物业公司</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>2</em>选小区 / 房号</b><span>楼栋房号由物业维护，住户可申请变更</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>3</em>完善资料</b><span>姓名、头像、年龄等，可领一次性奖励</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>4</em>日常使用</b><span>逛商城、缴物业费、看公告、发帖、叫服务</span></div>
+      </div>
+      <div class="flow blue" style="margin-top:6px">
+        <div class="step"><b><em>5</em>下单付钱</b><span>积分、物业币、微信或混合支付</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>6</em>收货 / 确认</b><span>确认后订单完成，系统开始分钱</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>7</em>攒积分</b><span>消费后返积分，下次可以抵钱</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>8</em>组建家庭</b><span>一人开家，全家共用积分和物业币</span></div>
+      </div>
+
+      <div class="branch">
+        <b>退款怎么走：</b>住户申请 → 物业/平台审核 → 退积分、物业币或现金。注意：住户自助退款有一个总开关，目前默认是关着的。
+      </div>
+      <div class="note">
+        <b>家庭要特别注意：</b>创建家庭时，户主自己的积分和物业币会全部搬进“家庭池”；之后新发放的物业币进个人余额，积分仍进家庭池，消费默认先家庭后个人。成员退出时按人数平均分，不是按谁贡献多。
+      </div>
+    </div>
+  </section>
+
+  <!-- 商家 -->
+  <section id="merchant">
+    <div class="sec-head">
+      <h2>商家怎么做生意</h2>
+      <p>商家不是单独的账号，而是“住户账号 + 一个店铺”。审核通过只建店，账号要另外开。</p>
+    </div>
+
+    <div class="card">
+      <div class="role-title"><span class="dot" style="background:var(--orange)"></span><h3>商家</h3><span class="who">卖货、送货、收钱</span></div>
+      <p class="role-desc">从申请开店，到订单完成、提现，完整 8 步。</p>
+
+      <div class="flow orange">
+        <div class="step"><b><em>1</em>申请开店</b><span>填店名、类目、电话、地址、配送费</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>2</em>等审核</b><span>物业或平台审核，通过后店铺才能营业</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>3</em>上架商品</b><span>设价格、库存、会员价</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>4</em>收到订单</b><span>住户付完钱，订单进入商家后台</span></div>
+      </div>
+      <div class="flow orange" style="margin-top:6px">
+        <div class="step"><b><em>5</em>选配送方式</b><span>自己送，或交给平台骑手</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>6</em>发货 / 送达</b><span>商家确认送达，或骑手完成配送</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>7</em>订单完成</b><span>住户确认收货，或超时自动确认</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>8</em>申请提现</b><span>可提现 = 已完成订单收入 − 已提现</span></div>
+      </div>
+
+      <div class="note warn">
+        <b>商家要记住三件事：</b>① 退款不是商家审，是物业/平台审；② 被冻结后商品会下架，下单也会被拒；③ 配送费归店铺，但平台会抽一部分配送分成。
+      </div>
+    </div>
+  </section>
+
+  <!-- 物业 -->
+  <section id="property">
+    <div class="sec-head">
+      <h2>物业怎么管</h2>
+      <p>物业负责小区里的日常运营，也是大部分审核的“最后一关”。</p>
+    </div>
+
+    <div class="card">
+      <div class="role-title"><span class="dot" style="background:var(--green)"></span><h3>物业管理员</h3><span class="who">只管自己物业</span></div>
+      <p class="role-desc">管住户、管房间、管商家、管账单、管内容、审退款和提现。</p>
+
+      <div class="flow green">
+        <div class="step"><b><em>1</em>住户入住</b><span>建住户、分房间、改楼栋单元房号</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>2</em>建物业费账单</b><span>物业费、停车费、水电费</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>3</em>审商家和身份</b><span>商家、楼长、经理、负责人、组长、小店、代理</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>4</em>日常运营</b><span>公告、论坛、咨询、食堂、配送规则</span></div>
+      </div>
+      <div class="flow green" style="margin-top:6px">
+        <div class="step"><b><em>5</em>处理售后</b><span>退款审核、提现审核、物业币兑换审核</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>6</em>看数据</b><span>住户、订单、分成、物业费、投诉</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>7</em>月底对账</b><span>看分成记录，申请物业公司提现</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>8</em>平台审核</b><span>物业公司提现由平台审批打款</span></div>
+      </div>
+
+      <div class="note warn">
+        <b>物业不能做的事：</b>不能改分钱比例，不能看别的物业的数据，不能改平台级开关。这些只有平台能改。
+      </div>
+    </div>
+  </section>
+
+  <!-- 平台 -->
+  <section id="platform">
+    <div class="sec-head">
+      <h2>平台怎么管</h2>
+      <p>平台不直接服务住户，主要负责“开城”和“定规则”。</p>
+    </div>
+
+    <div class="card">
+      <div class="role-title"><span class="dot" style="background:var(--purple)"></span><h3>平台管理员</h3><span class="who">管所有物业</span></div>
+      <p class="role-desc">建物业、定比例、开资金功能、审大额提现、看全平台总账。</p>
+
+      <div class="flow purple">
+        <div class="step"><b><em>1</em>建物业公司</b><span>填资料，同时建第一个小区</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>2</em>定分钱比例</b><span>平台、物业、管理团队各拿多少</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>3</em>开资金功能</b><span>现在先记账，还是以后接微信直接分钱</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>4</em>建物业管理员</b><span>给物业一个能登录的后台账号</span></div>
+      </div>
+      <div class="flow purple" style="margin-top:6px">
+        <div class="step"><b><em>5</em>审大额提现</b><span>物业公司的分成提现由平台审批</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>6</em>看总账</b><span>全平台交易、提现、分钱、退款</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>7</em>处理异常</b><span>手动调账、补分账、冲正</span></div>
+        <div class="arrow">→</div>
+        <div class="step"><b><em>8</em>上线检查</b><span>关测试模式、改默认密码、确认资金开关</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 身份 -->
+  <section id="identity">
+    <div class="sec-head">
+      <h2>加在住户身上的身份</h2>
+      <p>他们不需要另外注册。被任命或被审核通过后，“我的”页面就会多一个入口。</p>
+    </div>
+
+    <div class="identity-grid">
+
+      <div class="id-card">
+        <div class="id-head"><b>单元楼长</b><span>物业任命</span></div>
+        <div class="mini">
+          <div><i>1</i><span>物业/平台指定某栋某单元的楼长</span></div>
+          <div><i>2</i><span>楼长身份生效，但仍是住户</span></div>
+          <div><i>3</i><span>订单完成，按比例分到楼长</span></div>
+          <div><i>4</i><span>在“我的”里看收益、申请提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>物业分成的钱里，再按楼长比例分一部分。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>物业经理</b><span>物业任命</span></div>
+        <div class="mini">
+          <div><i>1</i><span>每个物业公司只能有一位经理</span></div>
+          <div><i>2</i><span>经理可以管楼长、看收益</span></div>
+          <div><i>3</i><span>经理的钱从楼长那份里再抽</span></div>
+          <div><i>4</i><span>在“我的”里申请提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>楼长拿到的钱里，再按经理比例分一部分。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>统筹</b><span>物业/平台任命</span></div>
+        <div class="mini">
+          <div><i>1</i><span>负责整个物业公司的管理盘</span></div>
+          <div><i>2</i><span>可以加板块、加个体、审商家加入</span></div>
+          <div><i>3</i><span>订单完成，拿管理盘剩下的大头</span></div>
+          <div><i>4</i><span>在工作台看收益、申请提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>管理盘分给板块之后，剩下的归统筹。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>板块负责人</b><span>物业/平台/统筹任命</span></div>
+        <div class="mini">
+          <div><i>1</i><span>负责一个板块的商家和个体</span></div>
+          <div><i>2</i><span>可以审个体新增商家、看营收</span></div>
+          <div><i>3</i><span>订单完成，按板块比例分钱</span></div>
+          <div><i>4</i><span>在工作台申请提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>管理盘里先分一块给板块，再分给个体，剩下是板块负责人的。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>个体负责人</b><span>自己申请 + 审核</span></div>
+        <div class="mini">
+          <div><i>1</i><span>住户在“我的”里申请，选一个板块</span></div>
+          <div><i>2</i><span>物业/平台审核通过</span></div>
+          <div><i>3</i><span>可以改名下商家的分成、看营收</span></div>
+          <div><i>4</i><span>订单完成，按比例分钱、提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>板块那块钱里，再按个体比例分一部分。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>活动组组长</b><span>自己申请 + 审核</span></div>
+        <div class="mini">
+          <div><i>1</i><span>住户申请，物业/平台审核</span></div>
+          <div><i>2</i><span>通过后自动开一家“组长小店”</span></div>
+          <div><i>3</i><span>可以建活动组、收成员、发活动</span></div>
+          <div><i>4</i><span>靠小店的商品货款赚钱、提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>商品货款，不是分账；订阅费目前不进组长口袋。</div>
+        <div class="id-warn"><b>注意：</b>组长不在分钱名单里，别按“组长拿分成”去验收。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>业主小店</b><span>自己申请 + 交保证金</span></div>
+        <div class="mini">
+          <div><i>1</i><span>业主申请，先交 500 元保证金</span></div>
+          <div><i>2</i><span>物业/平台审核通过</span></div>
+          <div><i>3</i><span>从一级代理的货源里选品转卖</span></div>
+          <div><i>4</i><span>订单完成，赚进货价和卖价之间的差价</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>差价 + 货款按件结算，不走普通商家那套分钱。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>一级代理</b><span>自己申请 + 审核</span></div>
+        <div class="mini">
+          <div><i>1</i><span>任何登录用户都能申请</span></div>
+          <div><i>2</i><span>审核通过后有自己的货源和拿货记录</span></div>
+          <div><i>3</i><span>把货供给业主小店去卖</span></div>
+          <div><i>4</i><span>订单完成，按进货价拿货款</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>拿货款，不是拿佣金。</div>
+        <div class="id-warn"><b>注意：</b>如果只是普通住户身份，目前没有提现入口。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>快递员</b><span>物业/平台开账号</span></div>
+        <div class="mini">
+          <div><i>1</i><span>物业/平台给账号，或快递负责人添加</span></div>
+          <div><i>2</i><span>在抢单大厅看待送订单</span></div>
+          <div><i>3</i><span>抢单 → 取货 → 送达</span></div>
+          <div><i>4</i><span>拿配送费，申请提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>配送费减去平台配送分成。</div>
+      </div>
+
+      <div class="id-card">
+        <div class="id-head"><b>技工</b><span>物业/平台开账号</span></div>
+        <div class="mini">
+          <div><i>1</i><span>物业/平台给账号，自动有技工店</span></div>
+          <div><i>2</i><span>在任务里看服务单</span></div>
+          <div><i>3</i><span>上门 → 开始 → 完成</span></div>
+          <div><i>4</i><span>按服务单金额拿钱、提现</span></div>
+        </div>
+        <div class="id-money"><b>钱从哪来：</b>已完成服务单的金额。</div>
+      </div>
+
+    </div>
+
+    <div class="note" style="margin-top:12px">
+      <b>还有两个“历史身份”：</b>区域负责人、项目负责人。它们只在组织架构里展示，目前不参与订单分钱。如果产品要求这两级也分钱，需要另外开发。
+    </div>
+  </section>
+
+  <!-- 钱 -->
+  <section id="money">
+    <div class="sec-head">
+      <h2>钱怎么分</h2>
+      <p>先记住一句话：住户付的钱，先扣商家的“佣金”，佣金再分给各方，剩下的才是商家货款。</p>
+    </div>
+
+    <div class="card">
+      <div class="money-hero">
+        <div class="m-box blue"><span class="n">1</span><div><b>住户付 100 元</b><span>可能是现金，也可能是积分、物业币，或者混合支付。</span></div></div>
+        <div class="m-arrow">↓</div>
+        <div class="m-box pink"><span class="n">2</span><div><b>先算“佣金”</b><span>假设商家抽佣 10%，佣金就是 10 元。积分/物业币的成本会先从佣金里扣。</span></div></div>
+        <div class="m-arrow">↓</div>
+        <div class="m-box orange"><span class="n">3</span><div><b>10 元佣金再分</b><span>平台、物业、管理团队、楼长、经理、骑手，各按比例拿。</span></div></div>
+        <div class="split">
+          <div><b>平台</b><span>平台服务费</span></div>
+          <div><b>物业</b><span>小区运营分成</span></div>
+          <div><b>管理团队</b><span>统筹 / 板块 / 个体</span></div>
+          <div><b>个人</b><span>楼长 / 经理 / 骑手</span></div>
+        </div>
+        <div class="m-arrow">↓</div>
+        <div class="m-box green"><span class="n">4</span><div><b>商家留下 90 元货款</b><span>商家不是分钱接收方，货款是留给自己；订单完成后可以申请提现。</span></div></div>
+      </div>
+
+      <div class="note warn">
+        <b>用积分/物业币付款会怎样：</b>系统要先把积分/物业币的成本从佣金里扣掉。如果成本比佣金还高，这一单就没有钱可分，差额由物业的池子吸收。
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 4px;font-size:18px">现在和以后：三种资金方式</h3>
+      <p style="margin:0;color:var(--muted);font-size:13px">这三种方式不要同时开，否则会重复出款。</p>
+      <div class="mode-grid">
+        <div class="mode now">
+          <span class="pill">现在</span>
+          <b>钱先进平台，平台记账</b>
+          <p>用户付款进平台商户号。平台内部记一笔账，商家提现靠人工打款。系统默认就是这样。</p>
+        </div>
+        <div class="mode a">
+          <span class="pill">方案 A</span>
+          <b>微信直接分给各方</b>
+          <p>用户在平台商户号付款并冻结，订单完成后微信直接把钱分给平台、物业、管理团队、楼长、经理、骑手。</p>
+        </div>
+        <div class="mode b">
+          <span class="pill">方案 B</span>
+          <b>钱直接进商家</b>
+          <p>用户付款直接进商家的微信子商户号，平台只分佣金和配送费，货款留在商家，售后窗口到期再解冻。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 注意 -->
+  <section id="todo">
+    <div class="sec-head">
+      <h2>现在还不能做的事</h2>
+      <p>这些不是“操作不对”，是代码还没接通。验收前先和产品确认，别当成 bug 提。</p>
+    </div>
+
+    <div class="warn-grid">
+      <div class="warn-card"><b>普通住户不能提现</b><span>积分和物业币都不能直接换现金；只有商家能把收到的物业币申请兑换现金。</span></div>
+      <div class="warn-card"><b>商家不能自己同意退款</b><span>退款由物业或平台审核；商家只能拒团购核实。住户自助退款开关默认还关着。</span></div>
+      <div class="warn-card"><b>社区管理员没有后台</b><span>系统里有这个角色名，但目前没有任何实际管理权限，先当预留角色。</span></div>
+      <div class="warn-card"><b>食堂余额只显示不扣</b><span>食堂“定向余额”在订单页能看到，但下单时不会真的扣减。</span></div>
+      <div class="warn-card"><b>活动组长没有订阅费收入</b><span>组长靠自己的小店卖货赚钱；活动组的订阅费目前不进组长口袋，也不参与分钱。</span></div>
+      <div class="warn-card"><b>物业分成账户不会自动加钱</b><span>订单完成会记录分成，但物业公司的结算账户目前只扣不提，提现前可能需要平台手动调账。</span></div>
+      <div class="warn-card"><b>普通住户身份的一级代理提不了现</b><span>代理赚的是货款，但提现入口只放行商家、组长、技工；纯住户身份会被拦。</span></div>
+      <div class="warn-card"><b>区域 / 项目负责人不分钱</b><span>这两个身份只在组织架构里展示，订单分钱代码没有接。</span></div>
+    </div>
+  </section>
+
+  <!-- 三句话 -->
+  <section>
+    <div class="sec-head">
+      <h2>最后，记住三句话</h2>
+    </div>
+    <div class="three">
+      <div class="card">
+        <span class="num">1</span>
+        <div><b>住户是底座</b><p>楼长、经理、组长、店主、代理，都是加在住户身上的“第二身份”，不是另一套账号。</p></div>
+      </div>
+      <div class="card">
+        <span class="num">2</span>
+        <div><b>三种钱不一样</b><p>积分是消费返利，物业币是小区储值，现金走微信；三者不能直接互换。</p></div>
+      </div>
+      <div class="card">
+        <span class="num">3</span>
+        <div><b>各干各的活</b><p>平台定规则，物业管小区，商家做买卖，管理团队和骑手按比例分钱。</p></div>
+      </div>
+    </div>
+
+    <div class="backlink">
+      <span>这只是“看得懂”的版本。需要查接口、状态、权限细节，看详细版。</span>
+      <a href="角色流程全书_20261025.html">打开详细版 · 角色流程全书 →</a>
+    </div>
+  </section>
+
+  <footer>
+    一张图看懂 · 2026-10-25 · 根据当前代码整理<br>
+    说明：本文用简化语言描述真实流程，金额、比例、开关以实际配置为准。
+  </footer>
+
+</main>
+
+<script>
+(function(){
+  var btn = document.getElementById('printBtn');
+  if (btn) btn.addEventListener('click', function(){ window.print(); });
+
+  // 滚动时高亮顶部目录
+  var links = Array.prototype.slice.call(document.querySelectorAll('.top-nav a'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (!en.isIntersecting) return;
+        links.forEach(function(a){
+          a.style.color = a.getAttribute('href') === '#' + en.target.id ? 'var(--ink)' : '';
+          a.style.background = a.getAttribute('href') === '#' + en.target.id ? 'var(--surface)' : '';
+        });
+      });
+    }, {rootMargin:'-80px 0px -65% 0px'});
+    sections.forEach(function(s){ io.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>

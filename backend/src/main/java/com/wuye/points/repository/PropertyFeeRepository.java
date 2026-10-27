@@ -29,6 +29,10 @@ public interface PropertyFeeRepository extends JpaRepository<PropertyFee, String
 
     Optional<PropertyFee> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 
+    /** 待缴账单按最早账期升序（积分转物业抵扣顺序：先欠得早的先冲） */
+    java.util.List<PropertyFee> findByResidentIdAndPaymentStatusInOrderByDueDateAsc(
+            String residentId, java.util.Collection<String> statuses);
+
     long countByPropertyCompanyIdAndPaymentStatus(String propertyCompanyId, String paymentStatus);
 
     long countByPropertyCompanyId(String propertyCompanyId);

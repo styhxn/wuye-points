@@ -19,6 +19,7 @@ import com.wuye.points.dto.activity.UpdateMemberProfileResponse;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.service.ActivityGroupService;
+import com.wuye.points.support.Idempotent;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
@@ -100,7 +101,8 @@ public class ActivityGroupController {
         return ApiResponse.success(activityGroupService.listMembers(id));
     }
 
-    @Operation(summary = "订阅活动组", description = "订阅指定活动组，接收活动更新通知")
+    @Operation(summary = "订阅活动组", description = "订阅指定活动组，接收活动更新通知；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping("/{id}/subscribe")
     public ApiResponse<SubscribeActivityGroupResponse> subscribe(
             @Parameter(description = "活动组ID") @PathVariable String id,
@@ -108,7 +110,8 @@ public class ActivityGroupController {
         return ApiResponse.success(activityGroupService.subscribe(id, request));
     }
 
-    @Operation(summary = "加入活动组", description = "加入指定活动组，成为活动组成员")
+    @Operation(summary = "加入活动组", description = "加入指定活动组，成为活动组成员；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping("/{id}/join")
     public ApiResponse<JoinActivityGroupResponse> joinActivityGroup(
             @Parameter(description = "活动组ID") @PathVariable String id) {

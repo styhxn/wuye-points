@@ -53,12 +53,14 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void handleDataIntegrityViolation_maps400() {
-        // 回归：并发创建重名物业公司触发唯一约束时返回 400，而非 500
+    void handleDataIntegrityViolation_maps409WithoutLeakingRootCause() {
+        // 唯一约束冲突统一 409，且不把表名/索引名/重复值回显给前端
         ResponseEntity<?> resp = handler.handleDataIntegrityViolation(
                 new DataIntegrityViolationException("Duplicate entry 'test' for key 'uk_name'"));
-        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
-        assertEquals(10002, ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getCode());
+        assertEquals(HttpStatus.CONFLICT, resp.getStatusCode());
+        assertEquals(70003, ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getCode());
+        assertEquals("数据冲突，请刷新后重试",
+                ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getMessage());
     }
 
     @Test

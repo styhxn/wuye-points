@@ -13,7 +13,6 @@ import com.wuye.points.entity.Product;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
-import com.wuye.points.payment.WechatSplitService;
 import com.wuye.points.repository.DeliveryRepository;
 import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
@@ -31,7 +30,6 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -58,15 +56,11 @@ public class MerchantVerificationService {
     private final ProductRepository productRepository;
     private final DeliveryRepository deliveryRepository;
     private final DistributionRecordRepository distributionRecordRepository;
-    private final ProductStockService productStockService;
     private final DistributionService distributionService;
-    private final DeliveryService deliveryService;
-    private final PointService pointService;
-    private final PropertyCoinService propertyCoinService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
-    private final WechatSplitService wechatSplitService;
     private final PlatformSettingService platformSetting;
+    private final OrderService orderService;
 
     /**
      * 商家核实订单（通过或拒绝）。
@@ -130,48 +124,22 @@ public class MerchantVerificationService {
 
     /**
      * 核实拒绝：订单取消 + 退款 + 恢复库存。
+     * 复用 {@link OrderService#cancelAndRefund}，与用户取消走同一条资金链路，避免两套退款逻辑漏退。
      */
     private MerchantVerifyResponse rejectOrder(Order order, String reason) {
-        order.setOrderStatus("cancelled");
-        order.setCancelledAt(LocalDateTime.now());
-        order.setCancelReason(reason != null ? reason : "商家核实拒绝");
+        LocalDateTime now = LocalDateTime.now();
+        order.setVerifiedAt(now);
         order.setVerifiedBy(UserContext.currentUserId());
         order.setVerificationRemark(reason);
 
-        // 退款：退积分/物业币/现金
         Resident owner = residentRepository.findById(order.getResidentId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
 
-        BigDecimal refundCoin = order.getCoinUsed() != null ? order.getCoinUsed() : BigDecimal.ZERO;
-        int refundPoint = order.getPointUsed() != null ? order.getPointUsed() : 0;
-        BigDecimal refundAmount = refundCoin.add(
-                order.getCashAmount() != null ? order.getCashAmount() : BigDecimal.ZERO);
+        orderService.cancelAndRefund(order, owner,
+                reason != null ? reason : "商家核实拒绝", "merchant");
 
-        if (refundPoint > 0) {
-            pointService.spendPoints(owner, -refundPoint, "order_cancel",
-                    order.getId(), "商家核实拒绝退款-积分", null, false);
-        }
-        if (refundCoin.compareTo(BigDecimal.ZERO) > 0) {
-            propertyCoinService.spendCoins(owner, refundCoin.negate(),
-                    "order_cancel", order.getId(), "商家核实拒绝退款-物业币", null, false);
-        }
-
-        // 恢复库存（行锁下操作，与下单预占串行化，避免并发下库存错乱）
-        productStockService.restoreByOrderId(order.getId());
-
-        try {
-            order = orderRepository.save(order);
-        } catch (OptimisticLockingFailureException ex) {
-            throw new BizException(ErrorCode.ORDER_CONFLICT);
-        }
-
-        // 撤销分账记录
-        distributionService.reverseForCancelledOrder(order.getId());
-
-        // 撤销配送单
-        deliveryService.failDeliveryForCancelledOrder(order.getId());
-
-        log.info("商家核实拒绝 orderId={} reason={}", order.getId(), reason);
+        log.info("商家核实拒绝 orderId={} reason={} refundStatus={}",
+                order.getId(), reason, order.getRefundStatus());
 
         return MerchantVerifyResponse.builder()
                 .orderId(order.getId())

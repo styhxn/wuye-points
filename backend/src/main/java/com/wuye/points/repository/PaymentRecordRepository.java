@@ -4,6 +4,7 @@ import com.wuye.points.entity.PaymentRecord;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,6 +16,18 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, St
     Optional<PaymentRecord> findByOutTradeNo(String outTradeNo);
 
     Optional<PaymentRecord> findByBizId(String bizId);
+
+    /** 订单详情展示支付流水状态（取该业务单最近一条流水） */
+    Optional<PaymentRecord> findFirstByBizTypeAndBizIdOrderByCreatedAtDesc(String bizType, String bizId);
+
+    /** 同一业务单的全部流水（按时间倒序，广告补付判断已支付/待支付时使用） */
+    List<PaymentRecord> findByBizTypeAndBizIdOrderByCreatedAtDesc(String bizType, String bizId);
+
+    /** 批量取最近流水（广告列表避免 N+1） */
+    List<PaymentRecord> findByBizTypeAndBizIdInOrderByCreatedAtDesc(String bizType, Collection<String> bizIds);
+
+    Optional<PaymentRecord> findFirstByBizTypeAndBizIdAndStatusOrderByCreatedAtDesc(
+            String bizType, String bizId, String status);
 
     /** 该业务单是否发起过支付（任意状态流水存在即视为发起过；用于未支付取消时不回补预占库存） */
     boolean existsByBizId(String bizId);

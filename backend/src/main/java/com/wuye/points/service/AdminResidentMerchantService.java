@@ -443,6 +443,7 @@ public class AdminResidentMerchantService {
         product.setSuggestedRetailPrice(request.getSuggestedRetailPrice());
         product.setStock(request.getStock() == null ? 0 : request.getStock());
         product.setStatus("active");
+        product.setSupplyScope(resolveSupplyScope(request.getSupplyScope()));
         if (StringUtils.hasText(request.getCategory())) {
             product.setCategory(request.getCategory());
         } else if (StringUtils.hasText(request.getCategoryId())) {
@@ -507,6 +508,7 @@ public class AdminResidentMerchantService {
                         .stock(product.getStock())
                         .billingCycle(product.getBillingCycle())
                         .category(product.getCategory())
+                        .supplyScope(product.getSupplyScope() != null ? product.getSupplyScope() : "company")
                         .status(product.getStatus())
                         .createdAt(DateTimeUtil.toIsoUtc(product.getCreatedAt()))
                         .build())
@@ -557,6 +559,7 @@ public class AdminResidentMerchantService {
             String id, UpdateDistributorProductRequest request) {
         roleGuard.requireAnyRole("property_admin", "platform_admin");
         DistributorProduct product = getDistributorProductOrThrow(id);
+        assertAdminCanManageProduct(product);
 
         if (StringUtils.hasText(request.getName())) {
             product.setName(request.getName().trim());
@@ -591,6 +594,9 @@ public class AdminResidentMerchantService {
         if (request.getServiceScope() != null) {
             product.setServiceScope(request.getServiceScope());
         }
+        if (StringUtils.hasText(request.getSupplyScope())) {
+            product.setSupplyScope(resolveSupplyScope(request.getSupplyScope()));
+        }
         if (request.getInactive() != null) {
             product.setStatus(Boolean.TRUE.equals(request.getInactive()) ? "inactive" : "active");
         }
@@ -602,6 +608,7 @@ public class AdminResidentMerchantService {
                 .suggestedRetailPrice(product.getSuggestedRetailPrice())
                 .stock(product.getStock())
                 .status(product.getStatus())
+                .supplyScope(product.getSupplyScope())
                 .build();
     }
 
@@ -627,5 +634,26 @@ public class AdminResidentMerchantService {
         }
         return distributorProductRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND, "分销商品不存在"));
+    }
+
+    /** 供给范围仅允许管理端设置；空值按默认 company 处理。 */
+    private String resolveSupplyScope(String supplyScope) {
+        if (!StringUtils.hasText(supplyScope)) {
+            return "company";
+        }
+        if (!Set.of("company", "platform").contains(supplyScope)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "supplyScope 必须为 company 或 platform");
+        }
+        return supplyScope;
+    }
+
+    /** 物业管理员只能管理本物业公司的货源，避免跨物业授予 platform 供给范围。 */
+    private void assertAdminCanManageProduct(DistributorProduct product) {
+        if (roleGuard.isPlatformAdmin()) {
+            return;
+        }
+        Merchant distributor = merchantRepository.findById(product.getDistributorMerchantId())
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        adminSupport.assertSameProperty(distributor.getPropertyCompanyId());
     }
 }

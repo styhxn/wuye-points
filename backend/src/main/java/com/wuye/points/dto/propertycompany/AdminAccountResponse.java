@@ -24,7 +24,7 @@ public class AdminAccountResponse {
     @Schema(description = "管理员邮箱", example = "admin@wuye.com")
     private String email;
 
-    @Schema(description = "初始密码（仅创建物业公司响应返回一次，详情不返回）",
-            example = "admin123456")
+    @Schema(description = "初始密码（随机生成，仅创建物业公司响应返回一次，详情不返回）",
+            example = "A7kP2mQ9xR4tZ6")
     private String initialPassword;
 }

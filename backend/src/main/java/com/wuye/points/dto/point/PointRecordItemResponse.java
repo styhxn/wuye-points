@@ -24,8 +24,14 @@ public class PointRecordItemResponse {
     @Schema(description = "积分数量", example = "50")
     private Integer amount;
 
-    @Schema(description = "操作后余额", example = "450")
+    @Schema(description = "操作后个人余额", example = "450")
     private Integer balance;
+
+    @Schema(description = "本次变动中家庭池的部分：正数=进入家庭池，负数=从家庭池扣除，0=仅个人池", example = "-100")
+    private Integer familyAmount;
+
+    @Schema(description = "变动后的家庭积分池余额快照；无家庭时为 null", example = "600")
+    private Integer familyBalance;
 
     @Schema(description = "来源", example = "签到")
     private String source;

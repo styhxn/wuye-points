@@ -31,4 +31,7 @@ public class UpdateDistributorProductResponse {
 
     @Schema(description = "状态 active/inactive")
     private String status;
+
+    @Schema(description = "供给范围 company=本物业公司/platform=全平台", example = "company")
+    private String supplyScope;
 }

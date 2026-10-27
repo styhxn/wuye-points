@@ -33,4 +33,7 @@ public class CreateDistributorProductRequest {
 
     @Schema(description = "服务区间 city(本市)/community(小区)")
     private String serviceScope;
+
+    @Schema(description = "供给范围：管理端可传 company/platform（默认 company）；代理工作台禁止传（只能由管理端授予）", example = "company")
+    private String supplyScope;
 }

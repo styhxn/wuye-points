@@ -20,6 +20,24 @@ public class ProductListItemResponse {
     @Schema(description = "商家名称", example = "绿城物业")
     private String merchantName;
 
+    @Schema(description = "店铺ID（merchants.id；v8.23 明确：不是业主小店上架ID）", example = "m_001")
+    private String shopId;
+
+    @Schema(description = "店铺名称（与 merchantName 同值）", example = "绿城物业")
+    private String shopName;
+
+    @Schema(description = "店铺类型：merchant 平台/普通商家；resident 业主小店（merchant_source=resident_shop）", example = "merchant")
+    private String shopType;
+
+    @Schema(description = "店铺状态原始值：active/inactive/stopped/kicked/rejected/frozen（v8.23 全量枚举）", example = "active")
+    private String shopStatus;
+
+    @Schema(description = "店铺是否营业（shopStatus=active 时为 true；其余状态建议展示「暂停营业」）", example = "true")
+    private Boolean shopOpen;
+
+    @Schema(description = "业主小店店主住户ID（shopType=resident 时返回，用于跳转业主小店详情）", example = "res_001")
+    private String shopOwnerResidentId;
+
     @Schema(description = "商品名称", example = "精美绿植盆栽")
     private String name;
 

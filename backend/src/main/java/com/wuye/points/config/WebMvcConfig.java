@@ -27,6 +27,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         "/auth/wechat-login",
                         "/auth/admin-login",
                         "/auth/refresh-token",
+                        // 微信支付/分账/转账回调：由微信服务器直接调用，不带业务 Bearer。
+                        // 控制器内部完成验签、解密与金额校验，不能在这里跳过这些校验。
+                        "/payment/notify/wechatpay",
+                        "/payment/ecommerce-split/notify",
+                        "/payment/ecommerce-transfer/notify",
                         "/error",
                         "/actuator/**",
                         "/static/**",

@@ -124,6 +124,22 @@ public class DistributorController {
         return ApiResponse.success(null);
     }
 
+    @Operation(summary = "一级代理商用户购买记录",
+            description = "查询由本代理商供货、经业主小店售出的订单，含商品、买家（脱敏）与收货地址。"
+                    + "支持订单状态、订单号/商品名关键词、下单时间范围筛选。需登录，代理商本人。")
+    @GetMapping("/my/orders")
+    public ApiResponse<PageResponse<com.wuye.points.dto.distributor.DistributorOrderItemResponse>> listMyOrders(
+            @Parameter(description = "订单状态：pending/paid/delivering/completed/cancelled/refunding/refunded/refund_rejected")
+            @RequestParam(required = false) String orderStatus,
+            @Parameter(description = "关键词（订单号或商品名）") @RequestParam(required = false) String keyword,
+            @Parameter(description = "下单开始日期（yyyy-MM-dd，含当天）") @RequestParam(required = false) String startDate,
+            @Parameter(description = "下单结束日期（yyyy-MM-dd，含当天）") @RequestParam(required = false) String endDate,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数") @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(distributorWorkbenchService.listMyOrders(
+                page, pageSize, orderStatus, keyword, startDate, endDate));
+    }
+
     @Operation(summary = "经销商拿货记录查询",
             description = "下游业主商户对本经销商商品的拿货/上架记录（含拿货时间）。角色: 任意已开通一级代理的注册用户（不再限定 merchant）")
     @GetMapping("/my/pickups")

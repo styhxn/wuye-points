@@ -1,7 +1,10 @@
 package com.wuye.points.scheduler;
 
+import com.wuye.points.entity.Order;
 import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.payment.PayChannel;
+import com.wuye.points.payment.PaymentBizType;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +33,7 @@ public class RefundQueryScheduler {
 
     private final PaymentRecordRepository paymentRecordRepository;
     private final PayChannel wechatPayService;
+    private final OrderRepository orderRepository;
 
     @Scheduled(fixedDelay = 60_000)
     @SchedulerLock(name = "refund_query_poll", lockAtMostFor = "PT5M", lockAtLeastFor = "PT0S")
@@ -43,8 +47,10 @@ public class RefundQueryScheduler {
                 String state = wechatPayService.queryRefund(record);
                 if ("SUCCESS".equals(state)) {
                     record.setStatus("refunded");
+                    updateOrderRefundStatus(record, "refunded", null);
                 } else if ("FAIL".equals(state)) {
                     record.setStatus("refund_failed");
+                    updateOrderRefundStatus(record, "failed", "微信退款失败，需人工处理");
                 } else {
                     continue; // 退款中，下一轮再查
                 }
@@ -53,5 +59,19 @@ public class RefundQueryScheduler {
                 log.error("[退款轮询] 失败 recordId={}", record.getId(), e);
             }
         }
+    }
+
+    /** 退款终态回写订单，供前端并列展示订单状态与退款状态。 */
+    private void updateOrderRefundStatus(PaymentRecord record, String status, String reason) {
+        if (!PaymentBizType.ORDER.equals(record.getBizType())) {
+            return;
+        }
+        Order order = orderRepository.findById(record.getBizId()).orElse(null);
+        if (order == null) {
+            return;
+        }
+        order.setRefundStatus(status);
+        order.setRefundFailReason(reason);
+        orderRepository.save(order);
     }
 }

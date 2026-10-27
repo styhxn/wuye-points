@@ -17,6 +17,7 @@ import com.wuye.points.dto.coin.HideCoinRequest;
 import com.wuye.points.dto.coin.HideCoinResponse;
 import com.wuye.points.dto.coin.RechargeCoinRequest;
 import com.wuye.points.dto.coin.RechargeCoinResponse;
+import com.wuye.points.dto.coin.RechargeStatusResponse;
 import com.wuye.points.dto.coin.SpendCoinRequest;
 import com.wuye.points.dto.coin.SpendCoinResponse;
 import com.wuye.points.dto.coin.UnfreezeCoinRequest;
@@ -108,13 +109,26 @@ public class PropertyCoinController {
     }
 
     /**
-     * 充值物业币
+     * 物业币充值预下单
      * Auth: Required | Roles: resident
      */
-    @Operation(summary = "充值物业币", description = "充值物业币，需登录，角色：resident")
+    @Operation(summary = "物业币充值预下单",
+            description = "创建微信支付流水并返回 payParams；前端拉起 wx.requestPayment 后轮询充值状态接口。角色：resident")
     @PostMapping("/recharge")
     public ApiResponse<RechargeCoinResponse> recharge(@Valid @RequestBody RechargeCoinRequest request) {
         return ApiResponse.success(propertyCoinService.recharge(request));
+    }
+
+    /**
+     * 查询充值支付状态
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "查询充值支付状态",
+            description = "前端拉起微信支付后轮询；status=paid 且 rechargedAt 非空表示已到账。角色：resident")
+    @GetMapping("/recharge/{paymentRecordId}")
+    public ApiResponse<RechargeStatusResponse> getRechargeStatus(
+            @Parameter(description = "内部支付流水ID（pr_ 前缀）") @org.springframework.web.bind.annotation.PathVariable String paymentRecordId) {
+        return ApiResponse.success(propertyCoinService.getRechargeStatus(paymentRecordId));
     }
 
     /**
@@ -178,5 +192,18 @@ public class PropertyCoinController {
     public ApiResponse<TransferToPropertyCoinResponse> transferToProperty(
             @Valid @RequestBody TransferToPropertyCoinRequest request) {
         return ApiResponse.success(propertyCoinService.transferToProperty(request));
+    }
+
+    /**
+     * 奖励金转钱包（仅个人奖励金）
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "奖励金转钱包",
+            description = "仅从个人奖励金转出（不动家庭池），转出后奖励金减少、钱包余额增加并生成双向流水，不可撤销。"
+                    + "需登录，角色：resident")
+    @PostMapping("/transfer-to-wallet")
+    public ApiResponse<com.wuye.points.dto.coin.TransferCoinToWalletResponse> transferToWallet(
+            @Valid @RequestBody com.wuye.points.dto.coin.TransferCoinToWalletRequest request) {
+        return ApiResponse.success(propertyCoinService.transferToWallet(request));
     }
 }

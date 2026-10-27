@@ -27,8 +27,8 @@ public class PasswordUtil {
      */
     public static void main(String[] args) {
         if (args.length == 0) {
-            System.out.println("用法: java PasswordUtil <password>");
-            System.out.println("示例: java PasswordUtil admin123456");
+            System.out.println("用法: java PasswordUtil <new-password>");
+            System.out.println("示例: java PasswordUtil '替换为至少12位的随机密码'");
             return;
         }
         String rawPassword = args[0];

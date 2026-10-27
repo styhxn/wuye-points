@@ -133,7 +133,7 @@ public class WechatPayService implements PayChannel {
         if (prepayId == null) {
             throw new WechatPayException("WECHAT_JSAPI_NO_PREPAY", "微信 JSAPI 下单未返回 prepay_id", resp);
         }
-        return buildJsPayParams(prepayId);
+        return buildJsPayParams(prepayId, record.getOutTradeNo());
     }
 
     /**
@@ -171,7 +171,7 @@ public class WechatPayService implements PayChannel {
         if (prepayId == null) {
             throw new WechatPayException("WECHAT_JSAPI_NO_PREPAY", "微信 JSAPI 下单未返回 prepay_id", resp);
         }
-        return buildJsPayParams(prepayId);
+        return buildJsPayParams(prepayId, record.getOutTradeNo());
     }
 
     /**
@@ -337,7 +337,7 @@ public class WechatPayService implements PayChannel {
         paymentRecordRepository.save(record);
     }
 
-    private WechatJsPayParams buildJsPayParams(String prepayId) {
+    private WechatJsPayParams buildJsPayParams(String prepayId, String outTradeNo) {
         String timeStamp = String.valueOf(System.currentTimeMillis() / 1000);
         String nonceStr = UUID.randomUUID().toString().replace("-", "");
         String message = props.getAppId() + "\n" + timeStamp + "\n" + nonceStr + "\nprepay_id=" + prepayId + "\n";
@@ -349,6 +349,7 @@ public class WechatPayService implements PayChannel {
         params.setPkg("prepay_id=" + prepayId);
         params.setSignType("RSA");
         params.setPaySign(paySign);
+        params.setOutTradeNo(outTradeNo);
         return params;
     }
 

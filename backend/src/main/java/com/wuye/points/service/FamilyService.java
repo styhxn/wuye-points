@@ -51,6 +51,9 @@ public class FamilyService {
     public FamilyResponse createFamily(CreateFamilyRequest request) {
         roleGuard.requireAnyRole("resident");
         Resident owner = getActiveResident(UserContext.currentUserId());
+        // 锁住户行：同一住户并发创建家庭时串行化，避免生成两个家庭并把余额搬两次。
+        owner = residentRepository.findByIdForUpdate(owner.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
 
         if (UserType.tenant.name().equals(owner.getUserType())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "租住人员不能创建家庭");
@@ -123,7 +126,7 @@ public class FamilyService {
         if (!StringUtils.hasText(current.getFamilyId())) {
             throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在");
         }
-        Family family = getFamilyOrThrow(current.getFamilyId());
+        Family family = getFamilyForUpdate(current.getFamilyId());
         assertFamilyOwner(family);
         applyFamilyUpdate(family, request);
         familyRepository.save(family);
@@ -133,7 +136,7 @@ public class FamilyService {
     @Transactional
     public AddFamilyMemberResponse addMember(String familyId, AddFamilyMemberRequest request) {
         roleGuard.requireAnyRole("resident");
-        Family family = getFamilyOrThrow(familyId);
+        Family family = getFamilyForUpdate(familyId);
         assertFamilyOwner(family);
         assertSameProperty(family.getPropertyCompanyId(), UserContext.currentPropertyCompanyId());
 
@@ -145,7 +148,10 @@ public class FamilyService {
             throw new BizException(ErrorCode.FAMILY_MEMBER_LIMIT);
         }
 
-        Resident member = residentRepository.findByPhone(request.getPhone())
+        Resident memberSnapshot = residentRepository.findByPhone(request.getPhone())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "成员未注册"));
+        // 锁顺序：家庭 -> 成员，与 PointService/PropertyCoinService 保持一致。
+        Resident member = residentRepository.findByIdForUpdate(memberSnapshot.getId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "成员未注册"));
         if (UserType.tenant.name().equals(member.getUserType())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "租住人员不能加入家庭");
@@ -183,14 +189,14 @@ public class FamilyService {
     @Transactional
     public RemoveFamilyMemberResponse removeMember(String familyId, String memberId, String reason) {
         roleGuard.requireAnyRole("resident");
-        Family family = getFamilyOrThrow(familyId);
+        Family family = getFamilyForUpdate(familyId);
         assertFamilyOwner(family);
 
         if (family.getOwnerId().equals(memberId)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "户主不可直接移除，请先转让或解散家庭");
         }
 
-        Resident member = residentRepository.findById(memberId)
+        Resident member = residentRepository.findByIdForUpdate(memberId)
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "成员不存在"));
         if (!familyId.equals(member.getFamilyId())) {
             throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "成员不存在");
@@ -318,6 +324,12 @@ public class FamilyService {
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
     }
 
+    /** 家庭余额变更场景统一走行锁；锁顺序：家庭 -> 住户。 */
+    private Family getFamilyForUpdate(String familyId) {
+        return familyRepository.findByIdForUpdate(familyId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+    }
+
     private Resident getActiveResident(String userId) {
         if (userId == null) {
             throw new BizException(ErrorCode.TOKEN_MISSING);
@@ -339,7 +351,10 @@ public class FamilyService {
             throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "未加入任何家庭");
         }
 
-        Family family = getFamilyOrThrow(current.getFamilyId());
+        Family family = getFamilyForUpdate(current.getFamilyId());
+        Resident lockedCurrent = residentRepository.findByIdForUpdate(current.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        current = lockedCurrent;
         if (family.getOwnerId().equals(current.getId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "户主不可退出家庭，请先转让或解散家庭");
         }

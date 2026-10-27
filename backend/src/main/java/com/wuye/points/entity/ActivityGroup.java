@@ -51,6 +51,12 @@ public class ActivityGroup extends BaseEntity {
     @Column(name = "yearly_fee", precision = 10, scale = 2)
     private BigDecimal yearlyFee;
 
+    @Column(name = "quarterly_fee", precision = 10, scale = 2)
+    private BigDecimal quarterlyFee;
+
+    @Column(name = "per_time_fee", precision = 10, scale = 2)
+    private BigDecimal perTimeFee;
+
     @Column(name = "status", length = 20)
     private String status;
 

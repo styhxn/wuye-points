@@ -18,8 +18,10 @@ import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.IndividualLeaderRepository;
+import com.wuye.points.repository.MerchantPointPurchaseRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PlatformMerchantRepository;
 import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
@@ -61,6 +63,10 @@ public class MerchantService {
     private final MerchantConverter merchantConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final WithdrawableService withdrawableService;
+    private final UnifiedEarningsService unifiedEarningsService;
+    private final OrderRepository orderRepository;
+    private final MerchantPointPurchaseRepository merchantPointPurchaseRepository;
 
     @Transactional(readOnly = true)
     public PageResponse<MerchantListItemResponse> listMerchants(
@@ -398,7 +404,32 @@ public class MerchantService {
                 .orElse(null);
         List<Product> products = productRepository.findByMerchantId(merchant.getId());
 
-        return merchantConverter.toDetail(merchant, config, products, true);
+        return enrichWithdrawable(merchantConverter.toDetail(merchant, config, products, true), merchant);
+    }
+
+    /** 商家本人/管理端详情补充可提现余额；公开商家详情不调用，避免泄露财务数据。 */
+    private MerchantDetailResponse enrichWithdrawable(MerchantDetailResponse response, Merchant merchant) {
+        WithdrawableService.MerchantWithdrawable withdrawable =
+                withdrawableService.calcMerchantWithdrawable(merchant);
+        // v8.23：明确区分三个口径。
+        // shopWithdrawableAmount / profitBalance = 本店铺口径（店铺收益 − 店铺提现占用）；
+        // accountWithdrawableAmount = 账号统一可提现（楼长 + 卖货 + 名下商家，扣全部角色提现在途）；
+        // withdrawableAmount = 本店提现入口实际可用 = min(店铺, 账号统一)，
+        // 因为 MerchantWithdrawalService 同时校验两者，避免多角色重复提同一笔钱。
+        java.math.BigDecimal shopWithdrawable = withdrawable.withdrawableAmount();
+        java.math.BigDecimal accountWithdrawable = merchant.getResidentId() == null
+                ? shopWithdrawable
+                : unifiedEarningsService.calc(merchant.getResidentId()).withdrawableAmount();
+        java.math.BigDecimal effectiveWithdrawable = shopWithdrawable.min(accountWithdrawable);
+        response.setWithdrawableAmount(effectiveWithdrawable);
+        response.setShopWithdrawableAmount(shopWithdrawable);
+        response.setAccountWithdrawableAmount(accountWithdrawable);
+        response.setProfitBalance(shopWithdrawable);
+        response.setProfitScope("shop");
+        response.setWithdrawableBlocked(withdrawable.withdrawalBlocked());
+        response.setTotalOrders(orderRepository.countAllByMerchantId(merchant.getId()));
+        response.setPointBalance((int) merchantPointPurchaseRepository.sumRemainingPointsByMerchantId(merchant.getId()));
+        return response;
     }
 
     /**
@@ -483,7 +514,7 @@ public class MerchantService {
 
         applyDeliveryFees(merchant, request);
         merchantRepository.save(merchant);
-        return toDetail(merchant);
+        return enrichWithdrawable(toDetail(merchant), merchant);
     }
 
     /**

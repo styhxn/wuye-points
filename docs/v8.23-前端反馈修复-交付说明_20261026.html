@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v8.23 前端联调反馈修复 · 后端交付说明</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #5c6270;
+    --line: #e3e6ea;
+    --bg: #f6f7f5;
+    --card: #ffffff;
+    --accent: #1f5c46;
+    --accent-soft: #e8f1ec;
+    --warn: #8a5a00;
+    --warn-soft: #fff4dd;
+    --danger: #8c2f2f;
+    --danger-soft: #fdeceb;
+    --code: #f2f4f3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.hero {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 32px 34px;
+    margin-bottom: 24px;
+  }
+  .eyebrow {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 14px;
+  }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--muted); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin-bottom: 28px;
+    columns: 2;
+    column-gap: 32px;
+  }
+  nav.toc a { display: block; color: var(--muted); text-decoration: none; font-size: 14px; padding: 4px 0; }
+  nav.toc a:hover { color: var(--accent); }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 30px;
+    margin-bottom: 22px;
+  }
+  h2 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; scroll-margin-top: 20px; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .lead { color: var(--muted); margin: 0 0 18px; }
+  h3 { font-size: 16px; margin: 24px 0 10px; }
+  h3:first-of-type { margin-top: 14px; }
+  p { margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 16px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #fafbfa; color: var(--muted); font-weight: 600; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--code); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  pre { background: #1b1f1d; color: #e8ece9; padding: 16px 18px; border-radius: 12px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; }
+  .tag.new { background: var(--accent-soft); color: var(--accent); }
+  .tag.bad { background: var(--danger-soft); color: var(--danger); }
+  .tag.chg { background: var(--warn-soft); color: var(--warn); }
+  .callout { border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border: 1px solid #f0ddb4; color: #5f4104; }
+  .callout.danger { background: var(--danger-soft); border: 1px solid #f2cfcc; color: #67211f; }
+  .callout.ok { background: var(--accent-soft); border: 1px solid #cfe2d7; color: #174434; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 14px 0; }
+  .box { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: #fcfdfc; }
+  .box h4 { margin: 0 0 6px; font-size: 14px; }
+  .box p { margin: 4px 0; font-size: 13px; color: var(--muted); }
+  ul.check { list-style: none; padding: 0; margin: 10px 0; }
+  ul.check li { padding: 7px 0 7px 28px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14px; }
+  ul.check li:last-child { border-bottom: none; }
+  ul.check li::before { content: ""; position: absolute; left: 2px; top: 14px; width: 12px; height: 12px; border: 1.5px solid #b9c0bb; border-radius: 3px; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; padding-top: 10px; }
+  @media (max-width: 760px) {
+    nav.toc { columns: 1; }
+    .grid { grid-template-columns: 1fr; }
+    section { padding: 22px 18px; }
+    header.hero { padding: 24px 20px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">BACKEND DELIVERY · v8.23</span>
+    <h1>前端联调反馈 9 项 · 后端修复与口径确认</h1>
+    <p class="sub">本文逐条回应《v8.22-前端联调反馈-给后端》2.1–2.9，给出最终契约、前端需要改的地方与联调验收清单。字段以本文和 API 文档 §108 为准。</p>
+    <div class="meta">
+      <span>交付日期 <b>2026-10-26</b></span>
+      <span>后端测试 <b>287 / 287 通过</b></span>
+      <span>数据库脚本 <b>sql/v8.23_前端反馈修复_20261026.sql</b></span>
+      <span>API 文档 <b>§108</b></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#summary">00 结论速览</a>
+    <a href="#s1">01 商家余额口径（2.1）</a>
+    <a href="#s2">02 广告补付与重复提交（2.2）</a>
+    <a href="#s3">03 积分转物业开关（2.3）</a>
+    <a href="#s4">04 广告状态枚举（2.4）</a>
+    <a href="#s5">05 会话楼长标识（2.5）</a>
+    <a href="#s6">06 店铺跳转字段（2.6）</a>
+    <a href="#s7">07 货源供给范围（2.7）</a>
+    <a href="#s8">08 代理购买记录（2.8）</a>
+    <a href="#s9">09 历史转账流水（2.9）</a>
+    <a href="#db">10 数据库与部署</a>
+    <a href="#check">11 联调验收清单</a>
+  </nav>
+
+  <section id="summary">
+    <h2><span class="num">00</span>结论速览</h2>
+    <p class="lead">9 项全部有明确结论，均已落到代码与测试；其中 2.1 需要前端调整文案，2.2、2.3、2.7 建议前端补交互。</p>
+    <table>
+      <thead>
+        <tr><th>#</th><th>反馈</th><th>后端结论</th><th>前端动作</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>2.1</td>
+          <td><code>profitBalance</code> 口径冲突</td>
+          <td><code>profitBalance</code> 是<b>本店铺口径</b>，不含楼长/卖货；<code>withdrawableAmount</code> 是<b>本店提现入口实际可用</b>（min(店铺, 账号)）；新增 <code>accountWithdrawableAmount</code></td>
+          <td>盈利展示用 <code>profitBalance</code>；提现页用 <code>withdrawableAmount</code>；账号总额用 <code>accountWithdrawableAmount</code></td>
+        </tr>
+        <tr>
+          <td>2.2</td>
+          <td>待支付广告无补付入口</td>
+          <td>新增 <code>POST /merchant/ads/{id}/repay</code>；列表补 <code>paymentRecordId</code>/<code>canRepay</code>；发布接口支持 <code>X-Request-Id</code> 幂等</td>
+          <td>加「继续支付」按钮；重复提交带请求头</td>
+        </tr>
+        <tr>
+          <td>2.3</td>
+          <td>积分转物业开关未下发</td>
+          <td><code>GET /property-companies/current</code> 已返回开关/年限；积分余额接口返回是否满足条件；管理端可开启</td>
+          <td>用新字段控制入口，不再等点进去才 400</td>
+        </tr>
+        <tr>
+          <td>2.4</td>
+          <td>广告状态枚举未定义</td>
+          <td><code>status</code>：pending_payment/active/ended/cancelled；<code>payStatus</code>：unpaid/paid/refunded（保留）</td>
+          <td>状态标签以 <code>status</code> 为准</td>
+        </tr>
+        <tr>
+          <td>2.5</td>
+          <td>会话列表缺 <code>isUnitLeader</code></td>
+          <td>会话列表补 <code>isUnitLeader</code>、<code>leaderRole</code></td>
+          <td>可直接置顶/打标签</td>
+        </tr>
+        <tr>
+          <td>2.6</td>
+          <td><code>shopId</code> 语义不明</td>
+          <td><code>shopId=merchants.id</code>；新增 <code>shopType/shopOpen/shopOwnerResidentId</code>；商家列表也补 <code>shopType</code></td>
+          <td>按 <code>shopType</code> 分流跳转</td>
+        </tr>
+        <tr>
+          <td>2.7</td>
+          <td><code>supply_scope</code> 由谁设置</td>
+          <td>仅平台/物业管理员设置；代理端只读，传值即 403</td>
+          <td>编辑弹窗保持只读，不回传</td>
+        </tr>
+        <tr>
+          <td>2.8</td>
+          <td>代理购买记录契约</td>
+          <td>统一 <code>data.pagination</code>；后端已脱敏姓名/手机；新增关键词与日期筛选</td>
+          <td>直接展示后端脱敏值</td>
+        </tr>
+        <tr>
+          <td>2.9</td>
+          <td>历史家庭转账流水</td>
+          <td>保留 <code>source=transfer</code>；查询兼容 <code>family_transfer</code></td>
+          <td>「转账」筛选可命中历史</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout ok">
+      后端全量测试 <b>287 / 287 通过</b>；新增回归用例覆盖上述 9 项（<code>V823FrontendFeedbackTest</code>）。
+    </div>
+  </section>
+
+  <section id="s1">
+    <h2><span class="num">01</span>商家余额口径 <span class="tag chg">口径确认</span></h2>
+    <p class="lead">反馈 2.1：同一个住户既是商家又是楼长时，商家页的「盈利余额」会不会把楼长分成、业主卖货收益算进去？</p>
+
+    <h3>结论</h3>
+    <p><b>不会。</b><code>profitBalance</code> 是<b>本商家店铺口径</b>，只包含本店订单收益，不含楼长分成、业主卖货收益。</p>
+    <p><code>withdrawableAmount</code> 是<b>本店提现入口实际可用</b>：商家提现同时校验「本店铺可提现」和「账号统一可提现」，因此它等于 <code>min(shopWithdrawableAmount, accountWithdrawableAmount)</code>。此前文档 §5 的 <code>withdrawableAmount</code> 指的是楼长工作台的「账号统一可提现」，不是商家接口。为避免再混淆，v8.23 新增了显式字段。</p>
+
+    <h3>字段</h3>
+    <table>
+      <thead><tr><th>字段</th><th>口径</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>withdrawableAmount</code></td><td>本店提现入口</td><td>实际可用 = <code>min(shopWithdrawableAmount, accountWithdrawableAmount)</code>；商家提现页用这个</td></tr>
+        <tr><td><code>shopWithdrawableAmount</code></td><td>本店铺</td><td>本店可提现（店铺收益 − 店铺提现占用），未受其他角色占用影响</td></tr>
+        <tr><td><code>profitBalance</code></td><td>本店铺</td><td>盈利余额（店铺口径，与 <code>shopWithdrawableAmount</code> 同值）</td></tr>
+        <tr><td><code>profitScope</code></td><td>—</td><td>固定 <code>shop</code>，前端据此判断文案</td></tr>
+        <tr><td><code>accountWithdrawableAmount</code></td><td>账号统一</td><td>楼长分成 + 业主卖货收益 + 名下商家剩余可提现，扣全部角色提现在途</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <b>正常情况 <code>accountWithdrawableAmount &gt;= shopWithdrawableAmount</code>，此时 <code>withdrawableAmount = shopWithdrawableAmount</code>。</b>
+      若同一住户已通过楼长/卖货入口提走了部分款项，账号统一余额可能低于店铺余额，<code>withdrawableAmount</code> 会取更小的账号值，避免超额提现。
+      商家提现接口仍只允许本店提现入口；楼长/卖货部分请走各自角色的提现入口。
+    </div>
+
+    <h3>响应示例</h3>
+<pre><code>{
+  "code": 0,
+  "data": {
+    "id": "mch_xxx",
+    "name": "幸福超市",
+    "withdrawableAmount": 1280.50,
+    "shopWithdrawableAmount": 1280.50,
+    "profitBalance": 1280.50,
+    "profitScope": "shop",
+    "accountWithdrawableAmount": 1580.50,
+    "totalOrders": 128,
+    "pointBalance": 5000
+  }
+}</code></pre>
+
+    <p><b>前端文案建议：</b><code>profitBalance</code> / <code>shopWithdrawableAmount</code> → 「本店可提现 / 本店盈利余额」；提现页可用金额 → <code>withdrawableAmount</code>；需要展示「账号可提现」时，读 <code>accountWithdrawableAmount</code>，不要用 <code>profitBalance</code>。</p>
+  </section>
+
+  <section id="s2">
+    <h2><span class="num">02</span>广告补付与重复提交 <span class="tag new">新增接口</span></h2>
+    <p class="lead">反馈 2.2：已存在的待支付广告如何补付？重复提交 <code>POST /merchant/ads</code> 会不会生成两条广告？</p>
+
+    <h3>新增补付接口</h3>
+    <p><code>POST /merchant/ads/{id}/repay</code>（需登录，角色 merchant，仅广告所属商家）</p>
+    <table>
+      <thead><tr><th>场景</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>待支付 / 支付超时取消的微信现金广告</td><td>200 + 新的 <code>payParams</code></td></tr>
+        <tr><td>已支付/已投放</td><td>409（70003）<code>广告已投放，无需重复支付</code></td></tr>
+        <tr><td>免费额度或非微信广告</td><td>400（10002）<code>该广告无需支付</code></td></tr>
+        <tr><td>微信支付未开启</td><td>400（10002）<code>广告微信支付暂未开放</code></td></tr>
+        <tr><td>操作其他商家的广告</td><td>403（20004）</td></tr>
+      </tbody>
+    </table>
+
+<pre><code>POST /api/v1/merchant/ads/mad_xxx/repay
+Authorization: Bearer &lt;token&gt;
+
+{
+  "code": 0,
+  "data": {
+    "id": "mad_xxx",
+    "status": "pending_payment",
+    "payStatus": "unpaid",
+    "payAmount": 70.00,
+    "canRepay": true,
+    "paymentRecordId": "pr_xxx",
+    "payParams": {
+      "timeStamp": "1730000000",
+      "nonceStr": "abc123",
+      "package": "prepay_id=wx123",
+      "signType": "RSA",
+      "paySign": "xxxx"
+    }
+  }
+}</code></pre>
+
+    <p><b>前端流程：</b>列表项 <code>canRepay=true</code> → 调 <code>repay</code> → 拿 <code>payParams</code> 调 <code>wx.requestPayment</code> → 支付回调后后端置 <code>active</code>，刷新列表。</p>
+
+    <h3>列表新增字段</h3>
+    <table>
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>paymentRecordId</code></td><td>string</td><td>最近一笔支付流水 ID（含待支付/已关闭流水），补付或查单用</td></tr>
+        <tr><td><code>canRepay</code></td><td>boolean</td><td>是否可继续支付</td></tr>
+        <tr><td><code>remainingDays</code></td><td>number</td><td>剩余投放天数；未支付或已结束为 0</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout ok">
+      补付接口内置行锁与流水复用：5 分钟内重复点击复用同一笔待支付流水，不会重复扣款；超过 5 分钟的旧流水关闭后重新预下单。
+    </div>
+
+    <h3>重复提交</h3>
+    <ul>
+      <li><code>POST /merchant/ads</code> / <code>POST /merchant/ads/targeted</code> <b>每次成功调用都会创建一条新广告</b>；</li>
+      <li>前端可带请求头 <code>X-Request-Id</code>（8–128 位字母/数字/<code>._:-</code>）做幂等：同一用户 + 同一路径 + 同一 ID 会回放首次成功响应，不会重复建广告；</li>
+      <li>已存在的待支付广告请走 <code>repay</code>，不要重新发布。</li>
+    </ul>
+  </section>
+
+  <section id="s3">
+    <h2><span class="num">03</span>积分转物业开关与资格 <span class="tag new">字段已下发</span></h2>
+    <p class="lead">反馈 2.3：居民端从哪里读 <code>point_transfer_enabled</code> / <code>point_transfer_min_years</code>？是否还要返回入住年限是否满足？</p>
+
+    <h3>字段下发位置</h3>
+    <table>
+      <thead><tr><th>接口</th><th>新增字段</th><th>用途</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /property-companies/current</code></td><td><code>pointTransferEnabled</code>、<code>pointTransferMinYears</code></td><td>居民端读取开关/年限（camelCase）</td></tr>
+        <tr><td><code>GET /admin/property-companies/{id}</code></td><td>同上</td><td>管理端查看</td></tr>
+        <tr><td><code>PUT /admin/property-companies/{id}</code></td><td>请求体可传同名字段</td><td>管理端开启/调整</td></tr>
+        <tr><td><code>GET /points/balance</code></td><td>开关、年限、<code>pointTransferEligible</code>、<code>pointTransferBlockedReason</code></td><td>积分余额页直接判断</td></tr>
+        <tr><td><code>GET /residents/me/points</code></td><td>同上</td><td>我的积分页直接判断</td></tr>
+      </tbody>
+    </table>
+
+    <h3>资格口径</h3>
+    <ul>
+      <li>开关关闭：<code>pointTransferEnabled=false</code>，<code>pointTransferEligible=false</code>，原因「积分转物业费暂未开放」；</li>
+      <li>开关开启但入住未满：<code>pointTransferEligible=false</code>，原因「入住未满 N 年，暂不可将积分转物业费」；</li>
+      <li>满足条件：<code>pointTransferEligible=true</code>，<code>pointTransferBlockedReason</code> 为 null（响应中省略）；</li>
+      <li>入住年限按 <code>residents.created_at</code> 计算，与转物业接口的既有校验一致。</li>
+    </ul>
+
+<pre><code>{
+  "code": 0,
+  "data": {
+    "pointBalance": 5000,
+    "pointTransferEnabled": true,
+    "pointTransferMinYears": 2,
+    "pointTransferEligible": false,
+    "pointTransferBlockedReason": "入住未满2年，暂不可将积分转物业费"
+  }
+}</code></pre>
+
+    <div class="callout warn">
+      管理端开启示例：<code>PUT /admin/property-companies/pc_xxx</code>，body
+      <code>{"pointTransferEnabled": true, "pointTransferMinYears": 5}</code>。
+      默认关闭、默认 5 年；存量物业公司执行 SQL 后即为 0 / 5。
+    </div>
+  </section>
+
+  <section id="s4">
+    <h2><span class="num">04</span>广告状态全量枚举 <span class="tag chg">枚举补齐</span></h2>
+    <p class="lead">反馈 2.4：<code>status</code> / <code>payStatus</code> 的完整取值是什么？「投放中」和「已结束」以哪个字段为准？</p>
+
+    <h3><code>status</code>（列表展示状态）</h3>
+    <table>
+      <thead><tr><th>值</th><th>含义</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>pending_payment</code></td><td>待支付</td><td>微信现金广告已下单、未收款</td></tr>
+        <tr><td><code>active</code></td><td>投放中</td><td>已支付/免费投放，且 <code>endDate &gt;= 今天</code></td></tr>
+        <tr><td><code>ended</code></td><td>已结束</td><td><b>派生值</b>：数据库仍为 active，<code>endDate &lt; 今天</code> 时返回 ended</td></tr>
+        <tr><td><code>cancelled</code></td><td>已取消</td><td>支付超时/失败，由后端定时任务置为取消</td></tr>
+      </tbody>
+    </table>
+    <p>当前系统<b>没有</b> <code>expired</code> / <code>rejected</code> / <code>paused</code> 状态。</p>
+
+    <h3><code>payStatus</code>（支付状态）</h3>
+    <table>
+      <thead><tr><th>值</th><th>含义</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>unpaid</code></td><td>未支付</td><td>无已支付流水</td></tr>
+        <tr><td><code>paid</code></td><td>已支付</td><td>含免费额度投放</td></tr>
+        <tr><td><code>refunded</code></td><td>已退款</td><td>预留值；当前广告无退款流程，暂不会产生</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      「投放中 / 已结束」以 <code>status</code> 为准，不要用 <code>payStatus</code> 判断。
+      <code>canRepay=true</code> 仅出现在 <code>status=pending_payment</code> 或 <code>cancelled</code>、支付方式为 <code>wechat</code> 且尚未支付的广告。
+    </div>
+  </section>
+
+  <section id="s5">
+    <h2><span class="num">05</span>会话列表楼长/单元负责人标识 <span class="tag new">字段补齐</span></h2>
+    <p class="lead">反馈 2.5：单元负责人和住户私聊时，会话列表拿不到 <code>isUnitLeader</code>，无法置顶/打标签。</p>
+
+    <p><code>GET /messages/conversations</code> 每项新增：</p>
+    <table>
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>isUnitLeader</code></td><td>boolean</td><td>对方是否单元负责人/楼长，与 <code>isBuildingLeader</code> 同口径</td></tr>
+        <tr><td><code>leaderRole</code></td><td>string</td><td><code>building_leader</code>=单元楼长；空串=普通住户</td></tr>
+      </tbody>
+    </table>
+
+<pre><code>{
+  "peerId": "res_xxx",
+  "peerName": "李*",
+  "isBuildingLeader": true,
+  "isUnitLeader": true,
+  "leaderRole": "building_leader"
+}</code></pre>
+
+    <div class="callout ok">
+      当前系统「单元楼长」与「单元负责人」是同一身份（<code>building_leaders</code> 表），因此两个布尔值一致；
+      没有单独的 <code>unit_leader</code> 表，<code>leaderRole</code> 不会返回 <code>unit_leader</code>。
+      <code>GET /messages/neighbors</code> 原本已返回两个字段，本次不变。
+    </div>
+  </section>
+
+  <section id="s6">
+    <h2><span class="num">06</span>商品/店铺字段与跳转 <span class="tag new">字段补齐</span></h2>
+    <p class="lead">反馈 2.6：<code>shopId</code> 是商家 ID 还是业主小店 ID？应该往哪套详情页跳？</p>
+
+    <h3>结论</h3>
+    <p><code>shopId</code> 明确为 <code>merchants.id</code>（不是业主小店上架 ID）。<code>GET /products</code> 与 <code>GET /products/{id}</code> 新增以下字段：</p>
+
+    <table>
+      <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>shopId</code></td><td>string</td><td><code>merchants.id</code></td></tr>
+        <tr><td><code>shopName</code></td><td>string</td><td>店铺名称（与 <code>merchantName</code> 同值）</td></tr>
+        <tr><td><code>shopType</code></td><td>string</td><td><code>merchant</code> 普通商家；<code>resident</code> 业主小店（<code>merchant_source=resident_shop</code>）</td></tr>
+        <tr><td><code>shopStatus</code></td><td>string</td><td><code>active</code> / <code>inactive</code> / <code>stopped</code> / <code>kicked</code> / <code>rejected</code> / <code>frozen</code>（仅 <code>active</code> 时 <code>shopOpen=true</code>）</td></tr>
+        <tr><td><code>shopOpen</code></td><td>boolean</td><td><code>shopStatus=active</code> 时为 true</td></tr>
+        <tr><td><code>shopOwnerResidentId</code></td><td>string</td><td><code>shopType=resident</code> 时返回店主住户 ID</td></tr>
+      </tbody>
+    </table>
+
+    <h3>跳转建议</h3>
+    <ul>
+      <li><code>shopType=merchant</code> → <code>/pages/service/merchantProducts?id=&lt;shopId&gt;</code></li>
+      <li><code>shopType=resident</code> → <code>/pages/shop/detail?residentId=&lt;shopOwnerResidentId&gt;</code>；
+        商品流没有 <code>listingId</code>（上架 ID 只在业主小店上架/下单链路出现），不要用商品 ID 冒充 <code>listingId</code>。</li>
+    </ul>
+
+    <p><b>推荐位：</b><code>GET /merchants</code>、<code>GET /merchants/official-recommended</code> 的列表项也新增 <code>merchantSource</code>、<code>shopType</code>。
+      推荐位里的业主小店按 <code>shopType=resident</code> 分流；其 <code>id</code> 仍是 <code>merchants.id</code>，可直接用于商家详情。</p>
+
+<pre><code>{
+  "id": "prd_xxx",
+  "merchantId": "mch_xxx",
+  "shopId": "mch_xxx",
+  "shopName": "张阿姨的小店",
+  "shopType": "resident",
+  "shopStatus": "active",
+  "shopOpen": true,
+  "shopOwnerResidentId": "res_xxx"
+}</code></pre>
+  </section>
+
+  <section id="s7">
+    <h2><span class="num">07</span>货源供给范围权限 <span class="tag chg">权限明确</span></h2>
+    <p class="lead">反馈 2.7：<code>supply_scope=platform</code> 由谁设置？代理能不能自己改？</p>
+
+    <h3>结论</h3>
+    <p><b>只有平台管理员 / 物业管理员能设置</b>；一级代理只能只读展示。当前系统没有单独的「超级代理」角色，<code>platform</code> 是<b>按商品</b>授予的供给范围。</p>
+
+    <table>
+      <thead><tr><th>入口</th><th>行为</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /admin/distributor-products</code></td><td>管理端可传 <code>supplyScope</code>（默认 company）</td></tr>
+        <tr><td><code>PUT /admin/distributor-products/{id}</code></td><td>管理端可改 <code>supplyScope</code> 为 company/platform</td></tr>
+        <tr><td><code>GET /distributors/my/products</code></td><td>返回 <code>supplyScope</code> 只读</td></tr>
+        <tr><td><code>GET /distributors/products</code></td><td>返回 <code>supplyScope</code> 只读</td></tr>
+        <tr><td><code>POST/PUT /distributors/my/products</code></td><td><b>不要传 supplyScope</b>；传任意非空值（含 company）返回 403（20004）</td></tr>
+      </tbody>
+    </table>
+
+    <p>物业管理员只能操作本物业公司的货源，跨物业返回 403。代理新建货源时后端固定写 <code>company</code>，不会因为漏传而变成 <code>platform</code>。</p>
+
+<pre><code>PUT /api/v1/admin/distributor-products/dpr_xxx
+Authorization: Bearer &lt;property_admin_token&gt;
+Content-Type: application/json
+
+{ "supplyScope": "platform" }</code></pre>
+
+    <div class="callout ok">
+      前端代理端编辑弹窗保持只读展示即可；当前实现（不回传）是正确的。
+    </div>
+  </section>
+
+  <section id="s8">
+    <h2><span class="num">08</span>一级代理商购买记录 <span class="tag chg">契约细化</span></h2>
+    <p class="lead">反馈 2.8：分页结构、状态枚举、脱敏、搜索与时间筛选。</p>
+
+    <h3>请求参数</h3>
+    <table>
+      <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>page</code></td><td>number</td><td>否</td><td>默认 1</td></tr>
+        <tr><td><code>pageSize</code></td><td>number</td><td>否</td><td>默认 20，最大 100</td></tr>
+        <tr><td><code>orderStatus</code></td><td>string</td><td>否</td><td>见下方枚举</td></tr>
+        <tr><td><code>keyword</code></td><td>string</td><td>否</td><td>订单号或商品名模糊搜索</td></tr>
+        <tr><td><code>startDate</code></td><td>string</td><td>否</td><td>下单开始日期 <code>yyyy-MM-dd</code>（含当天）</td></tr>
+        <tr><td><code>endDate</code></td><td>string</td><td>否</td><td>下单结束日期 <code>yyyy-MM-dd</code>（含当天）</td></tr>
+      </tbody>
+    </table>
+
+    <h3><code>orderStatus</code> 枚举</h3>
+    <p><code>pending</code> / <code>paid</code> / <code>delivering</code> / <code>completed</code> / <code>cancelled</code> / <code>refunding</code> / <code>refunded</code> / <code>refund_rejected</code></p>
+    <div class="callout warn">没有 <code>shipped</code>；配送中请传 <code>delivering</code>。传其他值返回 400 <code>orderStatus值无效</code>。</div>
+
+    <h3>分页结构</h3>
+    <p>统一为 <code>data.list</code> + <code>data.pagination</code>（没有平铺的 <code>data.total</code>）：</p>
+<pre><code>{
+  "code": 0,
+  "data": {
+    "list": [{
+      "orderId": "ord_xxx",
+      "orderNo": "202610260001",
+      "orderStatus": "completed",
+      "totalAmount": 39.90,
+      "quantity": 2,
+      "productName": "五常大米 5kg",
+      "shopName": "张阿姨的小店",
+      "buyerName": "张*",
+      "buyerPhone": "138****8000",
+      "address": "幸福小区3栋2单元501",
+      "createdAt": "2026-10-26 10:00:00",
+      "settlementOwner": "distributor"
+    }],
+    "pagination": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 }
+  }
+}</code></pre>
+
+    <h3>脱敏</h3>
+    <ul>
+      <li><code>buyerName</code>：张三 → 张*；李华明 → 李*明；单字姓名不脱敏；</li>
+      <li><code>buyerPhone</code>：138****8000；</li>
+      <li><b>后端已完成脱敏，前端原样展示即可，不要二次脱敏</b>（否则会出现 <code>张**</code>）。</li>
+    </ul>
+  </section>
+
+  <section id="s9">
+    <h2><span class="num">09</span>家庭转账历史流水 <span class="tag chg">口径确认</span></h2>
+    <p class="lead">反馈 2.9：家庭转账下线后，历史流水的 <code>source</code> 保留原值还是统一改名？前端「转账」筛选还能命中吗？</p>
+
+    <h3>结论</h3>
+    <ul>
+      <li>历史家庭内转赠流水保留原值：<code>pointType=transfer</code>、<code>source=transfer</code>，<b>不做数据改写</b>；</li>
+      <li><code>transfer_to_property</code>（积分转物业）是另一用途，保持独立；用 <code>source=transfer</code> 筛选不会混入转物业流水；</li>
+      <li><code>GET /points/records?source=transfer</code> 会同时命中历史 <code>transfer</code> 与早期 <code>family_transfer</code> 两种取值；</li>
+      <li>前端传 <code>source=family_transfer</code> 也会被后端归一为 <code>transfer</code> 查询，同样命中；</li>
+      <li>新增流水不再产生家庭转赠（入口已下线），因此「转账」筛选只会命中历史数据。</li>
+    </ul>
+    <div class="callout ok">前端「转账」筛选继续传 <code>source=transfer</code> 即可，无需特殊处理历史数据。</div>
+  </section>
+
+  <section id="db">
+    <h2><span class="num">10</span>数据库与部署</h2>
+    <p class="lead">本次只新增查询索引，并合并了 v8.22 的前置列；一个脚本即可把当前服务器库补齐。</p>
+
+    <h3>执行脚本</h3>
+    <p><code>sql/v8.23_前端反馈修复_20261026.sql</code>（同时作为 Flyway <code>V31__v8.23_frontend_feedback.sql</code>）。</p>
+
+<pre><code>mysql -h&lt;host&gt; -P3306 -u&lt;user&gt; -p --default-character-set=utf8mb4 wuye_points \
+  &lt; v8.23_前端反馈修复_20261026.sql</code></pre>
+
+    <h3>脚本内容</h3>
+    <ul>
+      <li><b>第 0 节</b>：v8.22（V30）前置列/索引，包括订单代理归属、积分转物业开关、货源供给范围、活动组季/次费、消息商品上下文。已执行过 v8.22 的库会自动跳过；</li>
+      <li><b>第 1 节</b>：历史 NULL/空值兜底（<code>supply_scope=company</code>、<code>point_transfer_enabled=0</code>、<code>point_transfer_min_years=5</code>）；</li>
+      <li><b>第 2 节</b>：v8.23 新增索引：
+        <ul>
+          <li><code>orders (distributor_id, order_status, created_at)</code></li>
+          <li><code>merchant_ads (merchant_id, created_at)</code></li>
+          <li><code>distributor_products (status, supply_scope, distributor_merchant_id)</code></li>
+        </ul>
+      </li>
+      <li><b>幂等</b>：列/索引先查 <code>information_schema</code>，可重复执行；</li>
+      <li>脚本末尾带自检 SELECT，手工执行时会输出每项是否存在（1=已存在）。</li>
+    </ul>
+
+    <div class="callout danger">
+      <b>部署顺序：先执行 SQL，再重启后端。</b>
+      当前服务器库快照尚未包含 v8.22 的 <code>orders.distributor_id</code>、<code>property_companies.point_transfer_enabled</code> 等列；
+      若先重启后端，实体查询会因缺列失败。本脚本已包含这些前置列，可直接一次补齐。
+    </div>
+
+    <h3>历史数据说明</h3>
+    <ul>
+      <li>家庭转账历史流水不改写（<code>source=transfer</code> 保留）；</li>
+      <li>存量广告不需要回填状态：<code>ended</code> 由 <code>endDate</code> 实时派生；</li>
+      <li>存量货源 <code>supply_scope</code> 为 <code>company</code>；如需全平台代销，由管理端逐商品设置 <code>platform</code>。</li>
+    </ul>
+  </section>
+
+  <section id="check">
+    <h2><span class="num">11</span>联调验收清单</h2>
+    <ul class="check">
+      <li>商家页「本店盈利余额」= <code>profitBalance</code>；提现页可用额 = <code>withdrawableAmount</code>；「账号可提现」= <code>accountWithdrawableAmount</code>，三者不混用。</li>
+      <li>广告列表能展示「待支付 / 投放中 / 已结束 / 已取消」；待支付项有「继续支付」并调 <code>repay</code> 拿到 <code>payParams</code>。</li>
+      <li>同一广告连续点「继续支付」不会生成多笔支付流水；重复发布带 <code>X-Request-Id</code>。</li>
+      <li>居民端从 <code>GET /property-companies/current</code> 或积分余额接口读到开关/年限，未达标时按钮置灰并展示原因。</li>
+      <li>会话列表拿到 <code>isUnitLeader</code> / <code>leaderRole</code>，楼长会话置顶。</li>
+      <li>商品流按 <code>shopType</code> 分流：普通商家进商家商品页，业主小店用 <code>shopOwnerResidentId</code> 进小店页。</li>
+      <li>推荐位里的业主小店按 <code>shopType=resident</code> 分流，不再直接进商家商品页。</li>
+      <li>代理货源编辑弹窗不提交 <code>supplyScope</code>；管理端可设置 <code>platform</code>。</li>
+      <li>代理购买记录分页读 <code>data.pagination</code>，买家姓名/手机直接展示后端脱敏值。</li>
+      <li>积分记录「转账」筛选能命中历史 <code>transfer</code> / <code>family_transfer</code> 流水。</li>
+    </ul>
+
+    <h3>两个提醒的结论</h3>
+    <ul>
+      <li><b>配送费按公里</b>：仍暂缓，前端配送规则页无需隐藏任何内容，等产品明确数据来源后再改造。</li>
+      <li><b>推荐位含业主小店</b>：已补 <code>shopType</code>；业主小店的 <code>id</code> 是 <code>merchants.id</code>，但请按 <code>shopType=resident</code> 走小店详情，不要直接进商家商品页。</li>
+    </ul>
+  </section>
+
+  <footer>
+    物业积分服务系统 · v8.23 后端交付 · 2026-10-26 · 详细字段见 API 文档 §108
+  </footer>
+
+</div>
+</body>
+</html>

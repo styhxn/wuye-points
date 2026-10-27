@@ -34,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -198,7 +199,7 @@ class PointServiceTest {
     // ---------------- 积分发放 ----------------
 
     @Test
-    @DisplayName("earn: 正常发放，居民与家庭余额增加")
+    @DisplayName("earn: 有家庭时只进入家庭池，个人余额不再重复入账")
     void earn_success() {
         UserContext.set(UserContext.builder().userId("op_1").role("property_admin").propertyCompanyId("pc_1").build());
         Resident r = resident("res_3", "fam_1", "pc_1", 10);
@@ -217,7 +218,7 @@ class PointServiceTest {
 
         pointService.earn(req);
 
-        assertEquals(60, r.getPointBalance());
+        assertEquals(10, r.getPointBalance());
         assertEquals(250, family.getPointBalance());
     }
 
@@ -287,6 +288,19 @@ class PointServiceTest {
         asResident("res_1", "fam_1", "pc_1");
         Resident r = resident("res_1", "fam_1", "pc_1", 100);
         when(residentRepository.findById("res_1")).thenReturn(Optional.of(r));
+        PropertyCompany company = new PropertyCompany();
+        company.setId("pc_1");
+        company.setPointTransferEnabled(true);
+        company.setPointTransferMinYears(5);
+        company.setPointToFeeRate(new BigDecimal("0.01"));
+        when(propertyCompanyRepository.findById("pc_1")).thenReturn(Optional.of(company));
+        PropertyFee fee = new PropertyFee();
+        fee.setId("pf_transfer");
+        fee.setAmount(new BigDecimal("100.00"));
+        fee.setPaidAmount(BigDecimal.ZERO);
+        fee.setDueDate(java.time.LocalDate.now().minusMonths(1));
+        when(propertyFeeRepository.findByResidentIdAndPaymentStatusInOrderByDueDateAsc(
+                "res_1", List.of("unpaid", "partial", "overdue"))).thenReturn(List.of(fee));
 
         TransferToPropertyPointRequest req = new TransferToPropertyPointRequest();
         req.setPointAmount(30);
@@ -305,6 +319,19 @@ class PointServiceTest {
         asResident("res_1", "fam_1", "pc_1");
         Resident r = resident("res_1", "fam_1", "pc_1", 10);
         when(residentRepository.findById("res_1")).thenReturn(Optional.of(r));
+        PropertyCompany company = new PropertyCompany();
+        company.setId("pc_1");
+        company.setPointTransferEnabled(true);
+        company.setPointTransferMinYears(5);
+        company.setPointToFeeRate(new BigDecimal("0.01"));
+        when(propertyCompanyRepository.findById("pc_1")).thenReturn(Optional.of(company));
+        PropertyFee fee = new PropertyFee();
+        fee.setId("pf_transfer2");
+        fee.setAmount(new BigDecimal("100.00"));
+        fee.setPaidAmount(BigDecimal.ZERO);
+        fee.setDueDate(java.time.LocalDate.now().minusMonths(1));
+        when(propertyFeeRepository.findByResidentIdAndPaymentStatusInOrderByDueDateAsc(
+                "res_1", List.of("unpaid", "partial", "overdue"))).thenReturn(List.of(fee));
 
         TransferToPropertyPointRequest req = new TransferToPropertyPointRequest();
         req.setPointAmount(30);
@@ -384,5 +411,46 @@ class PointServiceTest {
         req.setPoints(100);
 
         assertThrows(BizException.class, () -> pointService.deductFee(req));
+    }
+
+    // ---------------- 家庭池记账（A3 回归） ----------------
+
+    @Test
+    @DisplayName("spend: 家庭池优先扣减，个人余额保留")
+    void spend_familyPoolFirst() {
+        Resident r = resident("res_3", "fam_1", "pc_1", 10);
+        Family family = new Family();
+        family.setId("fam_1");
+        family.setPointBalance(100);
+        when(residentRepository.findById("res_3")).thenReturn(Optional.of(r));
+        when(familyRepository.findById("fam_1")).thenReturn(Optional.of(family));
+
+        PointRecord record = pointService.spendPoints(
+                r, 60, "order", "ord_1", "测试消费", null, true);
+
+        assertEquals(40, family.getPointBalance());
+        assertEquals(10, r.getPointBalance());
+        assertEquals(-60, record.getFamilyAmount());
+        assertEquals(40, record.getFamilyBalance());
+    }
+
+    @Test
+    @DisplayName("refundOrderPoints: 按原支付流水的家庭/个人比例原路退回")
+    void refundOrderPoints_restoresFamilyAndPersonal() {
+        Resident r = resident("res_3", "fam_1", "pc_1", 10);
+        Family family = new Family();
+        family.setId("fam_1");
+        family.setPointBalance(40);
+        PointRecord spend = new PointRecord();
+        spend.setFamilyAmount(-40);
+        when(residentRepository.findById("res_3")).thenReturn(Optional.of(r));
+        when(familyRepository.findById("fam_1")).thenReturn(Optional.of(family));
+        when(pointRecordRepository.findFirstBySourceIdAndSourceAndPointTypeOrderByCreatedAtDesc(
+                "ord_1", "order", "spend")).thenReturn(Optional.of(spend));
+
+        pointService.refundOrderPoints(r, "ord_1", 60, "fam_1");
+
+        assertEquals(80, family.getPointBalance());
+        assertEquals(30, r.getPointBalance());
     }
 }

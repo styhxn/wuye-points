@@ -1,28 +1,22 @@
 package com.wuye.points.scheduler;
 
-import com.wuye.points.entity.CoinExpiryRecord;
-import com.wuye.points.entity.PropertyCoinRecord;
 import com.wuye.points.entity.PropertyCompany;
-import com.wuye.points.entity.Resident;
-import com.wuye.points.repository.CoinExpiryRecordRepository;
-import com.wuye.points.repository.PropertyCoinRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
-import com.wuye.points.repository.ResidentRepository;
-import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.service.CoinExpiryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 物业币过期自动清零定时任务
- * 根据物业公司设定的有效期天数，自动清零过期物业币并入积分池
+ * 物业币过期自动清零定时任务。
+ *
+ * <p>实际过期逻辑在 {@link CoinExpiryService}：按流水 {@code expired_amount} 去重，
+ * 同一笔 earn/recharge 不会被后续任务重复扣减；个人池与家庭池分别处理。</p>
  */
 @Slf4j
 @Component
@@ -30,90 +24,25 @@ import java.util.List;
 public class CoinExpiryAutoScheduler {
 
     private final PropertyCompanyRepository propertyCompanyRepository;
-    private final ResidentRepository residentRepository;
-    private final PropertyCoinRecordRepository propertyCoinRecordRepository;
-    private final CoinExpiryRecordRepository coinExpiryRecordRepository;
-    private final SnowflakeIdGenerator idGenerator;
+    private final CoinExpiryService coinExpiryService;
 
     @Scheduled(cron = "0 0 3 * * ?")
-    @Transactional
+    @SchedulerLock(name = "coin_expiry_auto", lockAtMostFor = "PT30M", lockAtLeastFor = "PT1M")
     public void processCoinExpiry() {
         LocalDate today = LocalDate.now();
-        int totalProcessed = 0;
-
         List<PropertyCompany> companies = propertyCompanyRepository.findAll();
+        int totalProcessed = 0;
         for (PropertyCompany company : companies) {
-            Integer expiryDays = company.getCoinExpiryDays();
-            if (expiryDays == null || expiryDays <= 0) {
-                continue;
-            }
-
-            LocalDate issueDeadline = today.minusDays(expiryDays);
-            List<Resident> residents = residentRepository.findByPropertyCompanyId(company.getId());
-
-            for (Resident resident : residents) {
-                BigDecimal balance = resident.getCoinBalance() != null
-                        ? resident.getCoinBalance() : BigDecimal.ZERO;
-                if (balance.compareTo(BigDecimal.ZERO) <= 0) {
-                    continue;
-                }
-
-                List<PropertyCoinRecord> earnRecords = propertyCoinRecordRepository
-                        .findByResidentIdAndCoinTypeAndCreatedAtBefore(
-                                resident.getId(), "earn", issueDeadline.atStartOfDay());
-
-                List<PropertyCoinRecord> rechargeRecords = propertyCoinRecordRepository
-                        .findByResidentIdAndCoinTypeAndCreatedAtBefore(
-                                resident.getId(), "recharge", issueDeadline.atStartOfDay());
-
-                BigDecimal expiredFromEarn = earnRecords.stream()
-                        .map(PropertyCoinRecord::getAmount)
-                        .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
-                        .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                BigDecimal expiredFromRecharge = rechargeRecords.stream()
-                        .map(PropertyCoinRecord::getAmount)
-                        .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
-                        .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-                BigDecimal totalExpired = expiredFromEarn.add(expiredFromRecharge);
-                if (totalExpired.compareTo(BigDecimal.ZERO) <= 0) {
-                    continue;
-                }
-
-                BigDecimal actualExpired = totalExpired.min(balance);
-                BigDecimal newBalance = balance.subtract(actualExpired);
-                resident.setCoinBalance(newBalance);
-                residentRepository.save(resident);
-
-                PropertyCoinRecord record = new PropertyCoinRecord();
-                record.setId(idGenerator.generateId("coin"));
-                record.setResidentId(resident.getId());
-                record.setFamilyId(resident.getFamilyId());
-                record.setPropertyCompanyId(resident.getPropertyCompanyId());
-                record.setCoinType("expire");
-                record.setAmount(actualExpired.negate());
-                record.setBalance(newBalance);
-                record.setSource("coin_expired");
-                record.setDescription("物业币过期自动清零");
-                record.setOperatorId("system");
-                propertyCoinRecordRepository.save(record);
-
-                CoinExpiryRecord expiryRecord = new CoinExpiryRecord();
-                expiryRecord.setId(idGenerator.generateId("cer"));
-                expiryRecord.setResidentId(resident.getId());
-                expiryRecord.setPropertyCompanyId(company.getId());
-                expiryRecord.setExpiredAmount(actualExpired);
-                expiryRecord.setPoolInAmount(actualExpired);
-                expiryRecord.setExpiredAt(today.atStartOfDay());
-                coinExpiryRecordRepository.save(expiryRecord);
-
-                totalProcessed++;
+            try {
+                CoinExpiryService.ExpiryResult result =
+                        coinExpiryService.expireForCompany(company, today, null, false, "system");
+                totalProcessed += result.processedCount();
+            } catch (Exception e) {
+                log.error("[物业币过期] 处理失败 companyId={}", company.getId(), e);
             }
         }
-
         if (totalProcessed > 0) {
-            log.info("物业币过期自动清零任务完成，共处理 {} 个用户", totalProcessed);
+            log.info("[物业币过期] 自动任务完成，共处理 {} 个账户", totalProcessed);
         }
     }
 }

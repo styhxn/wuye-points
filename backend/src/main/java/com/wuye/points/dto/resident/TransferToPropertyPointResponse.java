@@ -23,4 +23,7 @@ public class TransferToPropertyPointResponse {
 
     @Schema(description = "转出时间", example = "2026-08-17T10:00:00Z")
     private String transferredAt;
+
+    @Schema(description = "实际冲抵物业费的金额（按最早账期依次抵扣）", example = "1.00")
+    private java.math.BigDecimal appliedFeeAmount;
 }

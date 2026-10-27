@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 物业币记录 Repository
@@ -28,6 +29,44 @@ public interface PropertyCoinRecordRepository extends JpaRepository<PropertyCoin
 
     /** 是否存在指定来源的物业币流水（manual_issue 使用条件判定：仅物业配发的物业币可用） */
     boolean existsByResidentIdAndSourceAndCoinType(String residentId, String source, String coinType);
+
+    /** 支付回调幂等：同一支付流水是否已生成充值到账记录 */
+    boolean existsByResidentIdAndSourceIdAndCoinType(String residentId, String sourceId, String coinType);
+
+    /** 充值状态查询：按支付流水ID查最近一条充值到账记录 */
+    Optional<PropertyCoinRecord> findFirstByResidentIdAndSourceIdAndCoinTypeOrderByCreatedAtDesc(
+            String residentId, String sourceId, String coinType);
+
+    /** 订单退款/冲正时，查该订单最近一条指定类型的物业币流水（用于还原家庭池/个人池扣减比例） */
+    Optional<PropertyCoinRecord> findFirstBySourceIdAndSourceAndCoinTypeOrderByCreatedAtDesc(
+            String sourceId, String source, String coinType);
+
+    /** 个人池过期：只取尚未完全过期、且记录未归属家庭的 earn/recharge 流水，按时间升序。 */
+    @Query("""
+            SELECT r FROM PropertyCoinRecord r
+            WHERE r.residentId = :residentId
+              AND r.familyId IS NULL
+              AND r.coinType IN ('earn', 'recharge')
+              AND r.createdAt < :before
+              AND (r.expiredAmount IS NULL OR r.expiredAmount < r.amount)
+            ORDER BY r.createdAt ASC
+            """)
+    List<PropertyCoinRecord> findExpirablePersonal(@Param("residentId") String residentId,
+                                                   @Param("before") LocalDateTime before);
+
+    /** 家庭池过期：家庭流水 + 成员入家庭前的个人流水（家庭成员余额已并入家庭池）。 */
+    @Query("""
+            SELECT r FROM PropertyCoinRecord r
+            WHERE (r.familyId = :familyId
+                   OR (r.familyId IS NULL AND r.residentId IN :residentIds))
+              AND r.coinType IN ('earn', 'recharge')
+              AND r.createdAt < :before
+              AND (r.expiredAmount IS NULL OR r.expiredAmount < r.amount)
+            ORDER BY r.createdAt ASC
+            """)
+    List<PropertyCoinRecord> findExpirableFamily(@Param("familyId") String familyId,
+                                                 @Param("residentIds") List<String> residentIds,
+                                                 @Param("before") LocalDateTime before);
 
     @Query("""
             SELECT COALESCE(SUM(r.amount), 0) FROM PropertyCoinRecord r

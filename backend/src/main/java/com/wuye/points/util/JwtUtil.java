@@ -42,23 +42,50 @@ public class JwtUtil {
      * 生成 Access Token
      */
     public String generateAccessToken(String userId, String role, String propertyCompanyId, String familyId) {
+        return generateAccessToken(userId, role, propertyCompanyId, familyId, null);
+    }
+
+    /**
+     * 生成带令牌版本号的 Access Token（生产登录/刷新使用）。
+     */
+    public String generateAccessToken(String userId, String role, String propertyCompanyId,
+                                      String familyId, Integer tokenVersion) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("role", role);
         claims.put("propertyCompanyId", propertyCompanyId);
         if (familyId != null) {
             claims.put("familyId", familyId);
         }
+        if (tokenVersion != null) {
+            claims.put("tv", tokenVersion);
+        }
         claims.put("type", "access");
         return buildToken(userId, claims, accessTokenExpiration);
     }
 
     /**
-     * 生成 Refresh Token
+     * 生成 Refresh Token（兼容旧调用，不带令牌版本号）。
      */
     public String generateRefreshToken(String userId) {
+        return generateRefreshToken(userId, null);
+    }
+
+    /**
+     * 生成带令牌版本号的 Refresh Token（生产登录/刷新使用）。
+     */
+    public String generateRefreshToken(String userId, Integer tokenVersion) {
         Map<String, Object> claims = new HashMap<>();
+        if (tokenVersion != null) {
+            claims.put("tv", tokenVersion);
+        }
         claims.put("type", "refresh");
         return buildToken(userId, claims, refreshTokenExpiration);
+    }
+
+    /** 读取令牌版本号；历史 token 没有该声明时返回 null。 */
+    public Integer getTokenVersion(Claims claims) {
+        Object value = claims.get("tv");
+        return value instanceof Number number ? number.intValue() : null;
     }
 
     private String buildToken(String subject, Map<String, Object> claims, long expiration) {

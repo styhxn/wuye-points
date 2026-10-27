@@ -36,6 +36,14 @@ public class PointRecord extends BaseEntity {
     @Column(name = "balance", nullable = false)
     private Integer balance;
 
+    /** 本次变动中来自/进入家庭池的积分；正数=进入家庭池，负数=从家庭池扣除，0=仅个人池。 */
+    @Column(name = "family_amount")
+    private Integer familyAmount;
+
+    /** 变动后的家庭积分池余额快照；无家庭时为 null。 */
+    @Column(name = "family_balance")
+    private Integer familyBalance;
+
     @Column(name = "source", length = 30)
     private String source;
 

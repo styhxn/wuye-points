@@ -43,6 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -62,8 +63,11 @@ public class PropertyCompanyService {
     private static final BigDecimal DEFAULT_DELIVERY_COURIER_PER_ORDER = new BigDecimal("0.35");
     /** 分成比例求和容差：校验「三档合计 100%」时允许的浮点误差（2026-09-08 错误码 97006） */
     private static final BigDecimal RATE_TOLERANCE = new BigDecimal("0.0001");
-    /** 新建物业公司初始管理员密码（与测试种子账号规则一致） */
-    public static final String INITIAL_ADMIN_PASSWORD = "admin123456";
+    /** 初始密码字符集：去掉 0/O/1/I/l 等易混淆字符，长度 14。 */
+    private static final char[] INITIAL_PASSWORD_CHARS =
+            "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789".toCharArray();
+    private static final int INITIAL_PASSWORD_LENGTH = 14;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final CommunityRepository communityRepository;
@@ -275,8 +279,9 @@ public class PropertyCompanyService {
         admin.setId(idGenerator.generateId("res"));
         admin.setName(accountRequest.getName().trim());
         admin.setPhone(phone);
-        // 初始密码与种子账号规则一致（admin123456，BCrypt 加密），管理员可凭此走 /auth/admin-login
-        admin.setPassword(PasswordUtil.hashPassword(INITIAL_ADMIN_PASSWORD));
+        // 初始密码每次随机生成，只在创建响应中返回一次；禁止再使用统一弱口令。
+        String initialPassword = generateInitialPassword();
+        admin.setPassword(PasswordUtil.hashPassword(initialPassword));
         admin.setRole("property_admin");
         admin.setUserType("owner");
         admin.setPropertyCompanyId(propertyCompanyId);
@@ -287,7 +292,15 @@ public class PropertyCompanyService {
         admin.setCoinFrozen(false);
         admin.setCoinHidden(false);
         residentRepository.save(admin);
-        return propertyCompanyConverter.toAdminAccount(admin, accountRequest.getEmail(), INITIAL_ADMIN_PASSWORD);
+        return propertyCompanyConverter.toAdminAccount(admin, accountRequest.getEmail(), initialPassword);
+    }
+
+    private String generateInitialPassword() {
+        StringBuilder password = new StringBuilder(INITIAL_PASSWORD_LENGTH);
+        for (int i = 0; i < INITIAL_PASSWORD_LENGTH; i++) {
+            password.append(INITIAL_PASSWORD_CHARS[SECURE_RANDOM.nextInt(INITIAL_PASSWORD_CHARS.length)]);
+        }
+        return password.toString();
     }
 
     private void initializeDefaults(PropertyCompany company) {
@@ -414,6 +427,15 @@ public class PropertyCompanyService {
         }
         if (request.getTwoYearClearEnabled() != null) {
             company.setTwoYearClearEnabled(request.getTwoYearClearEnabled());
+        }
+        if (request.getPointTransferEnabled() != null) {
+            company.setPointTransferEnabled(request.getPointTransferEnabled());
+        }
+        if (request.getPointTransferMinYears() != null) {
+            if (request.getPointTransferMinYears() < 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "pointTransferMinYears 不能为负数");
+            }
+            company.setPointTransferMinYears(request.getPointTransferMinYears());
         }
         if (request.getNeighborDailyContactLimit() != null) {
             company.setNeighborDailyContactLimit(request.getNeighborDailyContactLimit());

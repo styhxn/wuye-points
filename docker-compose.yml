@@ -19,7 +19,8 @@ services:
       TZ: Asia/Shanghai
     command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci
     ports:
-      - "3306:3306"
+      # 只绑定本机，生产由 Nginx/内网访问，禁止 3306 直接暴露公网
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       # 注意：这里【不】自动挂载 SQL 初始化脚本。
@@ -53,6 +54,8 @@ services:
       WECHAT_MP_APP_ID: ${WECHAT_MP_APP_ID}
       WECHAT_MP_APP_SECRET: ${WECHAT_MP_APP_SECRET}
       APP_WECHAT_SKIP_API: ${APP_WECHAT_SKIP_API:-false}
+      # 测试模式：放开初始口令 + 允许普通住户登录管理端；上线前必须设为 false
+      APP_AUTH_TEST_MODE: ${APP_AUTH_TEST_MODE:-true}
       UPLOAD_PATH: ${UPLOAD_PATH:-/data/uploads}
       UPLOAD_BASE_URL: ${UPLOAD_BASE_URL}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
@@ -114,7 +117,15 @@ services:
       WECHAT_ECOMMERCE_APPLYMENT_NOTIFY_URL: ${WECHAT_ECOMMERCE_APPLYMENT_NOTIFY_URL:-https://test.yuanxusoftware.top/api/v1/payment/ecommerce-applyment/notify}
       WECHAT_ECOMMERCE_TRANSFER_NOTIFY_URL: ${WECHAT_ECOMMERCE_TRANSFER_NOTIFY_URL:-https://test.yuanxusoftware.top/api/v1/payment/ecommerce-transfer/notify}
     ports:
-      - "8888:8888"
+      # 只绑定本机，由 Nginx 反代 443；避免绕过 TLS/HSTS 直连应用
+      - "127.0.0.1:8888:8888"
+    # 给 Spring graceful shutdown 留出时间，避免支付/退款事务被 SIGKILL
+    stop_grace_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
     volumes:
       - uploads:/data/uploads
       - ./backend/cert:/opt/wuye-points/cert:ro

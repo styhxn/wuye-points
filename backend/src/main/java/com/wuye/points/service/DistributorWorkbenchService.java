@@ -6,18 +6,25 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.distributor.AdjustDistributorProductStockRequest;
 import com.wuye.points.dto.distributor.DistributorIdentityResponse;
 import com.wuye.points.dto.distributor.DistributorMyProductItemResponse;
+import com.wuye.points.dto.distributor.DistributorOrderItemResponse;
 import com.wuye.points.dto.distributor.DistributorPickupItemResponse;
 import com.wuye.points.dto.distributor.UpdateDistributorProductRequest;
 import com.wuye.points.entity.DistributorProduct;
 import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.Order;
+import com.wuye.points.entity.OrderItem;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.ResidentMerchantListing;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.DistributorProductRepository;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.OrderItemRepository;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentRepository;
+import com.wuye.points.repository.spec.OrderSpecifications;
+import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SensitiveMasker;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -26,10 +33,13 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,6 +62,8 @@ public class DistributorWorkbenchService {
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final WithdrawableService withdrawableService;
+    private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
 
     /**
      * 解析当前登录用户的一级代理身份：以名下商家 is_distributor=1 判定（后台开通）。
@@ -107,6 +119,7 @@ public class DistributorWorkbenchService {
     @Transactional
     public DistributorMyProductItemResponse createMyProduct(CreateDistributorProductRequest request) {
         Merchant distributor = resolveCurrentDistributor();
+        assertSupplyScopeNotAgentControlled(request.getSupplyScope());
         DistributorProduct product = new DistributorProduct();
         product.setId(idGenerator.generateId("dpr"));
         product.setDistributorMerchantId(distributor.getId());
@@ -117,6 +130,8 @@ public class DistributorWorkbenchService {
         product.setSuggestedRetailPrice(request.getSuggestedRetailPrice());
         product.setStock(request.getStock() == null ? 0 : request.getStock());
         product.setStatus("active");
+        // 代理不可自选供给范围，新货源一律为本物业公司口径，需平台/物业管理员另行授予平台代销
+        product.setSupplyScope("company");
         if (StringUtils.hasText(request.getCategory())) {
             product.setCategory(request.getCategory());
         } else if (StringUtils.hasText(request.getCategoryId())) {
@@ -153,6 +168,7 @@ public class DistributorWorkbenchService {
     public DistributorMyProductItemResponse updateMyProduct(
             String productId, UpdateDistributorProductRequest request) {
         Merchant distributor = resolveCurrentDistributor();
+        assertSupplyScopeNotAgentControlled(request.getSupplyScope());
         DistributorProduct product = loadOwnedProduct(distributor.getId(), productId);
         assertNotDeleted(product, "修改");
         if (StringUtils.hasText(request.getName())) {
@@ -302,6 +318,88 @@ public class DistributorWorkbenchService {
         listingRepository.delete(listing);
     }
 
+    /**
+     * 一级代理商「用户购买记录」：代理货源订单按代理商维度查询，含收货地址与脱敏买家信息。
+     * 业主小店代销的订单结算主体为该代理商，因此这里看到的是成交后的完整订单视角。
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<DistributorOrderItemResponse> listMyOrders(
+            int page, int pageSize, String orderStatus, String keyword,
+            String startDate, String endDate) {
+        Merchant distributor = resolveCurrentDistributor();
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        if (StringUtils.hasText(orderStatus) && !RoleGuard.ORDER_STATUS.contains(orderStatus)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "orderStatus值无效");
+        }
+        LocalDateTime start = parseStartDate(startDate);
+        LocalDateTime end = parseEndDate(endDate);
+        if (start != null && end != null && !start.isBefore(end)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "startDate 不能晚于 endDate");
+        }
+        Pageable pageable = PageRequest.of(
+                Math.max(page, 1) - 1, Math.min(Math.max(pageSize, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Specification<Order> spec = OrderSpecifications.withFilters(
+                        null, null, null, orderStatus, start, end, keyword)
+                .and((root, query, cb) -> cb.equal(root.get("distributorId"), distributor.getId()));
+        Page<Order> orderPage = orderRepository.findAll(spec, pageable);
+
+        List<DistributorOrderItemResponse> list = orderPage.getContent().stream()
+                .map(order -> toOrderItem(order, distributor))
+                .toList();
+        return PageResponse.of(list, page, pageSize, orderPage.getTotalElements());
+    }
+
+    private LocalDateTime parseStartDate(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim().substring(0, 10)).atStartOfDay();
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "startDate 格式应为 yyyy-MM-dd");
+        }
+    }
+
+    /** 结束日期按“含当天”处理：转为次日 00:00 的排他上界。 */
+    private LocalDateTime parseEndDate(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value.trim().substring(0, 10)).plusDays(1).atStartOfDay();
+        } catch (Exception e) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "endDate 格式应为 yyyy-MM-dd");
+        }
+    }
+
+    private DistributorOrderItemResponse toOrderItem(Order order, Merchant distributor) {
+        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        OrderItem item = items.isEmpty() ? null : items.get(0);
+        Merchant shop = StringUtils.hasText(order.getResidentMerchantId())
+                ? merchantRepository.findById(order.getResidentMerchantId()).orElse(null) : null;
+        Resident buyer = StringUtils.hasText(order.getResidentId())
+                ? residentRepository.findById(order.getResidentId()).orElse(null) : null;
+
+        return DistributorOrderItemResponse.builder()
+                .orderId(order.getId())
+                .orderNo(order.getOrderNo())
+                .orderStatus(order.getOrderStatus())
+                .totalAmount(order.getTotalAmount())
+                .quantity(item != null ? item.getQuantity() : 0)
+                .productName(item != null ? item.getProductName() : null)
+                .productCover(item != null ? item.getProductCover() : null)
+                .shopName(shop != null ? shop.getName() : null)
+                .buyerName(buyer != null ? maskBuyerName(buyer.getName()) : null)
+                .buyerPhone(buyer != null ? SensitiveMasker.maskPhone(buyer.getPhone()) : null)
+                .address(order.getAddress())
+                .createdAt(DateTimeUtil.toIsoUtc(order.getCreatedAt()))
+                .settlementOwner(order.getSettlementOwner() != null ? order.getSettlementOwner() : "distributor")
+                .build();
+    }
+
     private DistributorProduct loadOwnedProduct(String distributorMerchantId, String productId) {
         DistributorProduct product = distributorProductRepository.findById(productId)
                 .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
@@ -309,6 +407,33 @@ public class DistributorWorkbenchService {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他经销商的商品");
         }
         return product;
+    }
+
+    /**
+     * 供给范围是「平台/物业授予的资格」，代理端只能只读展示。
+     * 即使传 company 也拒绝，避免前端误以为提交生效；正确入口见管理端
+     * PUT /admin/distributor-products/{id} 的 supplyScope 字段。
+     */
+    private void assertSupplyScopeNotAgentControlled(String supplyScope) {
+        if (StringUtils.hasText(supplyScope)) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED,
+                    "供给范围由平台/物业管理员设置，一级代理不可自行修改");
+        }
+    }
+
+    /** 买家姓名脱敏：张三→张*，李华明→李*明（与消息/订单列表口径一致）。 */
+    private String maskBuyerName(String name) {
+        if (!StringUtils.hasText(name)) {
+            return name;
+        }
+        String trimmed = name.trim();
+        if (trimmed.length() == 1) {
+            return trimmed;
+        }
+        if (trimmed.length() == 2) {
+            return trimmed.charAt(0) + "*";
+        }
+        return trimmed.charAt(0) + "*".repeat(trimmed.length() - 2) + trimmed.charAt(trimmed.length() - 1);
     }
 
     /** 已软删除（status=deleted）的商品视为不存在，禁止继续编辑/补货/重复删除 */
@@ -342,6 +467,7 @@ public class DistributorWorkbenchService {
                 .stock(product.getStock())
                 .status(product.getStatus())
                 .serviceScope(product.getServiceScope())
+                .supplyScope(product.getSupplyScope() != null ? product.getSupplyScope() : "company")
                 .category(product.getCategory())
                 .pickupCount(pickupCount)
                 .createdAt(product.getCreatedAt())

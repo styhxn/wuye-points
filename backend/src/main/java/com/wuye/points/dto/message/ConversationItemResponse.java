@@ -41,4 +41,13 @@ public class ConversationItemResponse {
 
     @Schema(description = "该会话未读消息数", example = "3")
     private Integer unreadCount;
+
+    @Schema(description = "对方是否单元楼长（楼长置顶用）", example = "true")
+    private Boolean isBuildingLeader;
+
+    @Schema(description = "对方是否单元负责人/楼长（与 isBuildingLeader 同口径，v8.23 补齐）", example = "true")
+    private Boolean isUnitLeader;
+
+    @Schema(description = "对方负责人角色：building_leader 单元楼长；空串=普通住户", example = "building_leader")
+    private String leaderRole;
 }

@@ -93,7 +93,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("非法参数: {}", e.getMessage());
         return ResponseEntity.badRequest()
-                .body(ApiResponse.error(ErrorCode.PARAM_INVALID.getCode(), e.getMessage()));
+                .body(ApiResponse.error(ErrorCode.PARAM_INVALID.getCode(), "参数不合法"));
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)
@@ -104,28 +104,25 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 数据库唯一约束冲突（并发创建同名物业公司 / 重复手机号等）统一转 400 业务错误，避免 500。
-     * 2026-09-07：附带根因（列名/索引名），便于前端/运维定位，不再只有一句兜底文案。
+     * 数据库完整性冲突：统一映射 409，根因只写日志，不把表名/列名/重复值回显给前端。
+     * 业务层能识别的重复手机号/状态冲突仍应优先抛 BizException。
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
-        String rootMessage = e.getMostSpecificCause().getMessage();
-        log.warn("数据完整性冲突: {}", rootMessage);
-        return ResponseEntity.badRequest()
-                .body(ApiResponse.error(ErrorCode.PARAM_INVALID.getCode(),
-                        "数据保存失败（数据库约束冲突）: " + rootMessage));
+        log.error("数据完整性冲突", e);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(ErrorCode.ORDER_CONFLICT.getCode(), "数据冲突，请刷新后重试"));
     }
 
     /**
-     * 微信支付调用异常：不再落成兜底 99001，改为回传微信侧错误码/信息，便于前端与运维直接定位
-     * （如签名错误、appid/mchid 不匹配、api-v3-key 长度错误等）。
+     * 微信支付调用异常：日志保留微信错误码/原文；响应只给用户安全文案，避免第三方报文/密钥信息外泄。
      */
     @ExceptionHandler(WechatPayException.class)
     public ResponseEntity<ApiResponse<Void>> handleWechatPay(WechatPayException e) {
         log.error("微信支付异常 code={} message={}", e.getCode(), e.getWxMessage(), e);
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(ApiResponse.error(ErrorCode.SYSTEM_ERROR.getCode(),
-                        "微信支付失败[" + e.getCode() + "]：" + e.getWxMessage()));
+                        "支付服务暂时不可用，请稍后重试或联系客服"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -54,6 +54,7 @@ public class AdminMerchantAuditService {
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final OperationLogService operationLogService;
+    private final WithdrawableService withdrawableService;
 
     @Transactional(readOnly = true)
     public PageResponse<MerchantPointPurchaseListItemResponse> listPointPurchases(
@@ -240,7 +241,8 @@ public class AdminMerchantAuditService {
         permissionGuard.requirePermission("merchant.audit");
         adminSupport.validateIdPrefix(id, "mw");
 
-        MerchantWithdrawal withdrawal = merchantWithdrawalRepository.findById(id)
+        // 行锁：同一笔提现的并发审核只能成功一次，避免重复打款。
+        MerchantWithdrawal withdrawal = merchantWithdrawalRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "提现记录不存在"));
         adminSupport.assertSameProperty(withdrawal.getPropertyCompanyId());
 
@@ -253,6 +255,22 @@ public class AdminMerchantAuditService {
 
         String currentStatus = withdrawal.getAuditStatus();
         assertWithdrawalTransition(currentStatus, request.getAuditResult());
+
+        // 审核通过时再次校验可提现余额：申请后可能发生退款、其它提现审核等变化。
+        // 排除当前单本身，避免把当前 pending 单重复扣减导致误判。
+        if ("approved".equals(request.getAuditResult())) {
+            Merchant merchant = merchantRepository.findById(withdrawal.getMerchantId())
+                    .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+            WithdrawableService.MerchantWithdrawable withdrawable =
+                    withdrawableService.calcMerchantWithdrawableExcluding(merchant, withdrawal.getId());
+            if (withdrawable.withdrawalBlocked()) {
+                throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+            }
+            if (withdrawal.getAmount().compareTo(withdrawable.withdrawableAmount()) > 0) {
+                throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                        "可提现余额不足（最多 ¥" + withdrawable.withdrawableAmount().toPlainString() + "）");
+            }
+        }
 
         withdrawal.setAuditStatus(request.getAuditResult());
         LocalDateTime now = LocalDateTime.now();

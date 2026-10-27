@@ -1,7 +1,9 @@
 package com.wuye.points.payment;
 
+import com.wuye.points.entity.Order;
 import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PaymentSettleOutbox;
+import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PaymentSettleOutboxRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -37,6 +39,7 @@ public class PaymentCompletionService {
     private final PayChannel payChannel;
     private final PaymentRecordRepository paymentRecordRepository;
     private final PaymentSettleOutboxRepository outboxRepository;
+    private final OrderRepository orderRepository;
     private final SnowflakeIdGenerator snowflake;
     private final ApplicationEventPublisher eventPublisher;
     private final WechatNotifyService wechatNotifyService;
@@ -151,14 +154,30 @@ public class PaymentCompletionService {
             record.setOutRefundNo(outRefundNo);
             record.setStatus("refunding");
             paymentRecordRepository.save(record);
+            updateOrderRefundStatus(record, "refunding", null);
             log.warn("已关单流水回调到账，已自动发起原路退款 recordId={} cash={} outRefundNo={}",
                     record.getId(), cash, outRefundNo);
         } catch (Exception e) {
             record.setStatus("refund_failed");
             record.setErrorMsg("关单后到账自动退款失败，需人工处理: " + e.getMessage());
             paymentRecordRepository.save(record);
+            updateOrderRefundStatus(record, "failed", "关单后到账自动退款失败，需人工处理");
             log.error("已关单流水回调到账，自动退款失败，需人工对账 recordId={}", record.getId(), e);
         }
+    }
+
+    /** 退款状态回写订单，供前端在订单详情并列展示「已取消 · 退款中/已退款」。 */
+    private void updateOrderRefundStatus(PaymentRecord record, String status, String reason) {
+        if (!PaymentBizType.ORDER.equals(record.getBizType())) {
+            return;
+        }
+        Order order = orderRepository.findById(record.getBizId()).orElse(null);
+        if (order == null) {
+            return;
+        }
+        order.setRefundStatus(status);
+        order.setRefundFailReason(reason);
+        orderRepository.save(order);
     }
 
     private void settle(PaymentRecord record) {

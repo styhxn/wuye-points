@@ -38,6 +38,18 @@ public class PropertyCoinRecord extends BaseEntity {
     @Column(name = "balance", nullable = false, precision = 10, scale = 2)
     private BigDecimal balance;
 
+    /** 本次变动中来自/进入家庭池的物业币；正数=进入家庭池，负数=从家庭池扣除，0=仅个人池。 */
+    @Column(name = "family_amount", precision = 10, scale = 2)
+    private BigDecimal familyAmount;
+
+    /** 变动后的家庭物业币池余额快照；无家庭时为 null。 */
+    @Column(name = "family_balance", precision = 10, scale = 2)
+    private BigDecimal familyBalance;
+
+    /** 该笔 earn/recharge 记录已过期清零的金额；用于防止定时任务重复扣减同一笔。 */
+    @Column(name = "expired_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal expiredAmount;
+
     @Column(name = "source", length = 30)
     private String source;
 

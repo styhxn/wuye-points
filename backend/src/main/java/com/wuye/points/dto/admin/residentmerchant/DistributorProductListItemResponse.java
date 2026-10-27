@@ -44,6 +44,9 @@ public class DistributorProductListItemResponse {
     @Schema(description = "货源类目", example = "食品饮料")
     private String category;
 
+    @Schema(description = "供给范围 company=本物业公司/platform=全平台", example = "company")
+    private String supplyScope;
+
     @Schema(description = "创建时间", example = "2026-07-25T10:00:00Z")
     private String createdAt;
 }

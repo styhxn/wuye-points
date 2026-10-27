@@ -100,6 +100,11 @@ public class PointService {
                     .orElse(0);
         }
 
+        PropertyCompany company = StringUtils.hasText(resident.getPropertyCompanyId())
+                ? propertyCompanyRepository.findById(resident.getPropertyCompanyId()).orElse(null)
+                : null;
+        PointTransferPolicy.Decision transfer = PointTransferPolicy.evaluate(company, resident);
+
         return PointBalanceResponse.builder()
                 .pointBalance(defaultPointBalance(resident))
                 .familyPointBalance(familyPointBalance)
@@ -108,6 +113,10 @@ public class PointService {
                 .todaySpent(todaySpent != null ? todaySpent : 0)
                 .expiringPoints(0)
                 .expiringDate(null)
+                .pointTransferEnabled(transfer.enabled())
+                .pointTransferMinYears(transfer.minYears())
+                .pointTransferEligible(transfer.eligible())
+                .pointTransferBlockedReason(transfer.blockedReason())
                 .build();
     }
 
@@ -157,7 +166,9 @@ public class PointService {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
         }
         validatePointType(pointType);
-        validatePointSource(source);
+        // v8.23：家庭内转赠历史流水 source=transfer；兼容前端旧参数 family_transfer，不改历史数据
+        String scopedSource = "family_transfer".equals(source) ? "transfer" : source;
+        validatePointSource(scopedSource);
 
         Resident resident = getActiveResident(UserContext.currentUserId());
         String scopedFamilyId = resolveFamilyScope(resident, familyId);
@@ -171,7 +182,7 @@ public class PointService {
                         scopedFamilyId != null ? null : resident.getId(),
                         scopedFamilyId,
                         pointType,
-                        source,
+                        scopedSource,
                         start,
                         end),
                 pageable);
@@ -194,21 +205,29 @@ public class PointService {
         }
 
         String fromMemberId = UserContext.currentUserId();
-        Resident fromMember = getActiveResident(fromMemberId);
-        Family family = familyRepository.findById(request.getFamilyId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
-
-        if (!request.getFamilyId().equals(fromMember.getFamilyId())) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED, "非家庭成员");
-        }
-
-        Resident toMember = residentRepository.findById(request.getToMemberId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!request.getFamilyId().equals(toMember.getFamilyId())) {
+        Resident fromSnapshot = getActiveResident(fromMemberId);
+        if (!request.getFamilyId().equals(fromSnapshot.getFamilyId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "非家庭成员");
         }
         if (fromMemberId.equals(request.getToMemberId())) {
             throw new BizException(ErrorCode.PARAM_INVALID, "不能向自己转移积分");
+        }
+
+        // 锁顺序固定：家庭 -> 两个住户（按ID升序），避免与其它家庭操作互相死锁。
+        Family family = familyRepository.findByIdForUpdate(request.getFamilyId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+        String firstId = fromMemberId.compareTo(request.getToMemberId()) < 0
+                ? fromMemberId : request.getToMemberId();
+        String secondId = firstId.equals(fromMemberId) ? request.getToMemberId() : fromMemberId;
+        Resident first = residentRepository.findByIdForUpdate(firstId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        Resident second = residentRepository.findByIdForUpdate(secondId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        Resident fromMember = firstId.equals(fromMemberId) ? first : second;
+        Resident toMember = firstId.equals(request.getToMemberId()) ? first : second;
+        if (!request.getFamilyId().equals(fromMember.getFamilyId())
+                || !request.getFamilyId().equals(toMember.getFamilyId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "非家庭成员");
         }
 
         int fromBalance = defaultPointBalance(fromMember);
@@ -227,12 +246,15 @@ public class PointService {
                 ? request.getRemark()
                 : "家庭内积分转移";
 
+        int familyBalance = defaultFamilyPointBalance(family);
         PointRecord record = createRecord(
                 fromMember,
                 family.getId(),
                 PointType.transfer.name(),
                 -request.getAmount(),
                 fromMember.getPointBalance(),
+                0,
+                familyBalance,
                 "transfer",
                 toMember.getId(),
                 description,
@@ -244,6 +266,8 @@ public class PointService {
                 PointType.transfer.name(),
                 request.getAmount(),
                 toMember.getPointBalance(),
+                0,
+                familyBalance,
                 "transfer",
                 fromMember.getId(),
                 description,
@@ -292,10 +316,10 @@ public class PointService {
             if (!request.getFamilyId().equals(resident.getFamilyId())) {
                 throw new BizException(ErrorCode.PERMISSION_DENIED, "非家庭成员");
             }
-            deductFromFamilyPool(request.getFamilyId(), request.getPoints());
-        } else {
-            deductFromPersonal(resident, request.getPoints());
         }
+        // 统一走 spendPoints：行锁 + 家庭池/个人池扣减 + 流水快照一次完成，避免与订单支付并发双花。
+        PointRecord record = spendPoints(resident, request.getPoints(), "fee_deduct", fee.getId(),
+                "积分抵扣物业费", null, useFamilyPool);
 
         fee.setPointDeducted(defaultPointDeducted(fee) + request.getPoints());
         fee.setPaidAmount(defaultPaidAmount(fee).add(deductedAmount));
@@ -305,32 +329,14 @@ public class PointService {
         }
         propertyFeeRepository.save(fee);
 
-        PointRecord record = createRecord(
-                resident,
-                useFamilyPool ? request.getFamilyId() : resident.getFamilyId(),
-                PointType.spend.name(),
-                -request.getPoints(),
-                defaultPointBalance(resident),
-                "fee_deduct",
-                fee.getId(),
-                "积分抵扣物业费",
-                null);
-
-        Integer familyBalance = null;
-        if (StringUtils.hasText(resident.getFamilyId())) {
-            familyBalance = familyRepository.findById(resident.getFamilyId())
-                    .map(this::defaultFamilyPointBalance)
-                    .orElse(null);
-        }
-
         return DeductFeeResponse.builder()
                 .propertyFeeId(fee.getId())
                 .pointsUsed(request.getPoints())
                 .deductedAmount(deductedAmount)
                 .remainingAmount(fee.getAmount().subtract(fee.getPaidAmount()))
                 .paymentStatus(fee.getPaymentStatus())
-                .residentBalance(defaultPointBalance(resident))
-                .familyBalance(familyBalance)
+                .residentBalance(record.getBalance())
+                .familyBalance(record.getFamilyBalance())
                 .deductedAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
                 .build();
     }
@@ -431,35 +437,14 @@ public class PointService {
                 .setScale(2, RoundingMode.HALF_UP);
 
         boolean useFamilyPool = StringUtils.hasText(resident.getFamilyId());
-        if (useFamilyPool) {
-            deductFromFamilyPool(resident.getFamilyId(), request.getPoints());
-        } else {
-            deductFromPersonal(resident, request.getPoints());
-        }
-
-        PointRecord record = createRecord(
-                resident,
-                resident.getFamilyId(),
-                PointType.spend.name(),
-                -request.getPoints(),
-                defaultPointBalance(resident),
-                "manual",
-                null,
-                "积分兑换",
-                null);
-
-        Integer familyBalanceAfter = null;
-        if (StringUtils.hasText(resident.getFamilyId())) {
-            familyBalanceAfter = familyRepository.findById(resident.getFamilyId())
-                    .map(this::defaultFamilyPointBalance)
-                    .orElse(null);
-        }
+        PointRecord record = spendPoints(resident, request.getPoints(), "manual", null,
+                "积分兑换", null, useFamilyPool);
 
         return RedeemPointResponse.builder()
                 .pointsUsed(request.getPoints())
                 .redeemedAmount(redeemedAmount)
-                .balanceAfter(defaultPointBalance(resident))
-                .familyBalanceAfter(familyBalanceAfter)
+                .balanceAfter(record.getBalance())
+                .familyBalanceAfter(record.getFamilyBalance())
                 .redeemedAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
                 .build();
     }
@@ -520,7 +505,10 @@ public class PointService {
     }
 
     /**
-     * 供其他模块调用的积分获取
+     * 供其他模块调用的积分获取。
+     *
+     * <p>记账边界：住户有家庭时，积分只进入<b>家庭池</b>，个人余额不变；无家庭时才进入个人余额。
+     * 家庭池与个人余额是两个独立账户，不能同时入账，否则同一笔积分会被花两次。</p>
      */
     @Transactional
     public PointRecord earnPoints(Resident resident,
@@ -529,24 +517,41 @@ public class PointService {
                                   String sourceId,
                                   String description,
                                   String operatorId) {
-        int newBalance = defaultPointBalance(resident) + amount;
-        resident.setPointBalance(newBalance);
+        if (amount <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "积分变动数量必须大于0");
+        }
+        LockedFamily locked = lockResidentAndFamily(resident);
+        Resident current = locked.resident();
 
-        if (StringUtils.hasText(resident.getFamilyId())) {
-            Family family = familyRepository.findById(resident.getFamilyId())
-                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
-            family.setPointBalance(defaultFamilyPointBalance(family) + amount);
-            familyRepository.save(family);
+        if (locked.family() != null) {
+            int newFamilyBalance = defaultFamilyPointBalance(locked.family()) + amount;
+            locked.family().setPointBalance(newFamilyBalance);
+            familyRepository.save(locked.family());
+            return createRecord(
+                    current,
+                    locked.familyId(),
+                    PointType.earn.name(),
+                    amount,
+                    defaultPointBalance(current),
+                    amount,
+                    newFamilyBalance,
+                    source,
+                    sourceId,
+                    description,
+                    operatorId);
         }
 
-        residentRepository.save(resident);
-
+        int newBalance = defaultPointBalance(current) + amount;
+        current.setPointBalance(newBalance);
+        residentRepository.save(current);
         return createRecord(
-                resident,
-                resident.getFamilyId(),
+                current,
+                null,
                 PointType.earn.name(),
                 amount,
                 newBalance,
+                0,
+                null,
                 source,
                 sourceId,
                 description,
@@ -562,19 +567,79 @@ public class PointService {
         Resident resident = getActiveResident(UserContext.currentUserId());
         featureSwitchGuard.assertPointEnabled(resident.getPropertyCompanyId());
         int amount = request.getPointAmount();
+
+        // v8.21：积分转物业需物业公司开启，且入住满配置年限（默认 5 年）；未开启时一律不可转
+        PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+        PointTransferPolicy.Decision transfer = PointTransferPolicy.evaluate(company, resident);
+        if (!transfer.eligible()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, transfer.blockedReason());
+        }
+
+        List<PropertyFee> payableFees = propertyFeeRepository
+                .findByResidentIdAndPaymentStatusInOrderByDueDateAsc(
+                        resident.getId(), List.of("unpaid", "partial", "overdue"));
+        if (payableFees.isEmpty()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "暂无待缴物业费，积分暂无可抵扣账单");
+        }
+
         PointRecord record = spendPoints(resident, amount, SOURCE_TRANSFER_TO_PROPERTY, resident.getId(),
                 request.getRemark() != null ? request.getRemark() : "住户积分转赠物业", null, false);
+
+        BigDecimal rate = resolvePointToFeeRate(resident.getPropertyCompanyId());
+        BigDecimal appliedAmount = applyPointsToFees(payableFees, amount, rate);
+
         return TransferToPropertyPointResponse.builder()
                 .recordId(record.getId())
                 .residentId(resident.getId())
                 .pointAmount(amount)
                 .balanceAfter(record.getBalance())
                 .transferredAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                .appliedFeeAmount(appliedAmount)
                 .build();
     }
 
     /**
-     * 供其他模块调用的积分消费（优先扣家庭池）
+     * 按账期从早到晚冲抵物业费账单，返回实际抵扣金额。
+     * 与 deductFee 保持同一回写口径：paidAmount/pointDeducted/paymentStatus/paidAt。
+     */
+    private BigDecimal applyPointsToFees(List<PropertyFee> fees, int points, BigDecimal rate) {
+        int remainingPoints = points;
+        BigDecimal applied = BigDecimal.ZERO;
+        for (PropertyFee fee : fees) {
+            if (remainingPoints <= 0) {
+                break;
+            }
+            BigDecimal paid = defaultPaidAmount(fee);
+            BigDecimal billRemaining = fee.getAmount().subtract(paid);
+            if (billRemaining.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            int need = billRemaining.divide(rate, 0, RoundingMode.CEILING).intValue();
+            int use = Math.min(remainingPoints, Math.max(need, 1));
+            BigDecimal amount = rate.multiply(BigDecimal.valueOf(use)).min(billRemaining)
+                    .setScale(2, RoundingMode.HALF_UP);
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            fee.setPaidAmount(paid.add(amount));
+            fee.setPointDeducted(defaultPointDeducted(fee) + use);
+            fee.setPaymentStatus(resolvePaymentStatus(fee.getAmount(), fee.getPaidAmount(), fee.getDueDate()));
+            if ("paid".equals(fee.getPaymentStatus())) {
+                fee.setPaidAt(LocalDateTime.now());
+            }
+            propertyFeeRepository.save(fee);
+            remainingPoints -= use;
+            applied = applied.add(amount);
+        }
+        return applied.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 供其他模块调用的积分消费。
+     *
+     * <p>useFamilyPool=true 时先扣家庭池，不足部分再扣个人余额；false 时只扣个人余额。
+     * 家庭池与个人余额分别加行锁，避免并发读改写导致双花。</p>
      */
     @Transactional
     public PointRecord spendPoints(Resident resident,
@@ -584,39 +649,200 @@ public class PointService {
                                    String description,
                                    String operatorId,
                                    boolean useFamilyPool) {
-        int remaining = amount;
-
-        if (useFamilyPool && StringUtils.hasText(resident.getFamilyId())) {
-            Family family = familyRepository.findById(resident.getFamilyId())
+        if (amount <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "积分变动数量必须大于0");
+        }
+        String familyId = useFamilyPool ? resident.getFamilyId() : null;
+        Family family = null;
+        Resident current;
+        if (StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId)
                     .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (!familyId.equals(current.getFamilyId())) {
+                throw new BizException(ErrorCode.ORDER_CONFLICT, "家庭状态已变更，请重试");
+            }
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+
+        int remaining = amount;
+        int fromFamily = 0;
+        Integer familyBalanceAfter = null;
+        if (family != null) {
             int familyBalance = defaultFamilyPointBalance(family);
-            int fromFamily = Math.min(remaining, familyBalance);
+            fromFamily = Math.min(remaining, familyBalance);
             if (fromFamily > 0) {
-                family.setPointBalance(familyBalance - fromFamily);
+                familyBalanceAfter = familyBalance - fromFamily;
+                family.setPointBalance(familyBalanceAfter);
                 familyRepository.save(family);
                 remaining -= fromFamily;
+            } else {
+                familyBalanceAfter = familyBalance;
             }
         }
 
         if (remaining > 0) {
-            int personalBalance = defaultPointBalance(resident);
+            int personalBalance = defaultPointBalance(current);
             if (personalBalance < remaining) {
                 throw new BizException(ErrorCode.POINT_INSUFFICIENT);
             }
-            resident.setPointBalance(personalBalance - remaining);
-            residentRepository.save(resident);
+            current.setPointBalance(personalBalance - remaining);
+            residentRepository.save(current);
         }
 
         return createRecord(
-                resident,
-                resident.getFamilyId(),
+                current,
+                family != null ? familyId : current.getFamilyId(),
                 PointType.spend.name(),
                 -amount,
-                defaultPointBalance(resident),
+                defaultPointBalance(current),
+                -fromFamily,
+                familyBalanceAfter,
                 source,
                 sourceId,
                 description,
                 operatorId);
+    }
+
+    /**
+     * 订单取消/退款时退回积分：按原支付流水的家庭/个人扣减比例原路退回。
+     * 旧数据没有 family_amount 时，若订单有 familyId 则回家庭池，否则回个人池。
+     */
+    @Transactional
+    public void refundOrderPoints(Resident resident, String orderId, int amount, String orderFamilyId) {
+        if (amount <= 0) {
+            return;
+        }
+        PointRecord spend = pointRecordRepository
+                .findFirstBySourceIdAndSourceAndPointTypeOrderByCreatedAtDesc(orderId, "order", "spend")
+                .orElse(null);
+        int fromFamily = 0;
+        if (spend != null && spend.getFamilyAmount() != null && spend.getFamilyAmount() < 0) {
+            fromFamily = Math.min(amount, -spend.getFamilyAmount());
+        } else if (spend == null
+                && (StringUtils.hasText(orderFamilyId) || StringUtils.hasText(resident.getFamilyId()))) {
+            fromFamily = amount;
+        }
+
+        String familyId = StringUtils.hasText(orderFamilyId) ? orderFamilyId : resident.getFamilyId();
+        Family family = null;
+        Resident current;
+        if (fromFamily > 0 && StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId).orElse(null);
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (family == null) {
+                fromFamily = 0;
+            }
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+
+        int toPersonal = amount - fromFamily;
+        Integer familyBalanceAfter = null;
+        if (family != null && fromFamily > 0) {
+            familyBalanceAfter = defaultFamilyPointBalance(family) + fromFamily;
+            family.setPointBalance(familyBalanceAfter);
+            familyRepository.save(family);
+        }
+        if (toPersonal > 0) {
+            current.setPointBalance(defaultPointBalance(current) + toPersonal);
+            residentRepository.save(current);
+        }
+
+        createRecord(current, family != null ? familyId : current.getFamilyId(),
+                PointType.earn.name(), amount, defaultPointBalance(current),
+                fromFamily, familyBalanceAfter, "order", orderId, "订单取消退回积分", null);
+    }
+
+    /**
+     * 订单取消/退款时扣回已返还的积分：按原返积分流水的家庭/个人入账比例原路扣回。
+     */
+    @Transactional
+    public void reverseOrderEarnedPoints(Resident resident, String orderId, int amount) {
+        if (amount <= 0) {
+            return;
+        }
+        PointRecord earn = pointRecordRepository
+                .findFirstBySourceIdAndSourceAndPointTypeOrderByCreatedAtDesc(orderId, "order", "earn")
+                .orElse(null);
+        int familyPortion = 0;
+        if (earn != null && earn.getFamilyAmount() != null && earn.getFamilyAmount() > 0) {
+            familyPortion = Math.min(amount, earn.getFamilyAmount());
+        } else if (earn == null && StringUtils.hasText(resident.getFamilyId())) {
+            familyPortion = amount;
+        }
+
+        String familyId = resident.getFamilyId();
+        Family family = null;
+        Resident current;
+        if (familyPortion > 0 && StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId).orElse(null);
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+
+        int remaining = amount;
+        int fromFamily = 0;
+        Integer familyBalanceAfter = null;
+        if (family != null && familyPortion > 0) {
+            int familyBalance = defaultFamilyPointBalance(family);
+            fromFamily = Math.min(remaining, Math.min(familyPortion, familyBalance));
+            if (fromFamily > 0) {
+                familyBalanceAfter = familyBalance - fromFamily;
+                family.setPointBalance(familyBalanceAfter);
+                familyRepository.save(family);
+                remaining -= fromFamily;
+            } else {
+                familyBalanceAfter = familyBalance;
+            }
+        }
+        if (remaining > 0) {
+            int personalBalance = defaultPointBalance(current);
+            if (personalBalance < remaining) {
+                throw new BizException(ErrorCode.POINT_INSUFFICIENT);
+            }
+            current.setPointBalance(personalBalance - remaining);
+            residentRepository.save(current);
+        }
+
+        createRecord(current, family != null ? familyId : current.getFamilyId(),
+                PointType.spend.name(), -amount, defaultPointBalance(current),
+                -fromFamily, familyBalanceAfter, "order", orderId, "订单取消扣回返积分", null);
+    }
+
+    /**
+     * 家庭场景统一锁顺序：先锁家庭、再锁住户。无家庭时只锁住户。
+     * 若读取家庭ID后被并发修改，抛 ORDER_CONFLICT 让上层重试，避免锁顺序反转导致死锁。
+     */
+    private LockedFamily lockResidentAndFamily(Resident resident) {
+        String familyId = resident.getFamilyId();
+        if (!StringUtils.hasText(familyId)) {
+            Resident locked = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (StringUtils.hasText(locked.getFamilyId())) {
+                throw new BizException(ErrorCode.ORDER_CONFLICT, "家庭状态已变更，请重试");
+            }
+            return new LockedFamily(null, locked, null);
+        }
+        Family family = familyRepository.findByIdForUpdate(familyId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+        Resident locked = residentRepository.findByIdForUpdate(resident.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!familyId.equals(locked.getFamilyId())) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "家庭状态已变更，请重试");
+        }
+        return new LockedFamily(family, locked, familyId);
+    }
+
+    private record LockedFamily(Family family, Resident resident, String familyId) {
     }
 
     private PointRecord createRecord(Resident resident,
@@ -624,6 +850,21 @@ public class PointService {
                                      String pointType,
                                      int amount,
                                      int balance,
+                                     String source,
+                                     String sourceId,
+                                     String description,
+                                     String operatorId) {
+        return createRecord(resident, familyId, pointType, amount, balance, null, null,
+                source, sourceId, description, operatorId);
+    }
+
+    private PointRecord createRecord(Resident resident,
+                                     String familyId,
+                                     String pointType,
+                                     int amount,
+                                     int balance,
+                                     Integer familyAmount,
+                                     Integer familyBalance,
                                      String source,
                                      String sourceId,
                                      String description,
@@ -636,31 +877,13 @@ public class PointService {
         record.setPointType(pointType);
         record.setAmount(amount);
         record.setBalance(balance);
+        record.setFamilyAmount(familyAmount);
+        record.setFamilyBalance(familyBalance);
         record.setSource(source);
         record.setSourceId(sourceId);
         record.setDescription(description);
         record.setOperatorId(operatorId);
         return pointRecordRepository.save(record);
-    }
-
-    private void deductFromPersonal(Resident resident, int amount) {
-        int balance = defaultPointBalance(resident);
-        if (balance < amount) {
-            throw new BizException(ErrorCode.POINT_INSUFFICIENT);
-        }
-        resident.setPointBalance(balance - amount);
-        residentRepository.save(resident);
-    }
-
-    private void deductFromFamilyPool(String familyId, int amount) {
-        Family family = familyRepository.findById(familyId)
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
-        int balance = defaultFamilyPointBalance(family);
-        if (balance < amount) {
-            throw new BizException(ErrorCode.POINT_INSUFFICIENT);
-        }
-        family.setPointBalance(balance - amount);
-        familyRepository.save(family);
     }
 
     private String resolveFamilyScope(Resident resident, String familyId) {

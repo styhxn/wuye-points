@@ -79,6 +79,7 @@ public class RoleWithdrawalService {
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
     private final WithdrawableService withdrawableService;
+    private final UnifiedEarningsService unifiedEarningsService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final PlatformSettingService platformSetting;
@@ -262,14 +263,9 @@ public class RoleWithdrawalService {
         }
         assertNotBlocked(current.getResidentId());
 
-        BigDecimal earned = defaultDecimal(distributionRecordRepository
-                .sumBuildingLeaderShareByBuildingLeaderId(current.getId()));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_BUILDING_LEADER, null));
-        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
-        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
-                WechatSplitOwnerTypes.BUILDING_LEADER.name(), current.getId());
-        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        // v8.21：从账号统一收益账户校验并扣减（楼长/业主卖货/名下商家合并口径）
+        BigDecimal withdrawable = unifiedEarningsService.calc(current.getResidentId())
+                .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -313,10 +309,8 @@ public class RoleWithdrawalService {
             throw new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND);
         }
 
-        BigDecimal earned = defaultDecimal(settlementRepository.sumResellerProfitByResidentId(residentId));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, null));
-        BigDecimal withdrawable = earned.subtract(occupied).max(BigDecimal.ZERO);
+        // v8.21：卖货收益同样从账号统一收益账户校验，避免与楼长/商家收益重复提现
+        BigDecimal withdrawable = unifiedEarningsService.calc(residentId).withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }

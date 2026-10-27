@@ -295,13 +295,14 @@ public class ConsultationService {
             String referenceId,
             PaymentBreakdown breakdown,
             String remark) {
+        boolean useFamilyPool = StringUtils.hasText(resident.getFamilyId());
         if (breakdown.pointUsed() > 0) {
             pointService.spendPoints(
-                    resident, breakdown.pointUsed(), "consultation", referenceId, remark, null, false);
+                    resident, breakdown.pointUsed(), "consultation", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
             propertyCoinService.spendCoins(
-                    resident, breakdown.coinUsed(), "consultation", referenceId, remark, null, false);
+                    resident, breakdown.coinUsed(), "consultation", referenceId, remark, null, useFamilyPool);
         }
     }
 

@@ -126,6 +126,13 @@ public class Resident extends BaseEntity {
     @Column(name = "birthday")
     private LocalDate birthday;
 
+    /**
+     * 令牌版本号：登出/强制下线时 +1，旧 access/refresh token 立即失效。
+     * 旧数据默认 0；历史 token 不带 tv 声明时走兼容分支。
+     */
+    @Column(name = "token_version")
+    private Integer tokenVersion;
+
     /** 提现是否被冻结 */
     @Column(name = "withdrawal_blocked")
     private Boolean withdrawalBlocked;

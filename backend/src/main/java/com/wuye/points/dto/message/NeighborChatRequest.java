@@ -17,4 +17,10 @@ public class NeighborChatRequest {
     @Size(min = 1, max = 500, message = "消息内容长度须在1-500字符之间")
     @Schema(description = "消息内容", requiredMode = Schema.RequiredMode.REQUIRED, example = "你好，方便聊一下吗？")
     private String content;
+
+    @Schema(description = "关联商品ID（商品详情联系店主时传入）", example = "prd_xxx")
+    private String relatedProductId;
+
+    @Schema(description = "关联业主上架ID（业主小店商品联系店主时传入）", example = "rml_xxx")
+    private String relatedListingId;
 }

@@ -92,6 +92,12 @@ public class MerchantDetailResponse {
     @Schema(description = "商家状态", example = "active")
     private String status;
 
+    @Schema(description = "商家来源原始值（platform/group_leader/technician/resident_shop 等）", example = "platform")
+    private String merchantSource;
+
+    @Schema(description = "店铺类型：merchant 普通商家；resident 业主小店", example = "merchant")
+    private String shopType;
+
     @Schema(description = "创建时间", example = "2024-01-01T00:00:00")
     private String createdAt;
 
@@ -100,6 +106,30 @@ public class MerchantDetailResponse {
 
     @Schema(description = "更新时间", example = "2024-01-01T00:00:00")
     private String updatedAt;
+
+    @Schema(description = "本店提现入口实际可用金额 = min(店铺可提现, 账号统一可提现)，仅商家本人/管理端查询时返回", example = "1280.50")
+    private java.math.BigDecimal withdrawableAmount;
+
+    @Schema(description = "本店铺可提现余额（店铺口径，未扣其他角色对统一账户的占用；v8.23 新增显式字段）", example = "1280.50")
+    private java.math.BigDecimal shopWithdrawableAmount;
+
+    @Schema(description = "账号统一可提现余额（楼长分成 + 业主卖货 + 名下商家，扣全部角色提现在途；v8.23 新增）", example = "1580.50")
+    private java.math.BigDecimal accountWithdrawableAmount;
+
+    @Schema(description = "盈利余额口径：shop=本店铺（固定值，供前端判断）", example = "shop")
+    private String profitScope;
+
+    @Schema(description = "累计订单总数（不含已取消/已退款）", example = "128")
+    private Long totalOrders;
+
+    @Schema(description = "商家购分账户剩余积分（与 /merchant/points/* 同一账户）", example = "5000")
+    private Integer pointBalance;
+
+    @Schema(description = "盈利余额（店铺口径，不含楼长分成/业主卖货收益；与 shopWithdrawableAmount 同值）", example = "1280.50")
+    private java.math.BigDecimal profitBalance;
+
+    @Schema(description = "提现是否被冻结（仅商家本人/管理端查询时返回）", example = "false")
+    private Boolean withdrawableBlocked;
 
     @Schema(description = "商家商品列表")
     private List<MerchantProductItemResponse> products;

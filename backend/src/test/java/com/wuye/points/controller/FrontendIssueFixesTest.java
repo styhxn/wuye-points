@@ -275,7 +275,7 @@ class FrontendIssueFixesTest extends ControllerTestBase {
         mockMvc.perform(post("/orders/preview")
                         .header("Authorization", token("res_dev001", "resident"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"merchantId\":\"mch_act01\",\"items\":[{\"productId\":\"prd_issue001\",\"quantity\":2}],\"coinUsed\":2.00,\"pointUsed\":100}"))
+                        .content("{\"merchantId\":\"mch_act01\",\"items\":[{\"productId\":\"prd_issue001\",\"quantity\":2}],\"coinUsed\":2.00,\"pointUsed\":0}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
                 .andExpect(jsonPath("$.data.totalAmount").isNumber())

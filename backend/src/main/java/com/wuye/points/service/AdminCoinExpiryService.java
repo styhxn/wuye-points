@@ -6,13 +6,10 @@ import com.wuye.points.dto.admin.coinexpiry.RunCoinExpiryRequest;
 import com.wuye.points.dto.admin.coinexpiry.RunCoinExpiryResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.CoinExpiryRecord;
-import com.wuye.points.entity.PropertyCoinRecord;
 import com.wuye.points.entity.PropertyCompany;
-import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.CoinExpiryRecordRepository;
-import com.wuye.points.repository.PropertyCoinRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.AdminSupport;
@@ -31,7 +28,6 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,13 +38,13 @@ import java.util.stream.Collectors;
 public class AdminCoinExpiryService {
 
     private final CoinExpiryRecordRepository coinExpiryRecordRepository;
-    private final PropertyCoinRecordRepository propertyCoinRecordRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final OperationLogService operationLogService;
     private final SnowflakeIdGenerator idGenerator;
+    private final CoinExpiryService coinExpiryService;
 
     @Transactional
     public RunCoinExpiryResponse run(RunCoinExpiryRequest request) {
@@ -73,86 +69,12 @@ public class AdminCoinExpiryService {
             throw new BizException(ErrorCode.PARAM_INVALID, "该物业公司未设置物业币有效期");
         }
 
-        LocalDate issueDeadline = expiryDate.minusDays(expiryDays);
-
-        List<Resident> residents;
-        if (request.getResidentIds() != null && !request.getResidentIds().isEmpty()) {
-            Set<String> residentIds = new HashSet<>(request.getResidentIds());
-            residents = residentRepository.findAllById(residentIds).stream()
-                    .filter(r -> scopedPropertyCompanyId.equals(r.getPropertyCompanyId()))
-                    .toList();
-        } else {
-            residents = residentRepository.findByPropertyCompanyId(scopedPropertyCompanyId);
-        }
-
-        BigDecimal totalExpiredAmount = BigDecimal.ZERO;
-        BigDecimal clearedToPool = BigDecimal.ZERO;
-        int processedCount = 0;
         String operatorId = UserContext.currentUserId();
-
-        for (Resident resident : residents) {
-            BigDecimal balance = defaultCoinBalance(resident);
-            if (balance.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            List<PropertyCoinRecord> earnRecords = propertyCoinRecordRepository
-                    .findByResidentIdAndCoinTypeAndCreatedAtBefore(
-                            resident.getId(), "earn", issueDeadline.atStartOfDay());
-
-            List<PropertyCoinRecord> rechargeRecords = propertyCoinRecordRepository
-                    .findByResidentIdAndCoinTypeAndCreatedAtBefore(
-                            resident.getId(), "recharge", issueDeadline.atStartOfDay());
-
-            BigDecimal expiredFromEarn = earnRecords.stream()
-                    .map(PropertyCoinRecord::getAmount)
-                    .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            BigDecimal expiredFromRecharge = rechargeRecords.stream()
-                    .map(PropertyCoinRecord::getAmount)
-                    .filter(amount -> amount != null && amount.compareTo(BigDecimal.ZERO) > 0)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            BigDecimal totalExpired = expiredFromEarn.add(expiredFromRecharge);
-            if (totalExpired.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            BigDecimal actualExpired = totalExpired.min(balance);
-            processedCount++;
-            totalExpiredAmount = totalExpiredAmount.add(actualExpired);
-            clearedToPool = clearedToPool.add(actualExpired);
-
-            if (!dryRun) {
-                BigDecimal newBalance = balance.subtract(actualExpired);
-                resident.setCoinBalance(newBalance);
-                residentRepository.save(resident);
-
-                PropertyCoinRecord record = new PropertyCoinRecord();
-                record.setId(idGenerator.generateId("coin"));
-                record.setResidentId(resident.getId());
-                record.setFamilyId(resident.getFamilyId());
-                record.setPropertyCompanyId(resident.getPropertyCompanyId());
-                record.setCoinType("expire");
-                record.setAmount(actualExpired.negate());
-                record.setBalance(newBalance);
-                record.setSource("coin_expired");
-                record.setSourceId(null);
-                record.setDescription("物业币过期清零");
-                record.setOperatorId(operatorId);
-                propertyCoinRecordRepository.save(record);
-
-                CoinExpiryRecord expiryRecord = new CoinExpiryRecord();
-                expiryRecord.setId(idGenerator.generateId("cer"));
-                expiryRecord.setResidentId(resident.getId());
-                expiryRecord.setPropertyCompanyId(scopedPropertyCompanyId);
-                expiryRecord.setExpiredAmount(actualExpired);
-                expiryRecord.setPoolInAmount(actualExpired);
-                expiryRecord.setExpiredAt(expiryDate.atStartOfDay());
-                coinExpiryRecordRepository.save(expiryRecord);
-            }
-        }
+        CoinExpiryService.ExpiryResult result = coinExpiryService.expireForCompany(
+                company, expiryDate, request.getResidentIds(), dryRun, operatorId);
+        int processedCount = result.processedCount();
+        BigDecimal totalExpiredAmount = result.totalExpired();
+        BigDecimal clearedToPool = result.clearedToPool();
 
         if (!dryRun) {
             operationLogService.log("coin_expiry", "run", "coin_expiry_task",
@@ -237,10 +159,6 @@ public class AdminCoinExpiryService {
         residentRepository.findAllById(residentIds).forEach(resident ->
                 names.put(resident.getId(), resident.getName()));
         return names;
-    }
-
-    private BigDecimal defaultCoinBalance(Resident resident) {
-        return resident.getCoinBalance() != null ? resident.getCoinBalance() : BigDecimal.ZERO;
     }
 
     private LocalDateTime parseStartDate(String value) {

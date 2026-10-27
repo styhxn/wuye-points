@@ -32,4 +32,10 @@ public class NeighborSearchResponse {
 
     @Schema(description = "聊天状态", example = "not_chatted")
     private String chatStatus;
+
+    @Schema(description = "是否单元楼长（邻里列表置顶用）", example = "true")
+    private Boolean isBuildingLeader;
+
+    @Schema(description = "是否单元负责人/楼长（与 isBuildingLeader 同口径）", example = "true")
+    private Boolean isUnitLeader;
 }

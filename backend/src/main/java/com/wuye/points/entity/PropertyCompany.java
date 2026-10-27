@@ -91,6 +91,14 @@ public class PropertyCompany extends BaseEntity {
     @Column(name = "two_year_clear_enabled")
     private Boolean twoYearClearEnabled;
 
+    /** 是否允许积分转物业抵扣物业费（v8.21，默认关闭） */
+    @Column(name = "point_transfer_enabled")
+    private Boolean pointTransferEnabled = false;
+
+    /** 积分转物业所需最低年限（年，默认 5） */
+    @Column(name = "point_transfer_min_years")
+    private Integer pointTransferMinYears = 5;
+
     /** 邻居私聊每日限制 */
     @Column(name = "neighbor_daily_contact_limit")
     private Integer neighborDailyContactLimit;

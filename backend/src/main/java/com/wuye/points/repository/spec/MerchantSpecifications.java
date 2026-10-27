@@ -37,10 +37,13 @@ public final class MerchantSpecifications {
             } else if (publicOnly) {
                 predicates.add(cb.equal(root.get("auditStatus"), "approved"));
                 predicates.add(cb.equal(root.get("status"), "active"));
-                // 移动端常规商家列表排除业主小店店铺主体（merchant_source=resident_shop，仅业主橱窗展示）；管理端不受限
-                predicates.add(cb.or(
-                        cb.isNull(root.get("merchantSource")),
-                        cb.notEqual(root.get("merchantSource"), "resident_shop")));
+                // 移动端常规商家列表排除业主小店店铺主体（merchant_source=resident_shop，仅业主橱窗展示）；
+                // v8.21：显式查询「物业推荐」时允许返回被推荐的业主小店/代销小店；管理端不受限
+                if (!Boolean.TRUE.equals(recommended)) {
+                    predicates.add(cb.or(
+                            cb.isNull(root.get("merchantSource")),
+                            cb.notEqual(root.get("merchantSource"), "resident_shop")));
+                }
             }
             if (StringUtils.hasText(keyword)) {
                 String like = "%" + keyword.trim() + "%";

@@ -5,6 +5,7 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.merchant.withdrawal.ApplyWithdrawalRequest;
 import com.wuye.points.dto.merchant.withdrawal.WithdrawalItemResponse;
 import com.wuye.points.service.MerchantWithdrawalService;
+import com.wuye.points.support.Idempotent;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
@@ -28,7 +29,8 @@ public class MerchantWithdrawalController {
 
     private final MerchantWithdrawalService merchantWithdrawalService;
 
-    @Operation(summary = "申请商家提现", description = "商家提现申请。Auth: Required | Roles: merchant")
+    @Operation(summary = "申请商家提现", description = "商家提现申请。Auth: Required | Roles: merchant；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping
     public ApiResponse<WithdrawalItemResponse> apply(
             @Valid @RequestBody ApplyWithdrawalRequest request) {

@@ -253,10 +253,12 @@ public class OrderService {
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND, "货源商品已停售");
         }
-        // 订单归属业主小店店铺主体（而非一级代理），配送费/佣金按店铺主体计算
-        Merchant merchant = resolveShopMerchant(listing);
+        // v8.21：订单/配送/结算主体为一级代理商；业主小店仅保留佣金归属
+        Merchant shopMerchant = resolveShopMerchant(listing);
+        assertMerchantAvailable(shopMerchant);
+        Merchant merchant = resolveDistributorMerchant(product, resident);
         assertMerchantAvailable(merchant);
-        loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
+        loadListingMerchantConfig(merchant, resident);
 
         BigDecimal unitPrice = defaultDecimal(listing.getRetailPrice());
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
@@ -291,6 +293,11 @@ public class OrderService {
                 ? request.getContactPhone() : resident.getPhone());
         order.setRemark(request.getRemark());
         order.setListingId(listing.getId());
+        // v8.21：业主小店代销一级代理货源——订单与结算面向一级代理商，业主小店仅保留佣金归属
+        order.setSourceType("distributor");
+        order.setDistributorId(product.getDistributorMerchantId());
+        order.setResidentMerchantId(shopMerchant.getId());
+        order.setSettlementOwner("distributor");
         // 业主商户上架商品：走常规配送履约链路（支付后进入 pending_choice）
         order.setRequiresDelivery(Boolean.TRUE);
         order.setFulfillmentMode(null);
@@ -337,6 +344,34 @@ public class OrderService {
         }
         return merchantRepository.findById(application.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.SHOP_MERCHANT_NOT_FOUND));
+    }
+
+    /**
+     * 代销订单的商家配置：优先住户所属物业公司；跨物业公司的 platform 代理商回退到代理商本物业配置。
+     */
+    private MerchantPropertyConfig loadListingMerchantConfig(Merchant distributor, Resident resident) {
+        return merchantPropertyConfigRepository
+                .findByMerchantIdAndPropertyCompanyId(distributor.getId(), resident.getPropertyCompanyId())
+                .filter(config -> "active".equals(config.getStatus()))
+                .or(() -> merchantPropertyConfigRepository
+                        .findByMerchantIdAndPropertyCompanyId(
+                                distributor.getId(), distributor.getPropertyCompanyId())
+                        .filter(config -> "active".equals(config.getStatus())))
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_CONFIG_NOT_FOUND));
+    }
+
+    /**
+     * 解析一级代理商主体：货源所属商家必须启用/审核通过；
+     * 普通代理仅服务本物业公司，platform 供货范围允许跨物业公司代销。
+     */
+    private Merchant resolveDistributorMerchant(DistributorProduct product, Resident resident) {
+        Merchant distributor = merchantRepository.findById(product.getDistributorMerchantId())
+                .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND, "一级代理商不存在"));
+        if (!"platform".equals(product.getSupplyScope())
+                && !distributor.getPropertyCompanyId().equals(resident.getPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "该货源仅限本物业公司的业主小店代销");
+        }
+        return distributor;
     }
 
     /**
@@ -397,6 +432,11 @@ public class OrderService {
 
         BigDecimal payable = order.getTotalAmount().add(defaultDecimal(order.getDeliveryFee()));
         boolean useFamilyPool = resolveUseFamilyPool(request.getFamilyId(), order, resident);
+        // 固化家庭池快照：后续回调/退款按 order.familyId 判断原路退回，不依赖住户当前状态。
+        if (useFamilyPool && !StringUtils.hasText(order.getFamilyId())
+                && StringUtils.hasText(resident.getFamilyId())) {
+            order.setFamilyId(resident.getFamilyId());
+        }
 
         // 优惠券：锁定并抵扣商品金额（由商家承担；配送费不参与抵扣）
         BigDecimal couponAmount = couponService.lockForOrder(request.getUserCouponId(),
@@ -408,7 +448,7 @@ public class OrderService {
             payable = payable.subtract(couponAmount).max(BigDecimal.ZERO);
         }
 
-        PaymentBreakdown breakdown = resolvePaymentBreakdown(request, payable, config);
+        PaymentBreakdown breakdown = resolvePaymentBreakdown(request, payable, config, resident, useFamilyPool);
         if (breakdown.cashAmount().compareTo(BigDecimal.ZERO) > 0) {
             // 含现金部分：微信预下单，订单保持 pending，支付成功后由回调 completeChannelPayment 落账
             return initiateChannelPayment(order, resident, merchant, items, request, payable, breakdown);
@@ -559,6 +599,10 @@ public class OrderService {
     public void completeChannelPayment(PaymentRecord record) {
         Order order = getOrderForUpdate(record.getBizId());
         if (!"pending".equals(order.getOrderStatus())) {
+            // 取消/退款竞态：订单已取消但微信侧支付成功，钱必须原路退回。
+            if ("cancelled".equals(order.getOrderStatus())) {
+                refundCashForCancelledPayment(order, record);
+            }
             return; // 幂等：已支付/已取消/已关闭
         }
 
@@ -569,13 +613,16 @@ public class OrderService {
 
         int pointUsed = record.getPointUsed() != null ? record.getPointUsed() : 0;
         BigDecimal coinUsed = record.getCoinUsed() != null ? record.getCoinUsed() : BigDecimal.ZERO;
+        // 与预下单保持一致：订单有 familyId 或住户属于家庭时，先扣家庭池，不足再扣个人余额。
+        boolean useFamilyPool = StringUtils.hasText(order.getFamilyId())
+                || StringUtils.hasText(resident.getFamilyId());
         if (pointUsed > 0) {
             pointService.spendPoints(resident, pointUsed, "order", order.getId(),
-                    "订单消费抵扣积分", null, false);
+                    "订单消费抵扣积分", null, useFamilyPool);
         }
         if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
             propertyCoinService.spendCoins(resident, coinUsed, "order", order.getId(),
-                    "订单消费抵扣物业币", null, false);
+                    "订单消费抵扣物业币", null, useFamilyPool);
         }
 
         // 库存已在预下单（payOrder → initiateChannelPayment）预占扣减，此处严禁再扣一次：
@@ -696,7 +743,12 @@ public class OrderService {
         boolean maskPhone = !isOrderOwner(order) && !roleGuard.isPlatformAdmin() && !roleGuard.isPropertyAdmin();
         Delivery delivery = deliveryRepository.findByOrderId(order.getId()).orElse(null);
 
-        return orderConverter.toDetail(order, merchant, items, maskPhone, delivery);
+        OrderDetailResponse detail = orderConverter.toDetail(order, merchant, items, maskPhone, delivery);
+        // 支付流水状态独立于订单状态：amount_mismatch 时订单仍是 pending，前端需并列展示“支付待对账”。
+        paymentRecordRepository.findFirstByBizTypeAndBizIdOrderByCreatedAtDesc(
+                        PaymentBizType.ORDER, order.getId())
+                .ifPresent(record -> detail.setPaymentStatus(record.getStatus()));
+        return detail;
     }
 
     @Transactional
@@ -712,34 +764,76 @@ public class OrderService {
 
         if ("completed".equals(order.getOrderStatus())
                 || "cancelled".equals(order.getOrderStatus())
-                || "refunded".equals(order.getOrderStatus())) {
+                || "refunded".equals(order.getOrderStatus())
+                || "refunding".equals(order.getOrderStatus())
+                || "refund_rejected".equals(order.getOrderStatus())) {
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID);
         }
 
-        BigDecimal refundCoin = BigDecimal.ZERO;
-        int refundPoint = 0;
-        BigDecimal refundAmount = BigDecimal.ZERO;
+        BigDecimal refundCoin = defaultDecimal(order.getCoinUsed());
+        int refundPoint = defaultPoint(order.getPointUsed());
+        BigDecimal refundAmount = refundCoin.add(defaultDecimal(order.getCashAmount()));
 
-        // pending（含已微信预下单、库存已预占但未付款）也在内：不归还预占库存会永久泄漏
-        // 库存（PendingPaymentScheduler 仅在订单仍为 pending 时补归还，此处订单已 cancelled 便不再补）。
-        // 未支付订单的退款/返奖分支均为空操作（point/coin/cash 为 0，refundCashIfAny 直接 return）。
-        if ("pending".equals(order.getOrderStatus())
-                || "paid".equals(order.getOrderStatus())
-                || "delivering".equals(order.getOrderStatus())
-                || "pending_verification".equals(order.getOrderStatus())
-                || "verified".equals(order.getOrderStatus())) {
-            refundCoin = defaultDecimal(order.getCoinUsed());
-            refundPoint = defaultPoint(order.getPointUsed());
-            refundAmount = refundCoin.add(defaultDecimal(order.getCashAmount()));
+        cancelAndRefund(order, resident, request.getReason(), "user");
+
+        return CancelOrderResponse.builder()
+                .orderId(order.getId())
+                .orderStatus(order.getOrderStatus())
+                .cancelledAt(DateTimeUtil.toIsoUtc(order.getCancelledAt()))
+                .refundAmount(refundAmount)
+                .refundPoint(refundPoint)
+                .refundCoin(refundCoin)
+                .build();
+    }
+
+    /**
+     * 统一的取消/拒单退款入口（用户取消、系统超时、商家拒单共用）。
+     *
+     * <p>pending：只关微信单/恢复预占库存，不退积分/物业币（尚未扣减）；
+     * 已支付：退积分/物业币、扣回返现、恢复库存、撤销分账/配送、退现金。
+     * 现金退款异步完成，refundStatus 先置 refunding，由退款轮询落 refunded/failed。</p>
+     */
+    @Transactional
+    public void cancelAndRefund(Order order, Resident resident, String reason, String cancelledBy) {
+        if ("cancelled".equals(order.getOrderStatus())
+                || "refunded".equals(order.getOrderStatus())
+                || "refunding".equals(order.getOrderStatus())
+                || "refund_rejected".equals(order.getOrderStatus())
+                || "refunding".equals(order.getRefundStatus())) {
+            return;
+        }
+        boolean pending = "pending".equals(order.getOrderStatus());
+        boolean hasPaidRecord = !paymentRecordRepository
+                .findByBizTypeAndBizIdAndStatus(PaymentBizType.ORDER, order.getId(), "paid").isEmpty();
+
+        if (pending) {
+            if (hasPaidRecord) {
+                // 支付已成功但 finalize 尚未执行：只退现金，积分/物业币尚未扣减，不能退。
+                // 此时 order.cashAmount 可能还没被 finalize 写入，必须以支付流水快照为准。
+                PaymentRecord paidRecord = paymentRecordRepository
+                        .findByBizTypeAndBizIdAndStatus(PaymentBizType.ORDER, order.getId(), "paid")
+                        .stream().findFirst().orElse(null);
+                refundCashForCancelledPayment(order, paidRecord);
+            } else {
+                closePendingPayments(order);
+            }
+            restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
+        } else {
+            int refundPoint = defaultPoint(order.getPointUsed());
+            BigDecimal refundCoin = defaultDecimal(order.getCoinUsed());
             refundPayment(resident, order, refundPoint, refundCoin);
             restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
             reverseRewards(resident, order);
-            refundCashIfAny(order, "用户取消订单");
+            refundCashIfAny(order, reason);
         }
 
         order.setOrderStatus("cancelled");
         order.setCancelledAt(LocalDateTime.now());
-        order.setCancelReason(request.getReason());
+        order.setCancelReason(reason);
+        order.setCancelledBy(cancelledBy);
+        if ("refunded".equals(order.getRefundStatus()) || "refunding".equals(order.getRefundStatus())) {
+            order.setRefundFailReason(null);
+        }
 
         try {
             orderRepository.save(order);
@@ -751,15 +845,29 @@ public class OrderService {
         distributionService.reverseForCancelledOrder(order.getId());
         // 取消/退款：释放优惠券回用户账户
         couponService.releaseByOrder(order.getId());
+    }
 
-        return CancelOrderResponse.builder()
-                .orderId(order.getId())
-                .orderStatus(order.getOrderStatus())
-                .cancelledAt(DateTimeUtil.toIsoUtc(order.getCancelledAt()))
-                .refundAmount(refundAmount)
-                .refundPoint(refundPoint)
-                .refundCoin(refundCoin)
-                .build();
+    /** 关闭订单下所有 pending 微信支付单；关单失败也本地置 closed，回调到账时走自动退款兜底。 */
+    private void closePendingPayments(Order order) {
+        List<PaymentRecord> pendingRecords = paymentRecordRepository
+                .findByBizTypeAndBizIdAndStatus(PaymentBizType.ORDER, order.getId(), "pending");
+        for (PaymentRecord record : pendingRecords) {
+            if (wechatPayService.isEnabled()) {
+                try {
+                    wechatPayService.close(record);
+                } catch (Exception e) {
+                    record.setStatus("closed");
+                    record.setErrorMsg("订单取消关单失败，已本地关闭: " + e.getMessage());
+                    paymentRecordRepository.save(record);
+                    log.warn("订单取消关单失败，已本地置 closed，若用户支付将由回调退款 orderId={} recordId={}",
+                            order.getId(), record.getId(), e);
+                }
+            } else {
+                record.setStatus("closed");
+                record.setErrorMsg("订单取消自动关闭");
+                paymentRecordRepository.save(record);
+            }
+        }
     }
 
     /**
@@ -847,7 +955,11 @@ public class OrderService {
                         totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, totalAmount, null);
 
         BigDecimal coinUsed = allowance.coinUsed();
-        int pointUsed = request.getPointUsed() != null ? request.getPointUsed() : 0;
+        // v8.21：积分仅用于转物业抵扣物业费，商城下单不再支持积分抵扣
+        if (request.getPointUsed() != null && request.getPointUsed() > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "积分仅可用于抵扣物业费，商城下单不支持积分抵扣");
+        }
+        int pointUsed = 0;
         MerchantPropertyConfig config = loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
         BigDecimal exchangeRate = config.getPointExchangeRate() != null
                 ? config.getPointExchangeRate()
@@ -914,10 +1026,12 @@ public class OrderService {
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND, "货源商品已停售");
         }
-        // 试算口径与 createListingOrder 一致：配送费按业主小店店铺主体计算
-        Merchant merchant = resolveShopMerchant(listing);
+        // 试算口径与 createListingOrder 一致：配送费/结算按一级代理商主体计算
+        Merchant shopMerchant = resolveShopMerchant(listing);
+        assertMerchantAvailable(shopMerchant);
+        Merchant merchant = resolveDistributorMerchant(product, resident);
         assertMerchantAvailable(merchant);
-        loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
+        loadListingMerchantConfig(merchant, resident);
 
         int quantity = request.getQuantity() == null || request.getQuantity() < 1 ? 1 : request.getQuantity();
         int remaining = listing.getQuantityRemaining() == null ? 0 : listing.getQuantityRemaining();
@@ -953,7 +1067,11 @@ public class OrderService {
                         totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, totalAmount, null);
 
         BigDecimal coinUsed = allowance.coinUsed();
-        int pointUsed = request.getPointUsed() != null ? request.getPointUsed() : 0;
+        // v8.21：积分仅用于转物业抵扣物业费，商城下单不再支持积分抵扣
+        if (request.getPointUsed() != null && request.getPointUsed() > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "积分仅可用于抵扣物业费，商城下单不支持积分抵扣");
+        }
+        int pointUsed = 0;
         MerchantPropertyConfig config = loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
         BigDecimal exchangeRate = config.getPointExchangeRate() != null
                 ? config.getPointExchangeRate()
@@ -1095,6 +1213,9 @@ public class OrderService {
         restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
         reverseRewards(resident, order);
         refundCashIfAny(order, "退货审核通过");
+        if (!StringUtils.hasText(order.getRefundStatus())) {
+            order.setRefundStatus("refunded");
+        }
         // 业主小店订单：已结算的结算单冲正（负向钱包流水 + sold_quantity 回退 + 结算单置 reversed）
         residentMerchantSettlementService.refundOnOrderRefunded(order);
 
@@ -1694,23 +1815,15 @@ public class OrderService {
      * 业主上架货源商品（dpr_）恢复 listing 可售件数（quantity_remaining 加回）。
      */
     private void restoreStock(Order order, List<OrderItem> items) {
+        // pending 订单只有发起过微信预下单才扣过库存；从未发起支付的 pending 不能回补，否则库存虚增。
+        if ("pending".equals(order.getOrderStatus())
+                && !paymentRecordRepository.existsByBizId(order.getId())) {
+            return;
+        }
         productStockService.restoreAll(listingSourcedExcluded(items));
-        if (order.getListingId() != null && isListingStockDeducted(order)) {
+        if (order.getListingId() != null) {
             listingStockService.restoreForOrder(order.getListingId(), listingQuantity(items));
         }
-    }
-
-    /**
-     * listing 件数是否已预占：支付成功及之后状态（paid/delivering/refunding 等）必然已扣减；
-     * pending 订单仅当发起过支付（存在支付流水，微信预下单即预占）时才扣过件数——
-     * 从未发起支付的 pending 订单取消时不得回补可售件数，否则 quantity_remaining 虚增可超卖
-     * （超时关单由 PendingPaymentScheduler 收尾，流水关闭时订单已同步置 cancelled，不会走到这里）。
-     */
-    private boolean isListingStockDeducted(Order order) {
-        if (!"pending".equals(order.getOrderStatus())) {
-            return true;
-        }
-        return paymentRecordRepository.existsByBizId(order.getId());
     }
 
     /** 业主上架货源商品（dpr_）明细的总件数（listing 订单为单 item）。 */
@@ -1737,39 +1850,95 @@ public class OrderService {
         return item != null && item.getProductId() != null && item.getProductId().startsWith("dpr_");
     }
 
+    /**
+     * 服务端支付拆分与规则校验。
+     *
+     * <p>金额以服务端为准：物业币走商城规则（开关/最低金额/最大抵扣比例/真实余额），
+     * 积分校验真实可用余额；混合支付不允许“积分+物业币超过应付”，不再保留前端本地兜底空间。</p>
+     */
     private PaymentBreakdown resolvePaymentBreakdown(PayOrderRequest request,
                                                      BigDecimal payable,
-                                                     MerchantPropertyConfig config) {
+                                                     MerchantPropertyConfig config,
+                                                     Resident resident,
+                                                     boolean useFamilyPool) {
         BigDecimal exchangeRate = config.getPointExchangeRate() != null
                 ? config.getPointExchangeRate()
                 : new BigDecimal("100.0000");
+        PropertyCompany company = StringUtils.hasText(resident.getPropertyCompanyId())
+                ? propertyCompanyRepository.findById(resident.getPropertyCompanyId()).orElse(null)
+                : null;
+        BigDecimal availableCoin = resolveAvailableCoin(resident, useFamilyPool);
+        int availablePoints = resolveAvailablePoints(resident, useFamilyPool);
 
         return switch (request.getPaymentMethod()) {
-            case "property_coin" -> new PaymentBreakdown(0, payable, BigDecimal.ZERO);
+            case "property_coin" -> {
+                requireCoinRules(company);
+                propertyCoinMallRuleService.assertCoinAllowed(company, payable, payable, availableCoin);
+                yield new PaymentBreakdown(0, payable, BigDecimal.ZERO);
+            }
             case "point" -> {
                 int pointsNeeded = payable.multiply(exchangeRate)
                         .setScale(0, RoundingMode.UP)
                         .intValue();
+                if (pointsNeeded > availablePoints) {
+                    throw new BizException(ErrorCode.POINT_INSUFFICIENT);
+                }
                 yield new PaymentBreakdown(pointsNeeded, BigDecimal.ZERO, BigDecimal.ZERO);
             }
             case "wechat" -> new PaymentBreakdown(0, BigDecimal.ZERO, payable);
             case "mixed" -> {
-                int pointUsed = request.getPointUsed() != null ? request.getPointUsed() : 0;
+                // v8.21：积分仅用于转物业抵扣物业费，商城下单不再支持积分抵扣
+        if (request.getPointUsed() != null && request.getPointUsed() > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "积分仅可用于抵扣物业费，商城下单不支持积分抵扣");
+        }
+        int pointUsed = 0;
                 BigDecimal coinUsed = request.getCoinUsed() != null ? request.getCoinUsed() : BigDecimal.ZERO;
+                if (pointUsed < 0 || coinUsed.compareTo(BigDecimal.ZERO) < 0) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "积分/物业币抵扣不能为负数");
+                }
+                if (pointUsed > availablePoints) {
+                    throw new BizException(ErrorCode.POINT_INSUFFICIENT);
+                }
                 BigDecimal pointValue = BigDecimal.valueOf(pointUsed)
                         .divide(exchangeRate, 2, RoundingMode.HALF_UP);
+                if (pointValue.add(coinUsed).compareTo(payable) > 0) {
+                    throw new BizException(ErrorCode.PARAM_INVALID, "积分与物业币抵扣金额超过应付金额");
+                }
+                if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
+                    requireCoinRules(company);
+                    // 使用规则服务归一化后的金额，避免 10.005 这类超出 2 位小数的输入绕过余额/比例校验。
+                    coinUsed = propertyCoinMallRuleService.assertCoinAllowed(
+                            company, payable, coinUsed, availableCoin);
+                }
                 BigDecimal cashAmount = payable.subtract(pointValue).subtract(coinUsed);
-                if (cashAmount.compareTo(BigDecimal.ZERO) < 0) {
-                    cashAmount = BigDecimal.ZERO;
-                }
-                BigDecimal paid = pointValue.add(coinUsed).add(cashAmount);
-                if (paid.compareTo(payable) < 0) {
-                    throw new BizException(ErrorCode.PARAM_INVALID, "混合支付金额不足");
-                }
                 yield new PaymentBreakdown(pointUsed, coinUsed, cashAmount);
             }
             default -> throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod值无效");
         };
+    }
+
+    private void requireCoinRules(PropertyCompany company) {
+        if (company == null) {
+            throw new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND, "当前住户未关联物业公司，无法使用物业币");
+        }
+    }
+
+    private BigDecimal resolveAvailableCoin(Resident resident, boolean useFamilyPool) {
+        BigDecimal available = defaultDecimal(resident.getCoinBalance());
+        if (useFamilyPool && StringUtils.hasText(resident.getFamilyId())) {
+            available = available.add(resolveFamilyBalance(resident.getFamilyId()));
+        }
+        return available;
+    }
+
+    private int resolveAvailablePoints(Resident resident, boolean useFamilyPool) {
+        int available = defaultPoint(resident.getPointBalance());
+        if (useFamilyPool && StringUtils.hasText(resident.getFamilyId())) {
+            available += familyRepository.findById(resident.getFamilyId())
+                    .map(family -> family.getPointBalance() != null ? family.getPointBalance() : 0)
+                    .orElse(0);
+        }
+        return available;
     }
 
     private void executePayment(Resident resident,
@@ -1787,14 +1956,18 @@ public class OrderService {
     }
 
     private void refundPayment(Resident resident, Order order, int refundPoint, BigDecimal refundCoin) {
-        boolean useFamilyPool = StringUtils.hasText(order.getFamilyId());
+        boolean refunded = false;
         if (refundPoint > 0) {
-            pointService.earnPoints(resident, refundPoint, "order", order.getId(),
-                    "订单取消退回积分", null);
+            pointService.refundOrderPoints(resident, order.getId(), refundPoint, order.getFamilyId());
+            refunded = true;
         }
         if (refundCoin.compareTo(BigDecimal.ZERO) > 0) {
-            propertyCoinService.earnCoins(resident, refundCoin, CoinType.earn.name(), "order",
-                    order.getId(), "订单取消退回物业币", null);
+            propertyCoinService.refundOrderCoins(resident, order.getId(), refundCoin, order.getFamilyId());
+            refunded = true;
+        }
+        if (refunded && !StringUtils.hasText(order.getRefundStatus())) {
+            // 纯积分/物业币退款即时完成；若有现金退款，随后 refundCashIfAny 会覆盖为 refunding。
+            order.setRefundStatus("refunded");
         }
     }
 
@@ -1817,10 +1990,18 @@ public class OrderService {
                 .findFirst().orElse(null);
         if (record == null) {
             log.warn("订单需退现金但无 paid 支付流水，跳过微信退款 orderId={}", order.getId());
+            if (!"pending".equals(order.getOrderStatus())) {
+                order.setRefundStatus("failed");
+                order.setRefundFailReason("未找到已支付流水，需人工对账");
+            }
             return;
         }
         BigDecimal cash = defaultDecimal(record.getCashAmount());
         if (cash.compareTo(BigDecimal.ZERO) <= 0) {
+            if (!"pending".equals(order.getOrderStatus())) {
+                order.setRefundStatus("failed");
+                order.setRefundFailReason("支付流水现金金额为 0，需人工对账");
+            }
             return;
         }
         // 分账回退 fail-closed（P0-3 修复）：任一笔分账未回退完成即抛错回滚整个取消 / 审核事务，
@@ -1832,17 +2013,53 @@ public class OrderService {
         record.setOutRefundNo(outRefundNo);
         record.setStatus("refunding");
         paymentRecordRepository.save(record);
+        order.setRefundStatus("refunding");
+        order.setRefundFailReason(null);
         log.info("订单现金退款已发起 orderId={} cash={} outRefundNo={}", order.getId(), cash, outRefundNo);
+    }
+
+    /**
+     * 订单已取消但微信侧支付成功：只退现金，不重复退积分/物业币（取消时尚未扣减）。
+     */
+    private void refundCashForCancelledPayment(Order order, PaymentRecord record) {
+        if (record == null
+                || !"paid".equals(record.getStatus())
+                || "refunding".equals(order.getRefundStatus())
+                || "refunded".equals(order.getRefundStatus())) {
+            return;
+        }
+        BigDecimal cash = record.getCashAmount() != null ? record.getCashAmount() : BigDecimal.ZERO;
+        if (cash.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        try {
+            wechatSplitService.reverseForOrder(order.getId());
+            String outRefundNo = wechatPayService.refund(record, cash, "订单已取消，支付成功后原路退款");
+            record.setOutRefundNo(outRefundNo);
+            record.setStatus("refunding");
+            paymentRecordRepository.save(record);
+            order.setRefundStatus("refunding");
+            order.setRefundFailReason(null);
+            orderRepository.save(order);
+            log.warn("订单已取消但支付成功，已发起原路退款 orderId={} cash={} outRefundNo={}",
+                    order.getId(), cash, outRefundNo);
+        } catch (Exception e) {
+            record.setStatus("refund_failed");
+            record.setErrorMsg("订单取消后支付成功，自动退款失败，需人工处理: " + e.getMessage());
+            paymentRecordRepository.save(record);
+            order.setRefundStatus("failed");
+            order.setRefundFailReason("自动退款失败，需人工处理");
+            orderRepository.save(order);
+            log.error("订单取消后支付成功，自动退款失败，需人工对账 orderId={}", order.getId(), e);
+        }
     }
 
     private void reverseRewards(Resident resident, Order order) {
         if (defaultPoint(order.getPointEarned()) > 0) {
-            pointService.spendPoints(resident, order.getPointEarned(), "order", order.getId(),
-                    "订单取消扣回返积分", null, StringUtils.hasText(order.getFamilyId()));
+            pointService.reverseOrderEarnedPoints(resident, order.getId(), order.getPointEarned());
         }
         if (defaultDecimal(order.getCoinEarned()).compareTo(BigDecimal.ZERO) > 0) {
-            propertyCoinService.spendCoins(resident, order.getCoinEarned(), "order", order.getId(),
-                    "订单取消扣回物业币返现", null, StringUtils.hasText(order.getFamilyId()));
+            propertyCoinService.reverseOrderEarnedCoins(resident, order.getId(), order.getCoinEarned());
         }
     }
 
@@ -2003,7 +2220,11 @@ public class OrderService {
             }
             return true;
         }
-        return StringUtils.hasText(order.getFamilyId());
+        if (StringUtils.hasText(order.getFamilyId())) {
+            return true;
+        }
+        // 家庭成员默认使用家庭池：家庭建立时个人余额已并入家庭池，个人余额通常为 0。
+        return StringUtils.hasText(resident.getFamilyId());
     }
 
     private Map<String, Merchant> loadMerchantMap(List<Order> orders) {

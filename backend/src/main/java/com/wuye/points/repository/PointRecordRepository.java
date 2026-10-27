@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.time.LocalDateTime;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 积分记录 Repository
@@ -24,6 +25,10 @@ public interface PointRecordRepository extends JpaRepository<PointRecord, String
     Page<PointRecord> findByResidentId(String residentId, Pageable pageable);
 
     Page<PointRecord> findByFamilyId(String familyId, Pageable pageable);
+
+    /** 订单退款/冲正时，查该订单最近一条指定类型的积分流水（用于还原家庭池/个人池扣减比例） */
+    Optional<PointRecord> findFirstBySourceIdAndSourceAndPointTypeOrderByCreatedAtDesc(
+            String sourceId, String source, String pointType);
 
     @Query("""
             SELECT COALESCE(SUM(r.amount), 0) FROM PointRecord r

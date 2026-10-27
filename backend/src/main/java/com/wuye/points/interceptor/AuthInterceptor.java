@@ -1,8 +1,11 @@
 package com.wuye.points.interceptor;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.entity.Resident;
+import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,6 +22,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
+    private final ResidentRepository residentRepository;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -33,13 +37,36 @@ public class AuthInterceptor implements HandlerInterceptor {
         String token = authHeader.substring(7);
         Claims claims = jwtUtil.parseToken(token);
         jwtUtil.validateAccessToken(claims);
-        UserContext context = UserContext.builder()
-                .userId(claims.getSubject())
+
+        String userId = claims.getSubject();
+        Integer tokenVersion = jwtUtil.getTokenVersion(claims);
+        UserContext.UserContextBuilder builder = UserContext.builder()
+                .userId(userId)
                 .role(claims.get("role", String.class))
                 .propertyCompanyId(claims.get("propertyCompanyId", String.class))
-                .familyId(claims.get("familyId", String.class))
-                .build();
-        UserContext.set(context);
+                .familyId(claims.get("familyId", String.class));
+
+        // 新签发的 token 带 tv：每次请求校验账号状态与令牌版本，登出/禁用/删除即时生效。
+        // 历史 token（无 tv）保持兼容，直到自然过期。
+        if (tokenVersion != null) {
+            Resident resident = residentRepository.findById(userId)
+                    .orElseThrow(() -> new BizException(ErrorCode.TOKEN_INVALID));
+            if (resident.getDeletedAt() != null
+                    || ResidentStatus.disabled.name().equals(resident.getStatus())
+                    || ResidentStatus.frozen.name().equals(resident.getStatus())
+                    || ResidentStatus.deleted.name().equals(resident.getStatus())) {
+                throw new BizException(ErrorCode.ACCOUNT_DISABLED);
+            }
+            int currentVersion = resident.getTokenVersion() != null ? resident.getTokenVersion() : 0;
+            if (currentVersion != tokenVersion) {
+                throw new BizException(ErrorCode.TOKEN_INVALID, "登录状态已失效，请重新登录");
+            }
+            builder.role(resident.getRole())
+                    .propertyCompanyId(resident.getPropertyCompanyId())
+                    .familyId(resident.getFamilyId());
+        }
+
+        UserContext.set(builder.build());
         return true;
     }
 

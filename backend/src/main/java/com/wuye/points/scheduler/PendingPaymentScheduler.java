@@ -105,6 +105,7 @@ public class PendingPaymentScheduler {
                     order.setOrderStatus("cancelled");
                     order.setCancelledAt(LocalDateTime.now());
                     order.setCancelReason("支付超时自动关闭");
+                    order.setCancelledBy("system");
                     orderRepository.save(order);
                     // 预支付时已锁定库存，超时取消需恢复（行锁下操作，避免与并发下单冲突）
                     productStockService.restoreByOrderId(order.getId());

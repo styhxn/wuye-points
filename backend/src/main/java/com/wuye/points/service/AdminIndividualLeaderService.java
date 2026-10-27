@@ -190,9 +190,6 @@ public class AdminIndividualLeaderService {
     public IndividualLeaderDetailResponse revokeIndividualLeader(String id, String reason) {
         requireIndividualManage();
         adminSupport.validateIdPrefix(id, "il_");
-        if (!StringUtils.hasText(reason)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "reason不能为空");
-        }
 
         IndividualLeader leader = getAccessibleIndividualLeader(id);
         assertSectorLeaderScopeOnLeader(leader);

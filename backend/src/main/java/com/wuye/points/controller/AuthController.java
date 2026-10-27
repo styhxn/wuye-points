@@ -66,6 +66,17 @@ public class AuthController {
     }
 
     /**
+     * 退出登录
+     * Auth: Required
+     */
+    @Operation(summary = "退出登录", description = "递增令牌版本号，使该账号所有旧 access/refresh token 立即失效")
+    @PostMapping("/logout")
+    public ApiResponse<Void> logout() {
+        authService.logout();
+        return ApiResponse.success(null);
+    }
+
+    /**
      * 绑定手机号
      * Auth: Required
      * Roles: resident

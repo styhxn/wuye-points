@@ -6,6 +6,8 @@ import com.wuye.points.dto.merchant.withdrawal.WithdrawalItemResponse;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantWithdrawal;
 import com.wuye.points.entity.PropertyCompany;
+import com.wuye.points.exception.BizException;
+import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.MerchantWithdrawalRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.util.MerchantSupport;
@@ -29,6 +31,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -48,6 +51,8 @@ class MerchantWithdrawalServiceTest {
     private MerchantSupport merchantSupport;
     @Mock
     private SnowflakeIdGenerator idGenerator;
+    @Mock
+    private WithdrawableService withdrawableService;
 
     @InjectMocks
     private MerchantWithdrawalService withdrawalService;
@@ -67,6 +72,11 @@ class MerchantWithdrawalServiceTest {
         when(merchantSupport.requireCurrentWithdrawableMerchant()).thenReturn(merchant);
         when(propertyCompanyRepository.findById("pc1")).thenReturn(Optional.of(propertyCompany));
         when(idGenerator.generateId("mw")).thenReturn("mw_testid");
+        // 申请前置校验：模拟商户有充足可提现余额
+        when(withdrawableService.calcMerchantWithdrawable(merchant))
+                .thenReturn(new WithdrawableService.MerchantWithdrawable(
+                        new BigDecimal("100000"), BigDecimal.ZERO, false,
+                        BigDecimal.ZERO, 0L, BigDecimal.ZERO, BigDecimal.ZERO));
         when(merchantWithdrawalRepository.findAll(any(Specification.class), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
     }
@@ -103,6 +113,36 @@ class MerchantWithdrawalServiceTest {
 
         assertAmount(new BigDecimal("1.00"), resp.getFeeAmount());
         assertAmount(new BigDecimal("99.00"), resp.getActualAmount());
+    }
+
+    @Test
+    @DisplayName("apply: 超出可提现余额返回 94006")
+    void apply_exceedsWithdrawable() {
+        when(withdrawableService.calcMerchantWithdrawable(merchant))
+                .thenReturn(new WithdrawableService.MerchantWithdrawable(
+                        new BigDecimal("50"), BigDecimal.ZERO, false,
+                        BigDecimal.ZERO, 0L, BigDecimal.ZERO, BigDecimal.ZERO));
+
+        ApplyWithdrawalRequest req = new ApplyWithdrawalRequest();
+        req.setAmount(new BigDecimal("100"));
+
+        BizException ex = assertThrows(BizException.class, () -> withdrawalService.apply(req));
+        assertEquals(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT.getCode(), ex.getCode());
+    }
+
+    @Test
+    @DisplayName("apply: 提现被冻结返回 94005")
+    void apply_blocked() {
+        when(withdrawableService.calcMerchantWithdrawable(merchant))
+                .thenReturn(new WithdrawableService.MerchantWithdrawable(
+                        BigDecimal.ZERO, BigDecimal.ZERO, true,
+                        BigDecimal.ZERO, 0L, BigDecimal.ZERO, BigDecimal.ZERO));
+
+        ApplyWithdrawalRequest req = new ApplyWithdrawalRequest();
+        req.setAmount(new BigDecimal("100"));
+
+        BizException ex = assertThrows(BizException.class, () -> withdrawalService.apply(req));
+        assertEquals(ErrorCode.WITHDRAWAL_BLOCKED.getCode(), ex.getCode());
     }
 
     @Test

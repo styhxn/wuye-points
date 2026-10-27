@@ -120,6 +120,18 @@ public class WithdrawableService {
      */
     @Transactional(readOnly = true)
     public MerchantWithdrawable calcMerchantWithdrawable(Merchant merchant) {
+        return calcMerchantWithdrawable(merchant, null);
+    }
+
+    /**
+     * 审核单笔提现时使用：排除当前提现单计算可提现余额。
+     * 否则当前单本身已计入占用额，会把「刚好等于可提现余额」的合法申请误判为超额。
+     */
+    public MerchantWithdrawable calcMerchantWithdrawableExcluding(Merchant merchant, String excludeWithdrawalId) {
+        return calcMerchantWithdrawable(merchant, excludeWithdrawalId);
+    }
+
+    private MerchantWithdrawable calcMerchantWithdrawable(Merchant merchant, String excludeWithdrawalId) {
         if (merchant == null || merchant.getId() == null) {
             return new MerchantWithdrawable(
                     BigDecimal.ZERO, BigDecimal.ZERO, false, BigDecimal.ZERO, 0L, BigDecimal.ZERO, BigDecimal.ZERO);
@@ -130,9 +142,14 @@ public class WithdrawableService {
 
         BigDecimal totalWithdrawn = merchantWithdrawalRepository
                 .sumAmountByMerchantId(merchant.getId(), "completed");
-        // 占用中的提现（pending/approved/completed；rejected 不占用）
-        BigDecimal allWithdrawals = merchantWithdrawalRepository
-                .sumAmountByMerchantId(merchant.getId(), null);
+        // 占用中的提现（pending/approved/completed；rejected 不占用）。
+        // 不能传 null：null 会把 rejected 也扣减掉，导致商家被拒绝后永久少一笔可提现额度。
+        List<String> occupiedStatuses = List.of("pending", "approved", "completed");
+        BigDecimal allWithdrawals = excludeWithdrawalId == null
+                ? merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(
+                        merchant.getId(), occupiedStatuses)
+                : merchantWithdrawalRepository.sumAmountByMerchantIdAndStatusesExcluding(
+                        merchant.getId(), occupiedStatuses, excludeWithdrawalId);
 
         // 商家收入：技师店走服务单营收（不分账记录），其余走分账 merchantShare（B 方案，历史回退 订单金额×(1−抽佣)）
         // 另叠加商家自配配送费分成（wallet_flows 兜底入账部分，entryType=merchant_delivery_fee_share）；

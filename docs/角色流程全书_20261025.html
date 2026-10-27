@@ -1,0 +1,2148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>角色流程全书 · 物业积分服务系统</title>
+<style>
+  :root{
+    --bg:#f4f1ea;--surface:#fffdf8;--surface-2:#faf7f0;--ink:#1d2321;--ink-soft:#3f4743;
+    --muted:#6a716c;--line:#ddd7ca;--line-strong:#c9c1b0;--green:#1f6f5c;--green-soft:#e5f0eb;
+    --red:#a93f32;--red-soft:#f8e9e5;--amber:#a86a16;--amber-soft:#f8efdf;--blue:#3f608c;
+    --blue-soft:#e8eef7;--purple:#5b4b8a;--purple-soft:#eeebf6;--teal:#2f6f7a;--teal-soft:#e4f1f2;
+    --slate:#4a5a63;--slate-soft:#ebeff0;
+    --code-bg:#202623;--code-ink:#e8efe9;--code-muted:#9fb0a5;
+    --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --serif:"Songti SC","Noto Serif SC",Georgia,serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --shadow:0 1px 0 rgba(29,35,33,.04),0 14px 34px -28px rgba(29,35,33,.4);--radius:14px;
+  }
+  *{box-sizing:border-box}html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.68;-webkit-font-smoothing:antialiased;overflow-wrap:break-word}
+  a{color:var(--green)}
+  code{font-family:var(--mono);font-size:.92em;background:#f0ece3;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+  .wrap{width:min(1220px,calc(100% - 48px));margin:0 auto}
+
+  .topbar{position:sticky;top:0;z-index:50;background:rgba(244,241,234,.96);border-bottom:1px solid var(--line);backdrop-filter:blur(10px)}
+  .topbar-inner{min-height:60px;display:flex;align-items:center;gap:14px}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0;flex:0 0 auto}
+  .brand-mark{width:27px;height:27px;border:1px solid var(--ink);border-radius:6px;display:grid;place-items:center;font-family:var(--serif);font-size:14px}
+  .brand-text{font-size:13px;font-weight:700;white-space:nowrap}
+  .brand-text span{color:var(--muted);font-weight:500}
+  .search{flex:1 1 auto;min-width:0;max-width:360px;position:relative}
+  .search input{width:100%;border:1px solid var(--line-strong);background:var(--surface);border-radius:9px;padding:8px 12px 8px 32px;font-family:var(--sans);font-size:12.5px;color:var(--ink);outline:none}
+  .search input:focus{border-color:var(--ink)}
+  .search::before{content:"";position:absolute;left:11px;top:50%;width:10px;height:10px;border:1.5px solid var(--muted);border-radius:50%;transform:translateY(-65%)}
+  .search::after{content:"";position:absolute;left:20px;top:61%;width:5px;height:1.5px;background:var(--muted);transform:rotate(45deg)}
+  .top-actions{display:flex;gap:8px;margin-left:auto;flex:0 0 auto}
+  .btn{appearance:none;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);border-radius:9px;padding:8px 12px;font-family:var(--sans);font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s ease;white-space:nowrap}
+  .btn:hover{border-color:var(--ink);transform:translateY(-1px)}
+  .btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+  .menu-btn{display:none}
+
+  .hero{padding:52px 0 34px;border-bottom:1px solid var(--line)}
+  .eyebrow{color:var(--green);font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}
+  h1{margin:13px 0 15px;font-family:var(--serif);font-size:clamp(34px,5.2vw,58px);font-weight:600;line-height:1.07;letter-spacing:-.03em}
+  .lead{max-width:900px;margin:0;color:var(--ink-soft);font-size:16.5px;line-height:1.85}
+  .lead strong{color:var(--ink)}
+  .meta-row{display:flex;flex-wrap:wrap;gap:7px 18px;margin-top:18px;color:var(--muted);font-size:12.5px}
+  .meta-row span::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--line-strong);margin-right:7px;vertical-align:middle}
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px;margin-top:26px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:14px 16px;box-shadow:var(--shadow)}
+  .stat .num{display:block;font-family:var(--serif);font-size:29px;line-height:1.1;letter-spacing:-.02em}
+  .stat .label{display:block;margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.45}
+  .stat.green .num{color:var(--green)}.stat.red .num{color:var(--red)}.stat.amber .num{color:var(--amber)}.stat.blue .num{color:var(--blue)}
+
+  .shell{display:grid;grid-template-columns:278px minmax(0,1fr);gap:44px;padding:34px 0 80px}
+  .sidebar{position:sticky;top:80px;align-self:start;max-height:calc(100vh - 96px);overflow:auto;padding-bottom:16px;scrollbar-width:thin}
+  .side-card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:12px;box-shadow:var(--shadow)}
+  .side-title{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px;color:var(--ink-soft);font-size:11.5px;font-weight:800;letter-spacing:.05em}
+  .side-title em{font-style:normal;color:var(--muted);font-family:var(--mono);font-size:10.5px}
+  .nav-list{list-style:none;margin:0;padding:0;display:grid;gap:1px}
+  .nav-list a{display:flex;justify-content:space-between;gap:8px;padding:7px 8px;border-radius:6px;color:var(--ink);text-decoration:none;font-size:12.5px;line-height:1.4;border-left:2px solid transparent}
+  .nav-list a:hover{background:var(--surface-2)}
+  .nav-list a.active{background:var(--green-soft);border-left-color:var(--green);font-weight:700}
+  .nav-list .n{color:var(--muted);font-family:var(--mono);font-size:10.5px}
+  .nav-sub{list-style:none;margin:0 0 6px 12px;padding:0 0 0 8px;border-left:1px dashed var(--line)}
+  .nav-sub a{padding:4px 7px;font-size:11.5px;color:var(--muted)}
+  .nav-sub a.active{background:transparent;color:var(--green);font-weight:700}
+  .progress-track{height:8px;border:1px solid var(--line);border-radius:99px;background:var(--surface-2);overflow:hidden}
+  .progress-bar{height:100%;width:0%;background:var(--green);transition:width .2s ease}
+  .progress-meta{display:flex;justify-content:space-between;margin-top:8px;color:var(--muted);font-size:11px}
+  .legend{display:grid;gap:7px;font-size:11.5px;color:var(--ink-soft);line-height:1.5}
+  .legend b{font-weight:700}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .dot.g{background:var(--green)}.dot.a{background:var(--amber)}.dot.r{background:var(--red)}.dot.b{background:var(--blue)}.dot.p{background:var(--purple)}.dot.t{background:var(--teal)}.dot.s{background:var(--slate)}
+
+  main{min-width:0}
+  .callout{margin:0 0 18px;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:13.5px;line-height:1.75;color:var(--ink-soft);box-shadow:var(--shadow)}
+  .callout.good{background:var(--green-soft);border-color:#c3dcd2}
+  .callout.warn{background:var(--amber-soft);border-color:#ead6b3}
+  .callout.bad{background:var(--red-soft);border-color:#e9c9c1}
+  .callout.info{background:var(--blue-soft);border-color:#c9d6e8}
+  .callout strong{color:var(--ink)}
+  .callout .t{display:block;margin-bottom:4px;font-size:10.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+
+  section{scroll-margin-top:82px;margin-bottom:40px}
+  .section-head{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;padding-bottom:11px;margin-bottom:16px;border-bottom:1px solid var(--line)}
+  .section-head h2{margin:0;font-family:var(--serif);font-size:28px;font-weight:600;letter-spacing:-.02em}
+  .section-head p{margin:4px 0 0;color:var(--muted);font-size:12.5px;max-width:760px}
+  .count{flex:0 0 auto;border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:var(--surface);color:var(--muted);font-family:var(--mono);font-size:10.5px}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:14px;overflow:hidden;border-left:4px solid var(--line-strong)}
+  .card.resident{border-left-color:var(--green)}.card.merchant{border-left-color:var(--amber)}
+  .card.property{border-left-color:var(--blue)}.card.platform{border-left-color:var(--purple)}
+  .card.identity{border-left-color:var(--teal)}.card.courier{border-left-color:var(--slate)}
+  .card.money{border-left-color:var(--red)}.card.system{border-left-color:var(--line-strong)}
+  .card>summary{list-style:none;cursor:pointer;padding:16px 18px;display:flex;gap:12px;align-items:flex-start;background:var(--surface-2);border-bottom:1px solid transparent}
+  .card[open]>summary{border-bottom-color:var(--line)}
+  .card>summary::-webkit-details-marker{display:none}
+  .card>summary:hover{background:#f6f2e9}
+  .idnum{flex:0 0 auto;width:38px;height:38px;border:1px solid var(--line);border-radius:8px;background:var(--surface);display:grid;place-items:center;color:var(--muted);font-family:var(--mono);font-size:11.5px;font-weight:700}
+  .card-head-main{flex:1 1 auto;min-width:0}
+  .pill{display:inline-block;border:1px solid;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:800;letter-spacing:.03em;line-height:1.5}
+  .pill.resident{color:var(--green);background:var(--green-soft);border-color:#c3dcd2}
+  .pill.merchant{color:var(--amber);background:var(--amber-soft);border-color:#ead6b3}
+  .pill.property{color:var(--blue);background:var(--blue-soft);border-color:#c9d6e8}
+  .pill.platform{color:var(--purple);background:var(--purple-soft);border-color:#d6cfea}
+  .pill.identity{color:var(--teal);background:var(--teal-soft);border-color:#c5dfe2}
+  .pill.courier{color:var(--slate);background:var(--slate-soft);border-color:#d3dbde}
+  .pill.money{color:var(--red);background:var(--red-soft);border-color:#e9c9c1}
+  .pill.system{color:var(--muted);background:var(--surface-2);border-color:var(--line)}
+  .card-title{display:block;margin:5px 0 2px;font-size:16.5px;font-weight:700;letter-spacing:-.01em}
+  .card-kick{display:block;color:var(--muted);font-size:11.8px}
+  .chev{flex:0 0 auto;color:var(--muted);font-size:0;border:1px solid var(--line);border-radius:6px;padding:3px 7px;margin-top:2px}
+  .chev::after{content:"展开";font-size:11px}
+  .card[open] .chev{background:var(--green-soft);border-color:#c3dcd2;color:var(--green)}
+  .card[open] .chev::after{content:"收起"}
+  .card[hidden]{display:none}
+
+  .card-body{padding:18px}
+  .card-body p{margin:0 0 12px;color:var(--ink-soft);font-size:13.8px;line-height:1.8}
+  .card-body ul,.card-body ol{margin:0 0 12px;padding-left:20px;color:var(--ink-soft);font-size:13.5px;line-height:1.75}
+  .card-body li{margin-bottom:5px}
+  .card-body h4{margin:18px 0 8px;font-size:13px;letter-spacing:.02em;color:var(--ink)}
+  .card-body h4:first-child{margin-top:0}
+  .subnote{color:var(--muted);font-size:11.5px;line-height:1.6}
+
+  .table-wrap{overflow-x:auto;margin:10px 0 14px;border:1px solid var(--line);border-radius:9px}
+  table{width:100%;border-collapse:collapse;font-size:12.8px;background:var(--surface)}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  th{background:var(--surface-2);color:var(--ink-soft);font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+  td code{font-size:11.3px;word-break:break-all}
+  .nowrap{white-space:nowrap}
+  .ok{color:var(--green);font-weight:700}.warn-t{color:var(--amber);font-weight:700}.bad-t{color:var(--red);font-weight:700}
+  .muted{color:var(--muted)}
+
+  .flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 16px}
+  .flow.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .flow.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .flow-step{position:relative;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .flow-step em{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--ink);color:#fff;font-style:normal;font-family:var(--mono);font-size:10.5px;margin-bottom:7px}
+  .flow-step b{display:block;font-size:12.5px;margin-bottom:4px}
+  .flow-step span{display:block;color:var(--muted);font-size:11.5px;line-height:1.6}
+  .flow-step code{font-size:10.5px}
+
+  .code-block{margin:10px 0 14px;border-radius:10px;overflow:hidden;background:var(--code-bg)}
+  .code-top{display:flex;justify-content:space-between;gap:10px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);color:var(--code-muted);font-family:var(--mono);font-size:10.5px}
+  .copy-btn{border:1px solid rgba(255,255,255,.18);background:transparent;color:#dbe6de;border-radius:6px;padding:3px 8px;font-family:var(--sans);font-size:10.5px;cursor:pointer}
+  pre{margin:0;padding:13px 14px;overflow-x:auto;color:var(--code-ink);font-family:var(--mono);font-size:11.8px;line-height:1.72}
+  pre b{color:#a9d8c4;font-weight:600}
+
+  .role-map{display:grid;gap:12px;margin:14px 0 18px}
+  .tier{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:13px 15px;box-shadow:var(--shadow)}
+  .tier-head{display:flex;align-items:baseline;gap:10px;margin-bottom:9px}
+  .tier-head b{font-size:12px;letter-spacing:.06em}
+  .tier-head span{color:var(--muted);font-size:11px}
+  .nodes{display:flex;flex-wrap:wrap;gap:7px}
+  .node{border:1px solid var(--line);border-radius:8px;background:var(--surface-2);padding:7px 10px;font-size:12px;line-height:1.45}
+  .node small{display:block;color:var(--muted);font-size:10.5px}
+  .node.g{background:var(--green-soft);border-color:#c3dcd2}
+  .node.a{background:var(--amber-soft);border-color:#ead6b3}
+  .node.b{background:var(--blue-soft);border-color:#c9d6e8}
+  .node.p{background:var(--purple-soft);border-color:#d6cfea}
+  .node.t{background:var(--teal-soft);border-color:#c5dfe2}
+  .node.s{background:var(--slate-soft);border-color:#d3dbde}
+  .hierarchy{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;padding:10px;border:1px dashed var(--line-strong);border-radius:9px;background:var(--surface-2);font-size:12px}
+  .hierarchy .arrow{color:var(--muted);font-family:var(--mono)}
+
+  .money-flow{display:grid;grid-template-columns:1fr 26px 1fr 26px 1fr;align-items:stretch;gap:0;margin:14px 0 18px}
+  .mf-node{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);padding:11px 12px}
+  .mf-node b{display:block;font-size:12.5px;margin-bottom:3px}
+  .mf-node span{display:block;color:var(--muted);font-size:11.5px;line-height:1.55}
+  .mf-arrow{display:grid;place-items:center;color:var(--muted);font-family:var(--mono);font-size:14px}
+  .mf-node.hi{background:var(--green-soft);border-color:#c3dcd2}
+  .mf-node.warnbox{background:var(--amber-soft);border-color:#ead6b3}
+
+  .state-flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 14px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2)}
+  .st{border:1px solid var(--line-strong);border-radius:6px;background:var(--surface);padding:3px 8px;font-family:var(--mono);font-size:10.8px;white-space:nowrap}
+  .st.good{border-color:#c3dcd2;background:var(--green-soft);color:var(--green)}
+  .st.bad{border-color:#e9c9c1;background:var(--red-soft);color:var(--red)}
+  .st.warn{border-color:#ead6b3;background:var(--amber-soft);color:var(--amber)}
+  .st.dim{color:var(--muted);background:var(--surface-2)}
+  .state-flow .arrow{color:var(--muted);font-family:var(--mono);font-size:12px}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+  .chip{appearance:none;border:1px solid var(--line-strong);background:transparent;color:var(--muted);border-radius:999px;padding:5px 10px;font-family:var(--sans);font-size:11.5px;cursor:pointer}
+  .chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+
+  .empty{display:none;margin:20px 0;padding:26px 16px;border:1px dashed var(--line-strong);border-radius:12px;text-align:center;color:var(--muted);font-size:13px}
+  .empty.show{display:block}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);z-index:80;padding:9px 14px;border-radius:8px;background:var(--ink);color:#fff;font-size:12.5px;opacity:0;pointer-events:none;transition:.2s ease}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  footer{margin-top:44px;padding:20px 0 46px;border-top:1px solid var(--line);color:var(--muted);font-size:11.5px;line-height:1.8}
+  footer strong{color:var(--ink-soft)}
+
+  @media(max-width:1060px){
+    .shell{grid-template-columns:1fr;gap:22px}
+    .sidebar{position:fixed;top:60px;left:0;bottom:0;width:290px;max-height:none;background:var(--bg);border-right:1px solid var(--line);padding:14px;z-index:45;transform:translateX(-102%);transition:transform .2s ease;overflow:auto}
+    .sidebar.open{transform:none;box-shadow:0 20px 60px -20px rgba(0,0,0,.35)}
+    .side-card.nav-card{display:block}
+    .menu-btn{display:inline-block}
+    .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .money-flow{grid-template-columns:1fr}
+    .mf-arrow{height:24px;transform:rotate(90deg)}
+  }
+  @media(max-width:640px){
+    .wrap{width:min(100% - 28px,1220px)}
+    .brand-text span{display:none}
+    .search{max-width:none}
+    .top-actions{display:none}
+    .hero{padding-top:36px}
+    .stats{grid-template-columns:1fr}
+    .flow,.flow.three,.flow.two{grid-template-columns:1fr}
+    table{min-width:660px}
+    .section-head{flex-direction:column;align-items:flex-start;gap:6px}
+    .card>summary{padding:14px}.card-body{padding:14px}
+  }
+  @media print{
+    @page{margin:14mm}
+    body{background:#fff;font-size:10.5pt}
+    .topbar,.sidebar,.toast,.copy-btn,.chips,.search,.top-actions,.menu-btn,.chev{display:none!important}
+    .shell{display:block;padding:0}
+    .hero{padding:0 0 14px}
+    .stats{grid-template-columns:repeat(4,1fr)}
+    .card{break-inside:avoid;box-shadow:none;border-left-width:3px}
+    .card>summary{background:#f7f7f4}
+    .card-body{padding:12px}
+    .code-block{background:#f4f4f1;border:1px solid #ddd}
+    pre{color:#222}
+    pre b{color:#1f6f5c}
+    section{break-inside:auto;margin-bottom:22px}
+    h1{font-size:32pt}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">角</div>
+      <div class="brand-text">角色流程全书 <span>· 2026-10-25</span></div>
+    </div>
+    <button class="btn menu-btn" type="button" id="menuBtn" aria-label="打开目录">目录</button>
+    <div class="search" role="search">
+      <input id="search" type="search" placeholder="搜索角色、流程、接口、状态…" autocomplete="off" aria-label="搜索文档">
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" type="button" id="topBtn">回到顶部</button>
+      <button class="btn" type="button" id="expandBtn">全部展开</button>
+      <button class="btn" type="button" id="collapseBtn">全部收起</button>
+      <button class="btn primary" type="button" id="printBtn">打印 / 另存 PDF</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="eyebrow">内部交付 · 角色流程说明书</div>
+    <h1>从“谁在用”到“钱怎么走”</h1>
+    <p class="lead">
+      这份文档按<strong>当前后端代码</strong>逐条核对，把系统里的每一个角色、身份、主流程、状态机和资金去向串起来。
+      它不是 PRD 的复述：<strong>PRD 写的是目标，代码写的是现在</strong>。两者不一致的地方，统一放在
+      <a href="#gaps">§11 代码现状与上线提醒</a>，并在各角色卡片里用“真实提醒”标出。
+    </p>
+    <div class="meta-row">
+      <span>依据：backend/src/main/java 与生产库 dump</span>
+      <span>口径：代码现状优先</span>
+      <span>适用：联调、验收、上线前评审</span>
+    </div>
+    <div class="callout good" style="margin:18px 0 0">
+      <span class="t">想先看简单版</span>
+      如果不想看接口和状态机，可以先看 <a href="角色流程图_简单版_20261025.html"><strong>一张图看懂 · 简化版</strong></a>：只有大箭头、白话解释和“钱怎么走”，适合给非技术同事看。
+    </div>
+    <div class="stats">
+      <div class="stat green"><span class="num">7</span><span class="label">可写入 residents.role 的登录角色</span></div>
+      <div class="stat amber"><span class="num">8</span><span class="label">叠加在住户身上的业务身份</span></div>
+      <div class="stat blue"><span class="num">4</span><span class="label">订单支付方式：积分 / 物业币 / 微信 / 混合</span></div>
+      <div class="stat red"><span class="num">131</span><span class="label">后端控制器（流程均已按代码核对）</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="wrap shell">
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-card nav-card">
+      <div class="side-title"><span>目录</span><em>13 节</em></div>
+      <ul class="nav-list">
+        <li><a href="#read">00 阅读指南 <span class="n">读法</span></a></li>
+        <li><a href="#map">01 角色地图 <span class="n">全景</span></a></li>
+        <li>
+          <a href="#resident">02 住户主线 <span class="n">C 端</span></a>
+          <ul class="nav-sub">
+            <li><a href="#r-login">进入系统与身份</a></li>
+            <li><a href="#r-family">家庭与资金池</a></li>
+            <li><a href="#r-point">积分</a></li>
+            <li><a href="#r-coin">物业币</a></li>
+            <li><a href="#r-fee">物业费</a></li>
+            <li><a href="#r-shop">商城购物</a></li>
+            <li><a href="#r-community">社区功能</a></li>
+            <li><a href="#r-service">服务 / 食堂 / 快递</a></li>
+          </ul>
+        </li>
+        <li>
+          <a href="#merchant">03 商家主线 <span class="n">B 端</span></a>
+          <ul class="nav-sub">
+            <li><a href="#m-join">入驻与审核</a></li>
+            <li><a href="#m-goods">商品与营销</a></li>
+            <li><a href="#m-order">接单与支付</a></li>
+            <li><a href="#m-delivery">履约与配送</a></li>
+            <li><a href="#m-refund">退款售后</a></li>
+            <li><a href="#m-settle">结算</a></li>
+            <li><a href="#m-withdraw">提现与冻结</a></li>
+          </ul>
+        </li>
+        <li><a href="#property">04 物业管理员 <span class="n">管理</span></a></li>
+        <li><a href="#platform">05 平台管理员 <span class="n">管理</span></a></li>
+        <li>
+          <a href="#identity">06 叠加身份 <span class="n">8 种</span></a>
+          <ul class="nav-sub">
+            <li><a href="#id-building">单元楼长</a></li>
+            <li><a href="#id-manager">物业经理</a></li>
+            <li><a href="#id-coordinator">统筹</a></li>
+            <li><a href="#id-sector">板块负责人</a></li>
+            <li><a href="#id-individual">个体负责人</a></li>
+            <li><a href="#id-legacy">区域 / 项目负责人</a></li>
+            <li><a href="#id-activity">活动组组长</a></li>
+            <li><a href="#id-shop">业主小店</a></li>
+            <li><a href="#id-distributor">一级代理</a></li>
+          </ul>
+        </li>
+        <li><a href="#courier">07 快递与技工 <span class="n">履约</span></a></li>
+        <li>
+          <a href="#money">08 资金全景 <span class="n">钱</span></a>
+          <ul class="nav-sub">
+            <li><a href="#money-assets">三种资产</a></li>
+            <li><a href="#money-pay">四种支付</a></li>
+            <li><a href="#money-split">分账公式</a></li>
+            <li><a href="#money-modes">三种微信模式</a></li>
+            <li><a href="#money-withdraw">提现分工</a></li>
+            <li><a href="#money-pools">池与清零</a></li>
+          </ul>
+        </li>
+        <li><a href="#state">09 状态机 <span class="n">速查</span></a></li>
+        <li><a href="#audit">10 审核链路 <span class="n">总表</span></a></li>
+        <li><a href="#gaps">11 现状与提醒 <span class="n">必读</span></a></li>
+        <li><a href="#appendix">12 接口与术语 <span class="n">附录</span></a></li>
+      </ul>
+    </div>
+    <div class="side-card">
+      <div class="side-title"><span>阅读进度</span><em id="pct">0%</em></div>
+      <div class="progress-track"><div class="progress-bar" id="bar"></div></div>
+      <div class="progress-meta"><span>顶部</span><span>底部</span></div>
+    </div>
+    <div class="side-card">
+      <div class="side-title"><span>标记说明</span></div>
+      <div class="legend">
+        <div><span class="dot g"></span><b>已通</b>：流程闭环，联调可用</div>
+        <div><span class="dot a"></span><b>有条件</b>：依赖开关、配置或审核</div>
+        <div><span class="dot r"></span><b>未通 / 空壳</b>：代码没有接通或与设计不一致</div>
+        <div><span class="dot p"></span><b>平台专属</b>：仅 platform_admin 可操作</div>
+        <div><span class="dot t"></span><b>叠加身份</b>：不改 role，由业务表判定</div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+
+    <!-- 00 -->
+    <section id="read">
+      <div class="section-head">
+        <div>
+          <h2>00 阅读指南</h2>
+          <p>先弄清楚三件事，后面所有角色都不会读乱。</p>
+        </div>
+        <span class="count">3 个前提</span>
+      </div>
+
+      <div class="callout info">
+        <span class="t">前提一 · 角色分两层</span>
+        <strong>登录角色</strong>写在 <code>residents.role</code> 和 JWT 里，决定“你能进哪个端、走哪套鉴权”；<strong>叠加身份</strong>写在业务表里（楼长表、负责人表、组长表、店铺表），决定“你在住户身份之上还能做什么”。一个人可以同时是业主、楼长、业主小店店主、一级代理，<code>role</code> 仍然是 <code>resident</code>。这是本项目 2026-10 之后最重要的模型变化。
+      </div>
+
+      <div class="callout good">
+        <span class="t">前提二 · 钱分三种</span>
+        <strong>积分</strong>是物业体系里的消费返利，默认 100 分 = 1 元，只能花、不能提现；<strong>物业币</strong>是 1:1 元的体系内储值，可消费、可转物业，商家收到后可申请兑换现金；<strong>现金</strong>走微信支付。三者不能互相直接兑换，订单里可以用“积分 + 物业币 + 现金”混合支付。
+      </div>
+
+      <div class="callout warn">
+        <span class="t">前提三 · 代码现状优先</span>
+        文档里凡是写“代码现状”的地方，都是指当前仓库真实行为，不代表产品最终目标。比如：社区管理员目前是空壳、活动组长不参与分账、商户退款没有商家审核入口。这些不是让你现在改，而是避免联调时按 PRD 预期去验收，最后对不上。
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>你会看到</th><th>含义</th><th>怎么用</th></tr></thead>
+          <tbody>
+            <tr><td><span class="pill resident">住户</span> <span class="pill merchant">商家</span> <span class="pill property">物业</span> <span class="pill platform">平台</span> <span class="pill identity">身份</span> <span class="pill courier">履约</span> <span class="pill money">资金</span></td><td>卡片左侧色条表示角色域</td><td>按角色跳读；顶部搜索框可全文过滤</td></tr>
+            <tr><td><span class="ok">已通</span> / <span class="warn-t">有条件</span> / <span class="bad-t">未通</span></td><td>该流程在当前代码里的完成度</td><td>验收时先看标记，再看细则</td></tr>
+            <tr><td>“真实提醒”</td><td>代码与直觉/PRD 不一致的地方</td><td>联调前先和产品确认口径</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 01 -->
+    <section id="map">
+      <div class="section-head">
+        <div>
+          <h2>01 角色地图</h2>
+          <p>先看全景：谁是谁的下级、谁只是标签、谁真正参与分账。</p>
+        </div>
+        <span class="count">7 + 8 + 2</span>
+      </div>
+
+      <div class="role-map">
+        <div class="tier">
+          <div class="tier-head"><b>平台层</b><span>跨物业公司，JWT role = platform_admin</span></div>
+          <div class="nodes">
+            <div class="node p">平台管理员<small>物业公司、比例、结算、交易明细、全局审核</small></div>
+          </div>
+        </div>
+
+        <div class="tier">
+          <div class="tier-head"><b>物业层</b><span>数据范围限定在本物业公司</span></div>
+          <div class="nodes">
+            <div class="node b">物业管理员<small>role=property_admin；子角色：物业领导 / 物业运营</small></div>
+            <div class="node s">社区管理员<small>role=community_admin；当前为空壳，见 §11</small></div>
+          </div>
+        </div>
+
+        <div class="tier">
+          <div class="tier-head"><b>经营与服务层</b><span>独立登录角色，不叠加在住户上</span></div>
+          <div class="nodes">
+            <div class="node a">商家<small>role=merchant；本质是住户 + merchants 店铺</small></div>
+            <div class="node s">快递员<small>role=courier；抢配送单，拿配送费分成</small></div>
+            <div class="node s">技工<small>role=technician；接服务单，自动绑 technician 店</small></div>
+            <div class="node s">快递负责人<small>courier_managers；管理快递员，role 仍是 courier</small></div>
+          </div>
+        </div>
+
+        <div class="tier">
+          <div class="tier-head"><b>住户层</b><span>role=resident；下面的身份全部是“标签”，不改 role</span></div>
+          <div class="nodes">
+            <div class="node g">业主 / 住户<small>最底层身份，所有 C 端功能的基础</small></div>
+            <div class="node t">单元楼长<small>building_leaders</small></div>
+            <div class="node t">物业经理<small>property_managers</small></div>
+            <div class="node t">统筹<small>coordinators</small></div>
+            <div class="node t">板块负责人<small>sector_leaders</small></div>
+            <div class="node t">个体负责人<small>individual_leaders</small></div>
+            <div class="node t">活动组组长<small>activity_leader_identities</small></div>
+            <div class="node t">业主小店<small>resident_shop</small></div>
+            <div class="node t">一级代理<small>merchants.is_distributor=1</small></div>
+          </div>
+          <div class="hierarchy">
+            <span>统筹</span><span class="arrow">→</span><span>板块负责人</span><span class="arrow">→</span><span>个体负责人</span>
+            <span class="arrow">|</span><span>楼长</span><span class="arrow">→</span><span>物业经理（从楼长分成抽成）</span>
+            <span class="arrow">|</span><span>区域负责人</span><span class="arrow">→</span><span>项目负责人（历史组织架构，未接分账）</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="t">一句话记住“谁管谁”</span>
+        <strong>平台</strong>管所有物业公司和比例；<strong>物业管理员</strong>管本物业的住户、商家、账单、审核；<strong>统筹 → 板块 → 个体</strong>是管理盘的三级分成链；<strong>楼长 → 经理</strong>是物业分成内部的再分配；<strong>活动组长、业主小店、一级代理</strong>不在这条分账链里，各自靠店铺货款/差价赚钱。
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>身份</th><th>落地表</th><th>改 role？</th><th>怎么获得</th><th>是否进微信分账</th></tr></thead>
+          <tbody>
+            <tr><td>单元楼长</td><td><code>building_leaders</code></td><td>否</td><td>物业/平台直接任命</td><td class="ok">是</td></tr>
+            <tr><td>物业经理</td><td><code>property_managers</code></td><td>否</td><td>物业/平台直接任命</td><td class="ok">是</td></tr>
+            <tr><td>统筹</td><td><code>coordinators</code></td><td>否</td><td>物业/平台任命</td><td class="ok">是</td></tr>
+            <tr><td>板块负责人</td><td><code>sector_leaders</code></td><td>否</td><td>物业/平台/统筹任命</td><td class="ok">是</td></tr>
+            <tr><td>个体负责人</td><td><code>individual_leaders</code></td><td>否</td><td>住户申请 + 物业/平台审核；或管理端直接建</td><td class="ok">是</td></tr>
+            <tr><td>活动组组长</td><td><code>activity_leader_identities</code></td><td>否</td><td>住户申请 + 物业/平台审核，通过自动开 group_leader 店</td><td class="bad-t">否</td></tr>
+            <tr><td>业主小店</td><td><code>resident_merchant_applications</code></td><td>否</td><td>业主申请 → 缴保证金 → 物业/平台审核</td><td class="bad-t">否（按件结算）</td></tr>
+            <tr><td>一级代理</td><td><code>merchants.is_distributor=1</code></td><td>否</td><td>任意登录用户申请 + 物业/平台审核</td><td class="bad-t">否（拿货款）</td></tr>
+            <tr><td>区域 / 项目负责人</td><td><code>regional_leaders</code> / <code>project_leaders</code></td><td>否</td><td>统筹/板块/物业创建</td><td class="bad-t">否（历史组织架构）</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 02 住户 -->
+    <section id="resident">
+      <div class="section-head">
+        <div>
+          <h2>02 住户主线</h2>
+          <p>从微信登录到下单、缴费、社区互动，住户是整套系统的流量入口，也是所有身份的底座。</p>
+        </div>
+        <span class="count">8 个阶段</span>
+      </div>
+
+      <div class="chips" data-filter-group="resident">
+        <button class="chip" type="button" data-filter="all" aria-pressed="true">全部</button>
+        <button class="chip" type="button" data-filter="resident">只看住户</button>
+        <button class="chip" type="button" data-filter="merchant">商家</button>
+        <button class="chip" type="button" data-filter="property">物业</button>
+        <button class="chip" type="button" data-filter="platform">平台</button>
+        <button class="chip" type="button" data-filter="identity">身份</button>
+        <button class="chip" type="button" data-filter="money">资金</button>
+      </div>
+
+      <details class="card resident" id="r-login" data-cat="resident" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 进入</span>
+            <span class="card-title">微信登录、绑定物业、建立身份</span>
+            <span class="card-kick">没有独立注册页；首次进入就要确定“属于哪个物业公司”</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>微信登录</b><span>小程序 <code>code</code> 调 <code>/auth/wechat-login</code>，后端换 openid；没有记录就建号：<code>role=resident</code>、<code>userType=owner</code>、<code>active</code>。</span></div>
+            <div class="flow-step"><em>2</em><b>确定物业</b><span>首次登录必须带 <code>propertyCompanyId</code>；之后 JWT 固定该物业，所有数据范围都按它隔离。</span></div>
+            <div class="flow-step"><em>3</em><b>绑定手机号</b><span><code>POST /auth/bind-phone</code>。不绑也能登录，但商家、提现、找回等场景需要手机号匹配。</span></div>
+            <div class="flow-step"><em>4</em><b>选小区 / 房号</b><span>住户可选小区和房间；<strong>楼栋、单元、房号只能物业改</strong>，住户只能提交变更申请等审批。</span></div>
+            <div class="flow-step"><em>5</em><b>完善资料</b><span>姓名、头像、性别、年龄、婚姻、是否有子女；提交后按配置领取一次性奖励。</span></div>
+            <div class="flow-step"><em>6</em><b>“我的”页标签</b><span><code>/auth/profile</code> 返回 7 个 <code>isXxx</code> 标签，前端据此显示楼长、负责人、组长、小店、代理入口。</span></div>
+          </div>
+          <p><strong>JWT 里有什么：</strong><code>sub=residentId</code>，claims 包含 <code>role</code>、<code>propertyCompanyId</code>、<code>familyId</code>、<code>tv</code>（token 版本）。每次请求都会校验 <code>tv</code> 和住户状态，所以禁用、冻结、登出可以即时失效。</p>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            <strong>管理端和 C 端是同一张 residents 表。</strong>平台/物业账号也是 <code>residents</code> 里的一行，只是 <code>role</code> 不同，通过 <code>/auth/admin-login</code> 手机号 + BCrypt 密码登录。当前 <code>app.auth.test-mode</code> 默认 <code>true</code>，会放开历史口令 <code>admin123456</code> 并跳过“普通住户无管理端登录权限”校验——这是联调临时措施，上线前必须关闭。
+          </div>
+          <div class="callout warn">
+            <span class="t">资料奖励的坑</span>
+            奖励按 <code>社区 &gt; 物业 &gt; 统筹 &gt; 平台</code> 的 scope 优先级取配置，<code>oncePerUser</code> 默认 true。但 <code>family_completed</code> 条件依赖生日字段，而<strong>全仓库没有生日写入接口</strong>；其他普通字段也只校验“配置存在”，不校验是否真的填了。联调时不要把它当成严格的风控。
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-family" data-cat="resident" open>
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 家庭</span>
+            <span class="card-title">家庭池：一个人开家，全家共用一个钱包</span>
+            <span class="card-kick">创建家庭会立刻把户主个人积分/物业币全部搬进家庭池</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow three">
+            <div class="flow-step"><em>1</em><b>户主创建</b><span>必须是非租户、当前无家庭、同物业；创建时填小区、楼栋、单元、房号。</span></div>
+            <div class="flow-step"><em>2</em><b>资产搬入</b><span>户主个人积分和物业币<strong>全额</strong>转入家庭池，个人余额清零；之后新获得的积分仍进家庭池，新发放/充值的物业币进个人余额。</span></div>
+            <div class="flow-step"><em>3</em><b>成员加入</b><span>只能户主操作；成员须已注册手机号、非租户、同物业；上限 15 人；加入即共享家庭池。</span></div>
+            <div class="flow-step"><em>4</em><b>消费顺序</b><span>订单/物业费/服务单带 <code>familyId</code> 时，默认先用家庭池，不够再用个人池。</span></div>
+            <div class="flow-step"><em>5</em><b>退出 / 移除</b><span>按“家庭余额 ÷ 家庭人数”平均分给退出者；户主不能退出。</span></div>
+            <div class="flow-step"><em>6</em><b>投票权</b><span>意见箱投票按家庭计算，一户一票，不是一人一票。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            家庭有 <code>auditStatus</code> 字段，创建时写 <code>pending</code>，但<strong>没有任何审核读取或审批接口</strong>，所以实际不阻塞。成员加入也没有审核。退出按人数均分，不看谁贡献得多——这是当前产品规则，不是计算错误。
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-point" data-cat="resident" open>
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 积分</span>
+            <span class="card-title">积分：默认 100 分 = 1 元，只能花，不能提现</span>
+            <span class="card-kick">获取渠道比 PRD 少；签到/活动没有 C 端入口</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方向</th><th>真实渠道</th><th>规则 / 公式</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr><td>获取</td><td>订单完成返积分</td><td><code>(物业币支付 + 现金支付) × 积分兑换比</code>，向下取整；纯积分支付不返积分</td><td class="ok">已通</td></tr>
+                <tr><td>获取</td><td>准时缴物业费</td><td>结清且早于到期日，奖 100 分（直接改余额，不走通用 earn 流水）</td><td class="ok">已通</td></tr>
+                <tr><td>获取</td><td>商家赠送</td><td>商家先向平台购点（需审核），再按购点余额赠给同物业住户</td><td class="ok">已通</td></tr>
+                <tr><td>获取</td><td>管理端手工 / 线下发放</td><td>物业/平台可发；线下发放有独立记录</td><td class="ok">已通</td></tr>
+                <tr><td>获取</td><td>完善资料奖励</td><td>按字段配置，一次性；scope 优先级社区 &gt; 物业 &gt; 统筹 &gt; 平台</td><td class="warn-t">有条件</td></tr>
+                <tr><td>获取</td><td>签到 / 活动</td><td><code>source</code> 白名单里有，但<strong>没有 C 端入口</strong></td><td class="bad-t">未通</td></tr>
+                <tr><td>使用</td><td>商城抵扣</td><td>按商家 <code>pointExchangeRate</code>（默认 100）折算，服务端校验余额</td><td class="ok">已通</td></tr>
+                <tr><td>使用</td><td>物业费抵扣</td><td>按物业 <code>pointToFeeRate</code> 折算，可纯积分或混合</td><td class="ok">已通</td></tr>
+                <tr><td>使用</td><td>家庭内转 / 转给物业</td><td>家庭内转只动积分；转物业只扣个人池</td><td class="ok">已通</td></tr>
+                <tr><td>使用</td><td><code>POST /points/redeem</code></td><td>只扣积分并返回折算金额，<strong>没有任何到账动作</strong></td><td class="bad-t">未通</td></tr>
+                <tr><td>清零</td><td>2 年欠费积分清零</td><td>物业启用 <code>twoYearClearEnabled</code> 后，把欠费住户积分清零并折算入物业积分池</td><td class="warn-t">有条件</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>三条硬规则：</strong>积分是整数；积分不能提现；积分和物业币不能互相兑换。积分与物业币的换算只发生在“消费抵扣”和“分账成本”两个地方，不存在资产互换接口。</p>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-coin" data-cat="resident" open>
+        <summary>
+          <span class="idnum">04</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 物业币</span>
+            <span class="card-title">物业币：1 币 = 1 元，可充值、可消费，住户不能直接提现</span>
+            <span class="card-kick">商家收到物业币后可以申请兑换现金，这是它和积分的最大区别</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>充值</b><span><code>POST /property-coins/recharge</code> 走微信预下单，回调按 <code>PaymentRecord</code> 幂等入账，1 元 = 1 币。</span></div>
+            <div class="flow-step"><em>2</em><b>订单返币</b><span>仅当商家开启 <code>coinRebateEnabled</code> 且抽佣率 ≥ 20% 时，按 <code>(物业币支付 + 现金支付) × coinRebateRate</code> 返。</span></div>
+            <div class="flow-step"><em>3</em><b>消费</b><span>商城（受物业商城规则约束）、物业费、服务/咨询；混合支付里物业币和积分可同时用。</span></div>
+            <div class="flow-step"><em>4</em><b>过期</b><span>物业配置 <code>coinExpiryDays</code> 后过期；按最早流水逐笔核销，过期金额进物业积分池。</span></div>
+            <div class="flow-step"><em>5</em><b>转物业</b><span>住户可主动把物业币转给物业，只扣家庭池（有家庭时）。</span></div>
+            <div class="flow-step"><em>6</em><b>商家兑现金</b><span>商家用 <code>/coin-withdrawals</code> 申请，1:1 扣币，默认 0.6% 手续费，物业/平台审核。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            ① 住户<strong>没有</strong>物业币提现入口，<code>CoinWithdrawalController</code> 只放行 <code>merchant</code>。② 冻结 <code>coinFrozen</code> 会拦截消费；已发起的充值回调仍会入账，但余额不可用。③ 物业币“使用条件”（最低消费、最大抵扣比例）当前只在前端展示，订单侧只校验商城开关和最大抵扣比例，没有逐条校验使用条件。
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-fee" data-cat="resident" open>
+        <summary>
+          <span class="idnum">05</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 物业费</span>
+            <span class="card-title">物业费：账单由物业建，住户只负责查和缴</span>
+            <span class="card-kick">没有自动出账任务；准时缴清奖励 100 积分</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>物业建账单</b><span>管理端 <code>POST /admin/property-fees</code> 创建；费用类型：物业/停车/水/电。</span></div>
+            <div class="flow-step"><em>2</em><b>住户查询</b><span><code>GET /property-fees/my</code>、<code>GET /property-fees/{id}</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>选择支付</b><span><code>property_coin</code> / <code>point</code> / <code>wechat</code> / <code>mixed</code>；混合支付必须覆盖应付金额。</span></div>
+            <div class="flow-step"><em>4</em><b>现金到账</b><span>含现金时先微信预下单，账单保持未缴；回调成功才落账。</span></div>
+            <div class="flow-step"><em>5</em><b>准时奖励</b><span>结清且早于到期日，奖 100 积分 + 徽章，积分同步进家庭池。</span></div>
+            <div class="flow-step"><em>6</em><b>欠费与催缴</b><span>状态 <code>unpaid/partial/paid/overdue</code>；催缴走 preview → send，站内信真实落库。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            ① 物业费<strong>没有自动出账定时任务</strong>，账单必须由管理端创建。② 催缴的<strong>微信渠道只有统计，全部跳过</strong>，当前只有站内信。③ 物业费支付只更新 <code>property_fees</code> 并扣积分/币，<strong>不写物业公司结算账户</strong>；物业公司分成账户靠订单分账和平台调账，见 §11。
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-shop" data-cat="resident" open>
+        <summary>
+          <span class="idnum">06</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 商城</span>
+            <span class="card-title">从下单到确认收货：一条订单的完整生命周期</span>
+            <span class="card-kick">支付方式、履约方式、退款入口都在这一节</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <h4>下单前</h4>
+          <ul>
+            <li>只能看到 <code>audit_status=approved</code>、<code>status=active</code> 的商家；商品需 <code>active</code> 且有库存。</li>
+            <li>商家的“服务社区”和“社区距离”目前只是展示配置，<strong>不参与下单校验</strong>；跨社区能不能下单，代码没有拦。</li>
+            <li>会员价优先：商品有 <code>memberDiscountPrice</code> 时按会员价；否则按商品价。</li>
+          </ul>
+
+          <h4>下单</h4>
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>提交订单</b><span><code>POST /orders</code>：商家、商品与数量、地址、联系电话、备注、<code>familyId</code>；初始 <code>pending</code>。</span></div>
+            <div class="flow-step"><em>2</em><b>服务端算价</b><span>应付 = 商品金额 + 运费 − 优惠券；运费取商家配送费/满免门槛；服务端定价，不信前端。</span></div>
+            <div class="flow-step"><em>3</em><b>支付拆分</b><span>纯积分/纯物业币即时扣；纯微信全额预下单；混合支付校验积分+物业币不超过应付。</span></div>
+            <div class="flow-step"><em>4</em><b>库存</b><span>微信预下单即扣库存；30 分钟未支付自动关单并还库存；支付回调不再重复扣。</span></div>
+            <div class="flow-step"><em>5</em><b>返利</b><span>支付成功后按规则返积分/物业币；优惠券核销；订单进入 <code>paid</code>。</span></div>
+            <div class="flow-step"><em>6</em><b>取消</b><span><code>pending</code> 取消会关微信单并还库存；已支付取消会退积分/币、退现金、冲返利、还库存。</span></div>
+          </div>
+
+          <h4>支付后走哪条路</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>订单类型</th><th>支付后状态</th><th>后续</th><th>谁推动</th></tr></thead>
+              <tbody>
+                <tr><td>食堂单</td><td><code>paid</code> → <code>completed</code></td><td>不配送，支付即完成</td><td>系统</td></tr>
+                <tr><td>团购单</td><td><code>paid</code> → <code>pending_verification</code> → <code>verified</code> → <code>completed</code></td><td>商家先核实；核实拒绝会取消并退款</td><td>商家 / 住户确认</td></tr>
+                <tr><td>普通商品单</td><td><code>paid</code> → 待选履约（30 分钟）→ <code>delivering</code> → <code>completed</code></td><td>商家自配或平台配送；超时默认平台配送</td><td>商家 / 骑手 / 住户确认</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h4>退款</h4>
+          <div class="state-flow">
+            <span class="st">paid / delivering</span><span class="arrow">→</span>
+            <span class="st warn">refunding</span><span class="arrow">→</span>
+            <span class="st good">refunded</span><span class="arrow">/</span>
+            <span class="st bad">refund_rejected</span>
+          </div>
+          <ul>
+            <li>住户发起，受开关 <code>wechat-split.user-refund-enabled</code> 控制，<strong>默认 false</strong>。</li>
+            <li>审核只有物业/平台管理员，<strong>商家没有同意/拒绝退款的入口</strong>；商家只能拒团购核实。</li>
+            <li>通过后：退积分/物业币、还库存、扣回返现、退现金、冲正业主结算；驳回后订单进入 <code>refund_rejected</code>，之后不能再取消。</li>
+          </ul>
+
+          <div class="callout bad">
+            <span class="t">联调最容易踩的顺序问题</span>
+            退款开关默认关闭时，住户点退款会直接失败；开启后，退款审核也不在商家端，而在物业/平台后台。如果按“商家同意退款”去设计前端页面，会找不到接口。
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-community" data-cat="resident">
+        <summary>
+          <span class="idnum">07</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 社区</span>
+            <span class="card-title">公告、论坛、意见箱、咨询、消息</span>
+            <span class="card-kick">社交功能都能用，但有几处“参数收了没生效”的细节</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>功能</th><th>住户能做什么</th><th>入口</th><th>真实提醒</th></tr></thead>
+              <tbody>
+                <tr><td>公告</td><td>看已发布公告；按小区/楼栋定向；可提交信息收集</td><td><code>/announcements</code></td><td>接口收了 <code>readStatus</code> 但未使用，未读筛选不生效</td></tr>
+                <tr><td>社区论坛</td><td>发帖、评论、点赞、举报</td><td><code>/community</code></td><td>发帖/评论先过敏感词；举报仅 <code>resident</code></td></tr>
+                <tr><td>意见箱</td><td>发起意见、投票（支持/反对/弃权）</td><td><code>/opinion-boxes</code></td><td>发起有月限额；投票按家庭一人一票</td></tr>
+                <tr><td>咨询</td><td>图文咨询、面诊预约</td><td><code>/consultations</code>、<code>/inquiries</code></td><td>图文咨询一步扣款即 <code>paid</code>；面诊落 <code>pending</code></td></tr>
+                <tr><td>消息</td><td>邻居私聊、官方会话、服务请求、商家广告、广播</td><td><code>/messages</code>、<code>/ws</code></td><td>私聊受同物业、日限额、黑名单限制；审核结果不写站内信</td></tr>
+                <tr><td>小区建设积分池</td><td>只读查看余额和流水</td><td><code>/community-point-pools</code></td><td>订单贡献注入、管理端调整；住户无参与入口</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card resident" id="r-service" data-cat="resident">
+        <summary>
+          <span class="idnum">08</span>
+          <span class="card-head-main">
+            <span class="pill resident">住户 · 服务</span>
+            <span class="card-title">服务预约、服务需求、食堂、快递</span>
+            <span class="card-kick">服务能下单；食堂定向余额和住户寄件是两块“看着有、实际没通”的区域</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <h4>服务预约（有明确服务项目和价格）</h4>
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>选服务</b><span><code>GET /services</code>，按家政/维修/食堂/辅导/养老/医疗/宠物/生活/相亲分类。</span></div>
+            <div class="flow-step"><em>2</em><b>下单</b><span><code>POST /services/{id}/book</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>支付</b><span>纯积分/物业币立即 <code>confirmed</code>；含现金先 <code>pending</code> + 微信预下单，回调后 <code>confirmed</code>。</span></div>
+            <div class="flow-step"><em>4</em><b>履约</b><span>技工推进 <code>confirmed → in_progress → completed</code>；住户只能取消。</span></div>
+          </div>
+
+          <h4>服务需求（先发布需求，商家来报价）</h4>
+          <div class="state-flow">
+            <span class="st">pending / waiting</span><span class="arrow">→</span>
+            <span class="st warn">matching</span><span class="arrow">→</span>
+            <span class="st">negotiating</span><span class="arrow">→</span>
+            <span class="st good">quoted</span><span class="arrow">→</span>
+            <span class="st good">paid</span><span class="arrow">→</span>
+            <span class="st">closed</span>
+          </div>
+          <p>发布后进入商家队列，5 分钟轮转；商家可接单、跳过、报价；住户确认报价并支付后生成 <code>confirmed</code> 服务工单。<code>matching</code> / <code>negotiating</code> 阶段可取消。</p>
+
+          <h4>食堂</h4>
+          <ul>
+            <li>食堂单支付后直接 <code>completed</code>，不配送。</li>
+            <li>主商家可给食堂充值“定向余额”，订单页会展示可用余额。</li>
+            <li><span class="bad-t">未通：</span><code>CanteenService.consumeForOrder</code> 没有任何调用点，定向余额目前<strong>只展示、不实际扣减</strong>。</li>
+          </ul>
+
+          <h4>快递</h4>
+          <ul>
+            <li>住户<strong>没有寄件/收件下单入口</strong>；配送单全部来自商城订单履约。</li>
+            <li>平台配送单进入抢单大厅；快递员抢单后 <code>pending → accepted → delivering → completed</code>。</li>
+            <li>超时无人抢 → <code>property_fallback</code>，由物业兜底或再指派。</li>
+            <li>配送费：商家配送费优先，满 <code>freeDeliveryThreshold</code> 免；平台配送基数 = 实付运费 + 满额补贴。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- 03 商家 -->
+    <section id="merchant">
+      <div class="section-head">
+        <div>
+          <h2>03 商家主线</h2>
+          <p>商家不是独立账号体系，而是“住户账号 + 一行店铺”。理解这一点，后面所有“按手机号找店”的逻辑就顺了。</p>
+        </div>
+        <span class="count">7 个阶段</span>
+      </div>
+
+      <details class="card merchant" id="m-join" data-cat="merchant" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 入驻</span>
+            <span class="card-title">申请、审核、建店、建账号</span>
+            <span class="card-kick">审核通过只建店铺，不会自动建登录账号</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>提交申请</b><span><code>POST /merchants</code>：名称、类目、联系电话、地址、封面/视频、配送费、满免门槛、抽佣率、积分兑换比。</span></div>
+            <div class="flow-step"><em>2</em><b>生成待审店</b><span>创建 <code>PlatformMerchant</code> + <code>Merchant(pending_audit, normal, active)</code> + 物业配置（默认抽佣 0.1、积分 100:1、返币关）。</span></div>
+            <div class="flow-step"><em>3</em><b>物业/平台审核</b><span>仅 <code>pending_audit</code> 可审；通过 → <code>approved</code> + <code>active</code>，可同时改等级/类目/配送费；驳回 → <code>rejected</code>。</span></div>
+            <div class="flow-step"><em>4</em><b>建登录账号</b><span>管理端 <code>/admin/role-accounts</code> 建 <code>role=merchant</code> 的 residents 行，并把店铺置为 approved/active。</span></div>
+            <div class="flow-step"><em>5</em><b>商家登录</b><span>走 <code>/auth/admin-login</code>；后端按“手机号 + 当前物业”找最新店铺。</span></div>
+            <div class="flow-step"><em>6</em><b>微信进件（可选）</b><span><code>/merchants/my/applyment</code> 提交资料 → 微信审核 → 签约，为分账/收付通做准备。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            ① 一个 <code>merchant</code> 只挂一个 <code>property_company_id</code>；同一平台商家要在多个物业经营，会为每个物业各建一行，费率独立。<br>
+            ② 商家等级只影响列表排序（official 100 / property 50 / normal 0），<strong>不改变费率或权限</strong>；只有 <code>platform_admin</code> 能改等级。<br>
+            ③ 商家被 <code>frozen</code> 后：商品、券、积分、广告、服务请求、提现全部不可用，买家下单被拒，商品对外不可见；但 <code>/orders</code> 仍可按手机号查历史订单。
+          </div>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-goods" data-cat="merchant">
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 商品与营销</span>
+            <span class="card-title">商品、优惠券、广告、积分购点、动态</span>
+            <span class="card-kick">商家能自主做的营销有限，很多入口在物业/平台</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>能力</th><th>商家能做什么</th><th>限制 / 现状</th></tr></thead>
+              <tbody>
+                <tr><td>商品</td><td>创建、改价、上下架、改库存、删除（软删 <code>inactive + deletedAt</code>）</td><td>只能操作本人店，且店铺 approved + active；下单时再校验归属、上架、库存</td></tr>
+                <tr><td>优惠券</td><td>查看本店券、定向发券</td><td>模板只能物业/平台建；领取/下单锁定/支付核销/取消退款释放</td></tr>
+                <tr><td>广告</td><td>购买广告位、看配额</td><td>按天价 × 天数；支持免费/物业币/积分/微信；微信先 <code>pending_payment</code>，回调才投放；<strong>无人工审核</strong></td></tr>
+                <tr><td>积分购点</td><td>提交购点申请 → 审核通过 → 给住户赠积分</td><td>赠积分必须同物业；每次扣减购点余额；不能直接给现金</td></tr>
+                <tr><td>商家动态</td><td>发布动态</td><td>创建即 <code>published</code>，无审核</td></tr>
+                <tr><td>特价</td><td>无自主发布入口</td><td>由管理端/负责人发布</td></tr>
+                <tr><td>食堂</td><td>主商家给食堂充值定向余额</td><td>定向余额当前只展示、不扣减</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            广告额度包接口只有查询，没有购买加额度的 C 端入口；要加额度得走管理端。商家改商品/价格不触发“价格审批”，价格审批只用于特定商家分成/商品价格场景，且入口在物业领导/板块负责人侧。
+          </div>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-order" data-cat="merchant">
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 接单</span>
+            <span class="card-title">订单进来后，商家要做什么</span>
+            <span class="card-kick">支付成功不等于订单完成；商家还要选履约、发货、处理核实</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>收到 paid 订单</b><span>纯积分/币支付即时 <code>paid</code>；微信支付回调后 <code>paid</code>。</span></div>
+            <div class="flow-step"><em>2</em><b>选履约方式</b><span>支付后 30 分钟内选 <code>merchant_self</code>（自配）或 <code>courier_hall</code>（平台配送）；超时默认平台配送。</span></div>
+            <div class="flow-step"><em>3</em><b>团购核实</b><span>团购单需商家核实，<code>pending_verification → verified</code>；拒绝会取消并退款。</span></div>
+            <div class="flow-step"><em>4</em><b>发货/自配</b><span>商家自配：<code>merchant_self → merchant_delivering → completed</code>，商家确认即订单完成。</span></div>
+            <div class="flow-step"><em>5</em><b>平台配送</b><span>骑手接单后 <code>delivering</code>；骑手完成只推进配送单，订单等住户确认或超时自动完成。</span></div>
+            <div class="flow-step"><em>6</em><b>改派</b><span>管理端可强改履约方式并留痕；已结束订单（completed/cancelled/refunded）不可改。</span></div>
+          </div>
+          <p><strong>商家能看到的订单动作：</strong>确认发货、完成自配、核实团购、查看订单/销售统计；没有“同意退款”按钮，退款审核在物业/平台。</p>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-delivery" data-cat="merchant">
+        <summary>
+          <span class="idnum">04</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 配送</span>
+            <span class="card-title">自配、平台配送、物业兜底</span>
+            <span class="card-kick">配送费归店铺主体；平台只抽配送分成</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>模式</th><th>状态链</th><th>谁完成</th><th>钱怎么分</th></tr></thead>
+              <tbody>
+                <tr><td>商家自配</td><td><code>merchant_self → merchant_delivering → completed</code></td><td>商家确认即订单完成</td><td>骑手 0；商家得运费 − 平台抽成</td></tr>
+                <tr><td>平台配送</td><td><code>pending → accepted → delivering → completed</code></td><td>骑手完成配送单；订单等确认</td><td>基数 = 实付运费 + 满额补贴；平台拿 <code>platformDeliveryShareRate</code>，骑手拿余额</td></tr>
+                <tr><td>物业兜底</td><td><code>pending → property_fallback</code></td><td>物业指派或再被抢</td><td>按实际承运方结算</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            配送规则表里有 <code>baseFee / perKg / 免费门槛 / 重量距离 / 超时 / 分成率</code>，但当前订单运费只读 <code>merchant.deliveryFee</code> + 满免门槛；<strong>多档价格区间、距离计价没有参与实际算价</strong>。超时默认 30 分钟（<code>DeliveryRule.timeoutMinutes</code>）。
+          </div>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-refund" data-cat="merchant">
+        <summary>
+          <span class="idnum">05</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 售后</span>
+            <span class="card-title">退款、拒单、服务请求</span>
+            <span class="card-kick">商家没有退款审核权；这是当前代码的硬边界</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>退款：</strong>住户申请 → 订单 <code>refunding</code> → 物业/平台审核 → <code>refunded</code> 或 <code>refund_rejected</code>。通过后退积分/币、还库存、扣回返现、退现金、冲正结算。商家端没有审核入口。</li>
+            <li><strong>团购拒单：</strong>商家核实拒绝会走 <code>cancelAndRefund</code>，订单取消并退款，取消方记为商家。</li>
+            <li><strong>已支付取消：</strong>由系统/管理端触发，退积分/币、退现金、冲返利、还库存。</li>
+            <li><strong>服务请求：</strong>商家在 5 分钟轮转里接单/跳过/报价；住户支付报价后生成服务工单。服务请求只扣住户积分/币，没有商家现金分账流水。</li>
+          </ul>
+          <div class="callout bad">
+            <span class="t">联调注意</span>
+            如果前端按“商家同意退款”做页面，会找不到接口。退款审核只有 <code>property_admin</code> / <code>platform_admin</code>。另外 <code>refund_rejected</code> 后订单不能再取消，用户只能继续履约或走线下。
+          </div>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-settle" data-cat="merchant" open>
+        <summary>
+          <span class="idnum">06</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 结算</span>
+            <span class="card-title">订单完成后，商家到底拿多少</span>
+            <span class="card-kick">抽佣基数、积分/币成本、四级分账，一次讲清</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <p>订单进入 <code>completed</code> 时，系统写一条 <code>distribution_records</code> 快照，并按订单快照绑定楼长、经理、负责人。商家实得 = 商品实付 − 抽佣基数（再由平台盘分走）；积分/物业币成本先从抽佣基数里扣，扣成负数记 <code>deficit</code>，由物业池吸收。</p>
+          <div class="code-block">
+            <div class="code-top"><span>商品订单分账（代码口径）</span><button class="copy-btn" type="button">复制</button></div>
+            <pre>抽佣基数 = (订单总额 − 优惠券) × 商家 commissionRate
+可分配   = 抽佣基数 − 积分成本(积分 ÷ 兑换比) − 物业币成本
+
+一级三档（必须分完）：
+  平台     = 可分配 × platformShareRate
+  物业毛   = 可分配 × propertyShareRate
+  管理盘   = 可分配 − 平台 − 物业毛
+
+管理盘往下（有统筹时）：
+  板块毛   = 管理盘 × sectorLeaderRate
+  个体     = 板块毛 × individualLeaderRate
+  板块     = 板块毛 − 个体
+  统筹     = 管理盘 − 板块毛
+
+物业内部：
+  楼长毛   = 物业毛 × buildingLeaderRate（订单快照）
+  经理     = 楼长毛 × managerRate
+  楼长净额 = 楼长毛 − 经理
+
+配送：
+  基数     = 实付运费 + 满额补贴
+  平台配送 = 基数 × platformDeliveryShareRate
+  骑手     = 基数 − 平台配送</pre>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>参数</th><th>默认/生产值</th><th>谁配置</th><th>生效方式</th></tr></thead>
+              <tbody>
+                <tr><td>商家抽佣率 <code>commissionRate</code></td><td>默认 0.10</td><td>入驻时填，审核时可改</td><td>下单/完成时读配置</td></tr>
+                <tr><td>积分兑换比 <code>pointExchangeRate</code></td><td>默认 100（100 分 = 1 元）</td><td>商家物业配置</td><td>下单/分账时读配置</td></tr>
+                <tr><td>平台 <code>platformShareRate</code></td><td>生产库默认 0</td><td>平台</td><td>完成时写分账快照</td></tr>
+                <tr><td>物业 <code>propertyShareRate</code></td><td>生产库默认 0.30</td><td>平台</td><td>完成时写分账快照</td></tr>
+                <tr><td>统筹 <code>coordinatorShareRate</code></td><td>生产库默认 0.70（管理盘余额）</td><td>平台</td><td>完成时写分账快照</td></tr>
+                <tr><td>板块 <code>sectorLeaderRate</code></td><td>默认 0.10（占管理盘）</td><td>平台</td><td>完成时写分账快照</td></tr>
+                <tr><td>个体 <code>individualLeaderRate</code></td><td>默认 0（占板块毛）</td><td>平台</td><td>完成时写分账快照</td></tr>
+                <tr><td>楼长比例</td><td>任命时默认 0.10（占物业毛）</td><td>物业/平台</td><td>订单创建时写快照</td></tr>
+                <tr><td>经理比例</td><td>默认 0（占楼长毛）</td><td>物业/平台</td><td>订单创建时写快照</td></tr>
+                <tr><td>平台配送分成 <code>platformDeliveryShareRate</code></td><td>按物业配置</td><td>平台</td><td>完成时计算</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <span class="t">快照 vs 实时</span>
+            分成比例在订单完成时写入 <code>distribution_records</code>，属于<strong>快照</strong>，之后改配置不影响已完成订单；结算开关、手续费率、商城抵扣上限、积分兑换比属于<strong>实时读</strong>。联调时改完比例要拿新订单验证。
+          </div>
+        </div>
+      </details>
+
+      <details class="card merchant" id="m-withdraw" data-cat="merchant" open>
+        <summary>
+          <span class="idnum">07</span>
+          <span class="card-head-main">
+            <span class="pill merchant">商家 · 提现</span>
+            <span class="card-title">可提现余额、审核、打款</span>
+            <span class="card-kick">商家、组长、技工走同一个提现接口；物业/负责人走另一个</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>算可提现</b><span>已完成订单的商家分成收入 − 已占用（pending/approved/completed）− 已提现；单笔上限 999999.99。</span></div>
+            <div class="flow-step"><em>2</em><b>申请</b><span><code>POST /merchant/withdrawals</code>，费率取物业 <code>withdrawalFeeRate</code>，默认 0.6%。</span></div>
+            <div class="flow-step"><em>3</em><b>审核</b><span><code>pending → approved → completed</code>；拒绝回 <code>rejected</code>，不占额度。人工打款并写 <code>transferProof</code>。</span></div>
+            <div class="flow-step"><em>4</em><b>冻结</b><span><code>withdrawalBlocked=true</code> 时直接把可提现置 0，但仍可查历史。</span></div>
+            <div class="flow-step"><em>5</em><b>物业币兑换</b><span>商家可把收到的物业币按 1:1 申请兑换现金，默认 0.6% 手续费，走 <code>/coin-withdrawals</code>。</span></div>
+            <div class="flow-step"><em>6</em><b>到账口径</b><span>直连模式是内部台账 + 人工打款；普通分账/收付通模式下，微信侧已实时分账的部分会从可提现里扣掉，避免双算。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            ① 纯 <code>resident</code> 的一级代理<strong>没有提现入口</strong>：<code>MerchantSupport.requireCurrentWithdrawableMerchant</code> 只放行 merchant / activity_leader / technician / 组长身份，<code>DistributorController</code> 也没有提现端点。② 技工提现走 <code>/merchant/withdrawals</code>，但收入来自服务单，不写 <code>withdrawal_records</code>。③ 平台收益只读，不能提现。
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 04 物业 -->
+    <section id="property">
+      <div class="section-head">
+        <div>
+          <h2>04 物业管理员</h2>
+          <p>物业是整套系统里“事最多、权限最杂”的角色：既管人、管商家、管内容，也管账单和资金审核。</p>
+        </div>
+        <span class="count">本物业范围</span>
+      </div>
+
+      <details class="card property" data-cat="property" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill property">物业 · 账号</span>
+            <span class="card-title">账号从哪来、子角色怎么分</span>
+            <span class="card-kick">物业领导 / 物业运营：真实差异只有两处</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>平台建物业公司</b><span>创建物业公司时同时建首个小区；平台分配比例、结算开关。</span></div>
+            <div class="flow-step"><em>2</em><b>建管理员账号</b><span>平台或物业领导创建 <code>role=property_admin</code>，子角色写 <code>property_sub_role</code>：<code>property_leader</code> / <code>property_operator</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>绑定范围</b><span>账号固定一个 <code>propertyCompanyId</code>；物业运营可记录 <code>community_ids/building_nos</code>，但当前<strong>不构成数据隔离</strong>。</span></div>
+            <div class="flow-step"><em>4</em><b>登录</b><span><code>/auth/admin-login</code>，JWT role=property_admin + propertyCompanyId。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            <strong>子角色真实差异只有两处：</strong>① 物业运营不能管理物业账号（operator 403）；② 价格审批只认 JWT role 字面值 <code>property_leader</code>，新建的 <code>property_admin + subRole=property_leader</code> 账号<strong>实际进不去价格审批</strong>。其余权限没有区别：<code>PermissionGuard</code> 对 <code>property_admin</code> 直接放行。
+          </div>
+        </div>
+      </details>
+
+      <details class="card property" data-cat="property" open>
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill property">物业 · 日常</span>
+            <span class="card-title">一天里物业要处理的事</span>
+            <span class="card-kick">住户、房间、商户、内容、账单、配送、积分/币</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>板块</th><th>物业能做什么</th><th>入口</th></tr></thead>
+              <tbody>
+                <tr><td>住户与房间</td><td>建/改住户、启停用、冻结、改楼栋单元房号、审核楼栋变更</td><td><code>/admin/residents</code>、<code>/admin/community-entities</code>、<code>/admin/building-changes</code></td></tr>
+                <tr><td>商家</td><td>审核入驻、改等级/类目/配送费、冻结、踢出、配社区距离</td><td><code>/admin/merchants</code>、<code>/admin/merchants/{id}/community-distances</code></td></tr>
+                <tr><td>内容</td><td>公告、论坛、咨询、食堂、导航、定向消息</td><td><code>/admin/announcements</code>、<code>/admin/community</code>、<code>/admin/navigation-items</code></td></tr>
+                <tr><td>物业费</td><td>建账单、改账单、催缴、看欠费</td><td><code>/admin/property-fees</code></td></tr>
+                <tr><td>配送</td><td>配送规则、价格区间、兜底指派、履约改派</td><td><code>/admin/delivery-rules</code>、<code>/admin/delivery-price-ranges</code>、<code>/admin/orders</code></td></tr>
+                <tr><td>积分/物业币</td><td>积分池、线下发积分、积分清零、发/扣/冻结物业币</td><td><code>/admin/point-pools</code>、<code>/admin/offline-points</code>、<code>/admin/point-clear</code>、<code>/admin/coin-*</code></td></tr>
+                <tr><td>审核</td><td>商家、楼长/经理/负责人、组长、业主小店、一级代理、退款、提现、物业币兑换</td><td>各 <code>/admin/*</code> 审核接口</td></tr>
+                <tr><td>看板</td><td>总览、分成记录、交易流水（物业不能看平台明细）</td><td><code>/admin/dashboard</code>、<code>/distribution/*</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card property" data-cat="property">
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill property">物业 · 资金</span>
+            <span class="card-title">物业在钱链路里的四个位置</span>
+            <span class="card-kick">收物业费、拿订单分成、发/收积分币、兜底配送</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>物业费</b><span>住户缴费只更新账单并扣积分/币，<strong>不写公司账户</strong>；现金走微信，直接进平台商户号（当前直连模式）。</span></div>
+            <div class="flow-step"><em>2</em><b>订单分成</b><span>订单完成时，物业按 <code>propertyShareRate</code> 拿分成；楼长从物业分成里扣，经理从楼长里扣。</span></div>
+            <div class="flow-step"><em>3</em><b>积分/币池</b><span>物业币过期、2 年欠费积分清零会折算进 <code>point_pools</code>；物业可查余额、手工调整。</span></div>
+            <div class="flow-step"><em>4</em><b>兜底配送</b><span>平台配送超时无人抢 → <code>property_fallback</code>，物业指派或自己处理。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒：结算账户</span>
+            物业公司有独立的 <code>settlement_balance</code>，物业管理员可发起分成提现、平台审核后扣减。但当前代码里这个余额<strong>只有提现扣减，没有订单完成自动入账</strong>；订单分成写的是 <code>distribution_records</code> 和 <code>point_pools</code>。如果直接上线，物业提现会显示余额不足，需要平台手工调账或补入账逻辑。详见 §11。
+          </div>
+          <div class="callout bad">
+            <span class="t">数据边界</span>
+            物业只能看本物业：<code>assertSamePropertyOrPlatform</code> / <code>resolveListPropertyCompanyId</code> 会拦截跨物业查询。平台管理员不受限。结算配置物业<strong>只读</strong>，写操作只有平台能做。
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 05 平台 -->
+    <section id="platform">
+      <div class="section-head">
+        <div>
+          <h2>05 平台管理员</h2>
+          <p>平台是唯一能改“钱怎么分”的角色。它的核心不是日常运营，而是建物业、定比例、审大额资金。</p>
+        </div>
+        <span class="count">跨物业</span>
+      </div>
+
+      <details class="card platform" data-cat="platform" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill platform">平台 · 独占</span>
+            <span class="card-title">只有平台能做的事</span>
+            <span class="card-kick">这些接口物业管理员调不动，前端不要给物业展示入口</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>能力</th><th>接口 / 服务</th><th>为什么必须平台</th></tr></thead>
+              <tbody>
+                <tr><td>物业公司 CRUD / 启停</td><td><code>/admin/property-companies</code></td><td>跨物业，涉及平台资产</td></tr>
+                <tr><td>平台分成比例</td><td><code>/admin/platform-share</code></td><td>改比例直接影响所有订单分账</td></tr>
+                <tr><td>结算开关</td><td><code>PUT /admin/settlement-config</code></td><td>真分账/记账兜底/自动提现/手续费</td></tr>
+                <tr><td>订单配置</td><td><code>PUT /admin/order-config</code></td><td>商家核实、冻结期、退款窗口</td></tr>
+                <tr><td>平台配置</td><td><code>/admin/platform-config</code></td><td>保证金、全局规则</td></tr>
+                <tr><td>平台商家库</td><td><code>/admin/platform-merchants</code></td><td>跨物业商家主体</td></tr>
+                <tr><td>物业分成提现审批</td><td><code>/admin/property-companies/{id}/settlement-withdrawals/{wid}/approve</code></td><td>大额资金出账</td></tr>
+                <tr><td>交易明细 / 导出</td><td><code>/admin/transactions</code></td><td>全平台资金总览</td></tr>
+                <tr><td>公司账户手动调账</td><td><code>POST /admin/company-account/adjust</code></td><td>补账/冲正</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>双方都能管：</strong>区域配额、导航、公告、看板、操作日志、各类审核/提现审核。其中区域配额会强制取当前物业，平台不能借此跨物业下发。</p>
+        </div>
+      </details>
+
+      <details class="card platform" data-cat="platform">
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill platform">平台 · 建盘</span>
+            <span class="card-title">从 0 到 1 开一个物业，平台按什么顺序操作</span>
+            <span class="card-kick">顺序错了会导致比例不合法、没有管理员、商家无法入驻</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>建物业公司</b><span>填名称、联系方式、结算费率；系统同时建首个小区。</span></div>
+            <div class="flow-step"><em>2</em><b>配分账比例</b><span>平台/物业/管理盘一级三档必须合计 100%（配送费核算方案下）；板块/个体是级联值，不相加。</span></div>
+            <div class="flow-step"><em>3</em><b>配结算开关</b><span>真分账、记账兜底、自动提现、平台提现手续费；至少启用一种结算方式。</span></div>
+            <div class="flow-step"><em>4</em><b>建物业管理员</b><span><code>role=property_admin</code>，绑定 <code>propertyCompanyId</code>，选子角色。</span></div>
+            <div class="flow-step"><em>5</em><b>物业建房间/住户</b><span>小区、楼栋、单元、房号；住户首次登录选物业。</span></div>
+            <div class="flow-step"><em>6</em><b>商家入驻 / 身份任命</b><span>物业审核商家、任命楼长/经理/负责人；平台可跨物业兜底。</span></div>
+          </div>
+          <div class="callout info">
+            <span class="t">比例校验</span>
+            平台分账比例写入 <code>property_companies</code>。一级三档（平台/物业/管理盘）必须正好 100%；若启用“配送费核算快递员”方案，快递员不再从平台盘分，而从配送费分。板块/个体是“占管理盘/占板块毛”的级联值，不做相加校验。
+          </div>
+        </div>
+      </details>
+
+      <details class="card platform" data-cat="platform">
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill platform">平台 · 风险</span>
+            <span class="card-title">上线前平台侧必须确认的三件事</span>
+            <span class="card-kick">测试模式、种子账号、资金模式</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>测试模式：</strong><code>app.auth.test-mode</code> 默认 true，会放开 <code>admin123456</code> 和普通住户管理端登录。上线必须设 <code>APP_AUTH_TEST_MODE=false</code>，并执行账户安全清理 SQL。</li>
+            <li><strong>资金模式：</strong><code>wechat-split.enabled</code> 与 <code>wechat-ecommerce.enabled</code> 默认都关闭。关闭时是“平台直连商户号 + 内部记账”，商家提现靠人工；如果对外宣传“微信自动分账”，必须先把开关、进件、接收方账号配齐。</li>
+            <li><strong>比例合计：</strong>改完比例后，用平台的分成试算接口 <code>GET /distribution/calculate</code> 拿一笔假设订单验算，确认平台 + 物业 + 管理盘 = 100%，且板块/个体级联不超 100%。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- 06 身份 -->
+    <section id="identity">
+      <div class="section-head">
+        <div>
+          <h2>06 叠加身份</h2>
+          <p>这 8 个身份都不改 <code>role</code>。它们的共同点是：由业务表的 active 记录判定，入口在“我的”页，收益和权限各不相同。</p>
+        </div>
+        <span class="count">8 种</span>
+      </div>
+
+      <div class="callout info">
+        <span class="t">统一规则</span>
+        所有叠加身份都遵循同一套：① 任命/审核<strong>不写</strong> <code>residents.role</code>；② <code>/auth/profile</code> 返回 <code>isXxx</code> + id 供前端渲染入口；③ 鉴权用 <code>requireAnyRole("resident")</code> + 业务表校验，或 <code>requireAnyRoleOrLeaderIdentity</code>；④ 存量旧值（<code>building_leader</code> / <code>coordinator</code> / <code>sector_leader</code> / <code>individual_leader</code> / <code>activity_leader</code>）由 <code>RoleGuard.normalizeRole</code> 归一为 <code>resident</code>。
+      </div>
+
+      <details class="card identity" id="id-building" data-cat="identity" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 楼长</span>
+            <span class="card-title">单元楼长：物业分成的第一层再分配</span>
+            <span class="card-kick">不是“栋长”，范围是“小区 + 单元”</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>直接任命</b><span>物业/平台在 <code>POST /admin/building-leaders</code> 指派，无住户申请入口。</span></div>
+            <div class="flow-step"><em>2</em><b>唯一性</b><span>同一小区 + 同一单元只能有 1 个 active 楼长；同一住户同物业只能 1 条记录。</span></div>
+            <div class="flow-step"><em>3</em><b>身份落地</b><span>写 <code>building_leaders</code>，<code>residents.role</code> 不变；profile 返回 <code>isBuildingLeader</code>。</span></div>
+            <div class="flow-step"><em>4</em><b>工作台</b><span><code>/building-leaders/my</code>、<code>/my/distribution-records</code>、<code>/{id}/withdrawals</code>；只读 + 提现。</span></div>
+            <div class="flow-step"><em>5</em><b>收益</b><span>楼长毛额 = 物业毛 × 楼长比例（默认 0.1）；经理再从中抽成；楼长拿净额。</span></div>
+            <div class="flow-step"><em>6</em><b>提现</b><span><code>withdrawal_records type=building_leader</code>，扣 <code>splitSettled</code>，物业/平台审核。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            楼长绑定关系在<strong>订单创建时写快照</strong>，之后换楼长不影响已产生订单。楼长没有商家/订单/审核管理权，工作台主要是看收益和提现。
+          </div>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-manager" data-cat="identity">
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 经理</span>
+            <span class="card-title">物业经理：从楼长分成里再抽一层</span>
+            <span class="card-kick">每个物业公司只能有 1 个 active 经理</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>任命：</strong><code>POST /admin/property-managers</code>；同物业仅 1 active；比例默认 0，范围 [0,1)；本人不能改自己的比例。</li>
+            <li><strong>工作台：</strong><code>/property-managers/my</code>、名下楼长、指定楼长、收益、钱包、提现；<strong>没有</strong>商家/订单/审核权限，和 <code>property_admin</code> 是两回事。</li>
+            <li><strong>收益：</strong>经理抽成 = 楼长毛额 × <code>managerRate</code>；楼长拿净额；入 <code>wallet_flows property_manager_share</code>；分账接收方类型 <code>PROPERTY_MANAGER</code>。</li>
+            <li><strong>提现：</strong><code>/property-managers/my/withdrawals</code>，扣 <code>splitSettled</code>，走 <code>/admin/role-withdrawals</code> 审核。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-coordinator" data-cat="identity">
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 统筹</span>
+            <span class="card-title">统筹：管理盘的第一层，管整个物业公司</span>
+            <span class="card-kick">可以任命板块、个体，审商家加入，冻结商家</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>任命：</strong><code>POST /admin/coordinators</code>，物业/平台操作；撤销前必须先撤掉名下板块负责人。</li>
+            <li><strong>工作台：</strong><code>/coordinators/*</code>：加板块/个体、挂平台商家、冻结商家、审商家加入、提现。</li>
+            <li><strong>收益：</strong>管理盘 = 可分配 − 平台 − 物业毛；统筹拿管理盘 − 板块毛。多个统筹并存时，订单分账取 <code>orderByCommissionRateDesc</code> 第一条。</li>
+            <li><strong>提现：</strong>工作台发起，扣 <code>splitSettled</code>，<code>/admin/role-withdrawals</code> 审核。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-sector" data-cat="identity">
+        <summary>
+          <span class="idnum">04</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 板块</span>
+            <span class="card-title">板块负责人：管一个板块的商家和个体</span>
+            <span class="card-kick">五个板块，隶属一个统筹</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>任命：</strong><code>/admin/sector-leaders</code>，物业/平台/统筹可操作；撤销前必须没有启用中的个体负责人。</li>
+            <li><strong>范围：</strong>绑定 <code>coordinator_id + sector</code>（<code>SectorCatalog</code> 五个板块）。</li>
+            <li><strong>工作台：</strong>看本板块商家/营收；审个体新增商家与分成申请。</li>
+            <li><strong>收益：</strong>板块毛 = 管理盘 × <code>sectorLeaderRate</code>；个体 = 板块毛 × <code>individualLeaderRate</code>；板块负责人拿“板块毛 − 个体”。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-individual" data-cat="identity">
+        <summary>
+          <span class="idnum">05</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 个体</span>
+            <span class="card-title">个体负责人：管理盘最末端，唯一可住户申请的负责人身份</span>
+            <span class="card-kick">申请时要选板块；通过后自动挂到同板块 active 板块负责人</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>住户申请</b><span><code>POST /individual-leaders/apply</code>，只要求 resident + active；选板块。</span></div>
+            <div class="flow-step"><em>2</em><b>物业/平台审核</b><span><code>POST /admin/individual-leaders/applications/{id}/audit</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>建身份</b><span>创建 <code>il_</code> 记录，自动挂同板块 active 板块负责人，<code>role</code> 不变。</span></div>
+            <div class="flow-step"><em>4</em><b>改商家分成</b><span>个体在 <code>/individual-leaders/*</code> 改名下商家分成，提交板块审批；也可改免配送阈值、看营收。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            个体分成取“该板块第一个 active 个体”，不是按商家逐个匹配；<code>merchants.individual_leader_rate</code> 只在价格审批时落库，<strong>不参与订单分账</strong>。三个负责人自身的 <code>commission_rate</code> 也只展示，不参与计算。
+          </div>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-legacy" data-cat="identity">
+        <summary>
+          <span class="idnum">06</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 历史</span>
+            <span class="card-title">区域负责人 / 项目负责人：组织架构，未接分账</span>
+            <span class="card-kick">和统筹/板块/个体不是同一套代码</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><code>regional_leaders</code>（<code>rl_</code>）：挂在板块负责人/统筹下，字段有 <code>share_rate</code>，但<strong>分账代码没有引用</strong>。</li>
+            <li><code>project_leaders</code>（<code>pl_</code>）：挂在区域负责人下，同样只有组织架构展示。</li>
+            <li>接口在 <code>/regional-leaders</code>、<code>/project-leaders</code>，支持列表、详情、我的、创建、更新、软删除。</li>
+            <li>如果产品要求这两级也分钱，属于新功能，不是现有比例配置能解决的。</li>
+          </ul>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-activity" data-cat="identity">
+        <summary>
+          <span class="idnum">07</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 组长</span>
+            <span class="card-title">活动组组长：审核通过自动开小店，赚货款不赚分账</span>
+            <span class="card-kick">订阅费目前不进组长口袋</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>申请条件</b><span>resident + active + 已绑物业；不能有 pending 申请，不能已有 active 组长身份。</span></div>
+            <div class="flow-step"><em>2</em><b>提交</b><span><code>POST /activity-leader-applications/apply</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>审核</b><span>物业/平台通过后写 <code>activity_leader_identities</code>，并<strong>自动建 group_leader 店</strong>。</span></div>
+            <div class="flow-step"><em>4</em><b>建活动组</b><span>任何 resident 都能建组，创建者即组长，立即 active/approved；成员可加入/退出。</span></div>
+            <div class="flow-step"><em>5</em><b>订阅</b><span>月/年订阅，支持物业币/积分/微信；微信先 <code>pending_payment</code>，回调生效。</span></div>
+            <div class="flow-step"><em>6</em><b>赚钱</b><span>组长靠自营 group_leader 店的商品货款；提现走 <code>/merchant/withdrawals</code>。</span></div>
+          </div>
+          <div class="callout warn">
+            <span class="t">真实提醒</span>
+            ① 组长<strong>不在微信分账接收方名单</strong>，订阅费也没有组长入账逻辑。② 定价档位 <code>ActivityGroupPricingTier</code> 只有展示，订阅金额只取 <code>group.monthlyFee/yearlyFee</code>。③ 没有拼团模块。
+          </div>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-shop" data-cat="identity">
+        <summary>
+          <span class="idnum">08</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 小店</span>
+            <span class="card-title">业主小店：缴 500 保证金，只能转卖一级货源</span>
+            <span class="card-kick">走独立按件结算，不走四级分账</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>申请</b><span>仅 <code>role=resident</code> 且 <code>userType=owner</code>；<code>POST /resident-merchants/apply</code>。</span></div>
+            <div class="flow-step"><em>2</em><b>缴保证金</b><span>进入 <code>pending_deposit</code>，缴 500 元（平台配置）后转 <code>pending_audit</code>。</span></div>
+            <div class="flow-step"><em>3</em><b>审核</b><span>物业/平台通过，建 <code>merchant_source=resident_shop</code>，类目“业主小店”，佣金 0.10。</span></div>
+            <div class="flow-step"><em>4</em><b>经营</b><span>被普通商家列表排除；只能从一级代理的货源 listing 转卖。</span></div>
+            <div class="flow-step"><em>5</em><b>结算</b><span>订单完成跳过四级分账：货款 = 进货价 × 件 → 一级代理钱包；平台佣金 = 商品额 × 10%；差价 → 店主钱包。</span></div>
+            <div class="flow-step"><em>6</em><b>提现</b><span><code>/resident-merchants/seller-wallet/withdrawals</code>，<code>type=resident_seller</code>，走管理端角色提现审核。</span></div>
+          </div>
+        </div>
+      </details>
+
+      <details class="card identity" id="id-distributor" data-cat="identity">
+        <summary>
+          <span class="idnum">09</span>
+          <span class="card-head-main">
+            <span class="pill identity">身份 · 代理</span>
+            <span class="card-title">一级代理：拿货款，不是拿佣金</span>
+            <span class="card-kick">任何登录角色都能申请；纯住户身份提现是现状缺口</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>申请</b><span><code>POST /distributors/apply</code>，任意已登录角色；同物业仅 1 个 pending，已开通不能再申请。</span></div>
+            <div class="flow-step"><em>2</em><b>审核</b><span>物业/平台通过后建 <code>merchants(is_distributor=1, source=distributor, approved)</code> + 配置 0.10，<strong>不改 role</strong>。</span></div>
+            <div class="flow-step"><em>3</em><b>选品</b><span><code>/distributors/products</code> 选品池；<code>/my/products</code> 自建/改/库存/删；<code>/my/pickups</code> 拿货记录。</span></div>
+            <div class="flow-step"><em>4</em><b>推广</b><span>业主小店把一级代理的 listing 分享出去，成交后按件结算。</span></div>
+            <div class="flow-step"><em>5</em><b>收入</b><span><code>wholesale_price × 件数</code> 作为货款进一级代理 merchant 钱包；退款负向冲正；没有“分销记录表”逻辑。</span></div>
+            <div class="flow-step"><em>6</em><b>提现</b><span>理论走 <code>/merchant/withdrawals</code>；但纯 resident 身份会被门禁拒绝，见 §11。</span></div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 07 快递技工 -->
+    <section id="courier">
+      <div class="section-head">
+        <div>
+          <h2>07 快递与技工</h2>
+          <p>履约侧的两个独立角色：一个抢配送单，一个接服务单。他们的收入都来自“完成后的结算”，不是下单时。</p>
+        </div>
+        <span class="count">3 个角色</span>
+      </div>
+
+      <details class="card courier" data-cat="courier" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill courier">快递员</span>
+            <span class="card-title">抢单、配送、拿配送费分成</span>
+            <span class="card-kick">只能抢 pending / property_fallback 的单</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>账号来源</b><span>管理端 <code>/admin/role-accounts</code> 建 <code>role=courier</code>；或快递负责人添加时把住户 role 改为 courier。</span></div>
+            <div class="flow-step"><em>2</em><b>看单</b><span><code>GET /deliveries</code>：待抢、可抢、我的。</span></div>
+            <div class="flow-step"><em>3</em><b>抢单</b><span><code>POST /deliveries/{id}/grab</code>；仅 <code>pending</code> / <code>property_fallback</code> 可抢。</span></div>
+            <div class="flow-step"><em>4</em><b>配送</b><span><code>accepted → delivering → completed</code>。</span></div>
+            <div class="flow-step"><em>5</em><b>收入</b><span>配送基数 × (1 − <code>platformDeliveryShareRate</code>)；接收方类型 <code>COURIER</code>。</span></div>
+            <div class="flow-step"><em>6</em><b>提现</b><span><code>/courier-managers/my/withdrawals</code>，走 <code>/admin/role-withdrawals</code> 审核。</span></div>
+          </div>
+          <p><strong>快递负责人：</strong>由物业/平台创建 <code>courier_managers</code>（<code>cm_</code>），可添加/移除快递员、配负责区域和配送时间、设 <code>share_rate</code>；工作台要求 <code>role=courier</code>。</p>
+        </div>
+      </details>
+
+      <details class="card courier" data-cat="courier">
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill courier">技工</span>
+            <span class="card-title">接服务单，收入来自已完成服务单</span>
+            <span class="card-kick">自动绑定 technician 店；提现走商家提现</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="flow">
+            <div class="flow-step"><em>1</em><b>账号</b><span>管理端建 <code>role=technician</code>，自动开店；或首次建服务时绑定店铺。</span></div>
+            <div class="flow-step"><em>2</em><b>接单</b><span><code>/technicians/tasks</code> 查看指派工单。</span></div>
+            <div class="flow-step"><em>3</em><b>推进</b><span><code>confirmed → in_progress → completed</code>；只有 provider 能推进。</span></div>
+            <div class="flow-step"><em>4</em><b>收入</b><span>已完成服务单金额；钱包主体按 MERCHANT。</span></div>
+            <div class="flow-step"><em>5</em><b>提现</b><span><code>/merchant/withdrawals</code>；不写 <code>withdrawal_records</code>。</span></div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 08 资金 -->
+    <section id="money">
+      <div class="section-head">
+        <div>
+          <h2>08 资金全景</h2>
+          <p>把“用户付的钱、平台抽的钱、商家拿的钱、各层分到的钱”放在一张图里看。</p>
+        </div>
+        <span class="count">6 个视角</span>
+      </div>
+
+      <details class="card money" id="money-assets" data-cat="money" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 资产</span>
+            <span class="card-title">积分、物业币、现金：三种资产不能混着理解</span>
+            <span class="card-kick">积分是返利，物业币是储值，现金是微信支付</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>维度</th><th>积分 Point</th><th>物业币 Property Coin</th><th>现金 Cash</th></tr></thead>
+              <tbody>
+                <tr><td>价值</td><td>默认 100 分 = 1 元，可物业配置</td><td>1 币 = 1 元，两位小数</td><td>人民币</td></tr>
+                <tr><td>怎么来</td><td>订单返、缴费奖励、商家赠、管理端发</td><td>微信充值、订单返币、管理端发</td><td>微信支付</td></tr>
+                <tr><td>怎么花</td><td>商城、物业费、家庭内转、转物业</td><td>商城、物业费、服务/咨询、转物业</td><td>任何微信支付场景</td></tr>
+                <tr><td>能否提现</td><td class="bad-t">不能</td><td>住户不能；商家可兑现金</td><td>可退（按退款规则）</td></tr>
+                <tr><td>能否互转</td><td colspan="2" class="bad-t">积分与物业币不能直接互转</td><td>—</td></tr>
+                <tr><td>家庭池</td><td>有家庭时积分入家庭池，消费先家庭后个人</td><td>物业币发放入个人余额；家庭池历史余额仍可先消费</td><td>不适用</td></tr>
+                <tr><td>过期/清零</td><td>2 年欠费清零（需物业开启）</td><td>按 <code>coinExpiryDays</code> 过期</td><td>不适用</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card money" id="money-pay" data-cat="money" open>
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 支付</span>
+            <span class="card-title">四种支付方式的服务端规则</span>
+            <span class="card-kick">价格以服务端为准；混合支付不能超过应付</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>paymentMethod</th><th>服务端怎么算</th><th>关键校验</th><th>订单何时 paid</th></tr></thead>
+              <tbody>
+                <tr><td><code>property_coin</code></td><td>整车用物业币，币额 = 应付</td><td>商城开关、最低消费、最大抵扣比例、真实余额</td><td>立即</td></tr>
+                <tr><td><code>point</code></td><td>所需积分 = 应付 × 兑换比，向上取整</td><td>积分余额足够</td><td>立即</td></tr>
+                <tr><td><code>wechat</code></td><td>全额现金</td><td>微信预下单</td><td>支付回调后</td></tr>
+                <tr><td><code>mixed</code></td><td>积分 + 物业币 + 现金</td><td>积分与币折算后不得超过应付；币单独走商城规则</td><td>现金为 0 立即；否则回调后</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>返利公式（支付成功后）：</strong>返积分 = <code>(物业币支付 + 现金支付) × 积分兑换比</code>，向下取整；纯积分支付不返。返物业币 = <code>(物业币支付 + 现金支付) × coinRebateRate</code>，仅当商家开启返币且抽佣率 ≥ 20%。</p>
+        </div>
+      </details>
+
+      <details class="card money" id="money-split" data-cat="money" open>
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 分账</span>
+            <span class="card-title">一笔订单完成后，钱按什么顺序分</span>
+            <span class="card-kick">先扣积分/币成本，再一级三档，再管理盘，再物业内部</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="money-flow">
+            <div class="mf-node hi"><b>用户实付</b><span>商品 + 运费 − 优惠券</span></div>
+            <div class="mf-arrow">→</div>
+            <div class="mf-node"><b>抽佣基数</b><span>(总额 − 券) × 商家抽佣率</span></div>
+            <div class="mf-arrow">→</div>
+            <div class="mf-node warnbox"><b>可分配</b><span>抽佣基数 − 积分成本 − 物业币成本</span></div>
+          </div>
+          <div class="money-flow">
+            <div class="mf-node"><b>平台</b><span>可分配 × 平台比例</span></div>
+            <div class="mf-arrow">+</div>
+            <div class="mf-node"><b>物业毛</b><span>可分配 × 物业比例</span></div>
+            <div class="mf-arrow">+</div>
+            <div class="mf-node"><b>管理盘</b><span>可分配 − 平台 − 物业毛</span></div>
+          </div>
+          <div class="callout info">
+            <span class="t">用 100 元现金订单举例（商家抽佣 10%，平台 0%，物业 30%，管理盘 70%）</span>
+            抽佣基数 = 10 元；可分配 = 10 元（无积分/币成本）。平台 0 元；物业毛 3 元；管理盘 7 元。管理盘里若板块比例 10%、个体 0%，则板块毛 0.7 元、个体 0 元、板块负责人 0.7 元、统筹 6.3 元。物业的 3 元里，楼长按 10% 拿 0.3 元，经理再按自己的比例从这 0.3 元里抽。商家拿“商品实付 − 抽佣基数”，运费另算。
+          </div>
+          <div class="callout warn">
+            <span class="t">分账为负怎么办</span>
+            当积分/物业币成本大于抽佣基数时，<code>deficit</code> 记为正数，由物业积分池吸收，不会向商家倒扣。商家实得为负的订单会进入 <code>merchant_receivable</code> 待偿口径，不直接变成负可提现。
+          </div>
+        </div>
+      </details>
+
+      <details class="card money" id="money-modes" data-cat="money" open>
+        <summary>
+          <span class="idnum">04</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 微信</span>
+            <span class="card-title">直连、普通分账、收付通：三种资金模式</span>
+            <span class="card-kick">当前默认是直连；分账和收付通都默认关闭</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>模式</th><th>钱先进哪</th><th>分账怎么走</th><th>商家货款</th><th>前提</th></tr></thead>
+              <tbody>
+                <tr><td>直连普通商户（默认）</td><td>平台商户号</td><td>不执行真实分账，只写内部 <code>wallet_flows</code> / 可提现台账</td><td>人工提现打款</td><td>已有普通商户号</td></tr>
+                <tr><td>普通分账 <code>wechat-split</code></td><td>平台商户号并冻结</td><td>订单完成一次分账：平台/物业/统筹/板块/个体/楼长/经理/骑手</td><td>留商家子商户号，完结解冻；商家不是分账接收方</td><td>服务商 + 特约商户进件；30% 上限、30 天冻结</td></tr>
+                <tr><td>收付通 <code>wechat-ecommerce</code></td><td>商家 <code>sub_mchid</code></td><td>只分平台佣金 + 骑手；其余留商家</td><td>留在商家子商户号，售后窗口到期解冻</td><td>电商收付通资质 + 进件</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout bad">
+            <span class="t">不要同时开</span>
+            <code>wechat-split</code> 与 <code>wechat-ecommerce</code> 是两套资金模型；同时开会重复出款。代码以 <code>wechat-ecommerce.enabled</code> 为准切换，配置时必须保证两者互斥。<strong>平台先收全款再二次分账不可行</strong>——微信没有二次分账 API，平台余额不可再分。
+          </div>
+        </div>
+      </details>
+
+      <details class="card money" id="money-withdraw" data-cat="money" open>
+        <summary>
+          <span class="idnum">05</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 提现</span>
+            <span class="card-title">谁走哪个提现口、谁审核</span>
+            <span class="card-kick">角色不同，接口和审核人完全不同</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>主体</th><th>申请入口</th><th>审核</th><th>落表 / 口径</th></tr></thead>
+              <tbody>
+                <tr><td>商家 / 活动组长 / 技工</td><td><code>/merchant/withdrawals</code></td><td>物业 / 平台</td><td><code>merchant_withdrawals</code>；可提现 = 分成收入 − 占用</td></tr>
+                <tr><td>楼长 / 经理 / 统筹 / 板块 / 个体 / 快递员 / 业主小店</td><td>各工作台 <code>/my/withdrawals</code></td><td>物业 / 平台</td><td><code>withdrawal_records</code>；扣 <code>splitSettled</code></td></tr>
+                <tr><td>物业公司</td><td><code>/admin/property-companies/{id}/settlement-withdrawals</code></td><td>仅平台</td><td><code>withdrawal_records type=property_company</code>；扣 <code>settlement_balance</code></td></tr>
+                <tr><td>商家物业币兑换现金</td><td><code>/coin-withdrawals</code></td><td>物业 / 平台</td><td><code>coin_withdrawals</code>；1:1，默认 0.6% 手续费，先扣币</td></tr>
+                <tr><td>平台自身收益</td><td>无</td><td>—</td><td class="bad-t">只读，不可提现</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>状态机：</strong><span class="st">pending</span> → <span class="st good">approved</span> → <span class="st good">completed</span>，或 <span class="st bad">rejected</span>。平台提现手续费可配置“向商家/角色/物业/物业币收费”，并设平台分成比例。</p>
+        </div>
+      </details>
+
+      <details class="card money" id="money-pools" data-cat="money">
+        <summary>
+          <span class="idnum">06</span>
+          <span class="card-head-main">
+            <span class="pill money">资金 · 池</span>
+            <span class="card-title">物业积分池、小区建设积分池、冻结与清零</span>
+            <span class="card-kick">两个“池”不是一回事</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>池 / 机制</th><th>钱从哪来</th><th>谁看/谁管</th><th>用途</th></tr></thead>
+              <tbody>
+                <tr><td>物业积分池 <code>point_pools</code></td><td>物业币过期金额、2 年欠费积分清零折算、分账负差</td><td>物业/平台可查、可手工调整</td><td>吸收过期/清零/负分账，不是住户余额</td></tr>
+                <tr><td>小区建设积分池 <code>community_point_pools</code></td><td>订单贡献注入、物业手工调整</td><td>住户只读；物业/平台管理</td><td>小区建设，当前没有住户参与入口</td></tr>
+                <tr><td>物业币过期</td><td>按 <code>coinExpiryDays</code> 逐笔核销</td><td>定时任务 + 管理端手动</td><td>过期金额进物业积分池</td></tr>
+                <tr><td>2 年欠费清零</td><td>物业开启 <code>twoYearClearEnabled</code></td><td>物业/平台执行</td><td>积分清零并折算入物业积分池</td></tr>
+                <tr><td>分账冻结 <code>SplitSettled</code></td><td>微信已实时分账到账的部分</td><td>钱包两张卡视图（仅平台）</td><td>从可提现余额里扣掉，避免双算</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 09 状态机 -->
+    <section id="state">
+      <div class="section-head">
+        <div>
+          <h2>09 状态机速查</h2>
+          <p>联调时先对状态，再对接口。状态不对，接口一定报错。</p>
+        </div>
+        <span class="count">10 组</span>
+      </div>
+
+      <details class="card system" data-cat="system" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill system">状态 · 交易</span>
+            <span class="card-title">订单、团购、配送、退款</span>
+            <span class="card-kick">最常见的四组状态</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <h4>普通订单</h4>
+          <div class="state-flow">
+            <span class="st">pending</span><span class="arrow">→</span><span class="st good">paid</span><span class="arrow">→</span>
+            <span class="st">delivering</span><span class="arrow">→</span><span class="st good">completed</span>
+            <span class="arrow">|</span><span class="st bad">cancelled</span>
+          </div>
+          <h4>团购订单</h4>
+          <div class="state-flow">
+            <span class="st good">paid</span><span class="arrow">→</span><span class="st warn">pending_verification</span><span class="arrow">→</span>
+            <span class="st">verified</span><span class="arrow">→</span><span class="st good">completed</span>
+          </div>
+          <h4>配送单</h4>
+          <div class="state-flow">
+            <span class="st">pending</span><span class="arrow">→</span><span class="st">accepted</span><span class="arrow">→</span>
+            <span class="st">delivering</span><span class="arrow">→</span><span class="st good">completed</span>
+            <span class="arrow">|</span><span class="st bad">failed</span>
+            <span class="arrow">|</span><span class="st warn">property_fallback</span>
+            <span class="arrow">|</span><span class="st dim">merchant_self → merchant_delivering → completed</span>
+          </div>
+          <h4>退款</h4>
+          <div class="state-flow">
+            <span class="st warn">refunding</span><span class="arrow">→</span><span class="st good">refunded</span>
+            <span class="arrow">/</span><span class="st bad">refund_rejected</span>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system">
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill system">状态 · 服务</span>
+            <span class="card-title">服务工单、服务需求</span>
+            <span class="card-kick">服务需求和工单是两套状态</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <h4>服务工单 ServiceOrder</h4>
+          <div class="state-flow">
+            <span class="st">pending</span><span class="arrow">→</span><span class="st good">confirmed</span><span class="arrow">→</span>
+            <span class="st">in_progress</span><span class="arrow">→</span><span class="st good">completed</span>
+            <span class="arrow">|</span><span class="st bad">cancelled</span>
+          </div>
+          <h4>服务需求 ServiceRequest</h4>
+          <div class="state-flow">
+            <span class="st">pending / waiting</span><span class="arrow">→</span><span class="st warn">matching</span><span class="arrow">→</span>
+            <span class="st">negotiating</span><span class="arrow">→</span><span class="st good">quoted</span><span class="arrow">→</span>
+            <span class="st good">paid</span><span class="arrow">→</span><span class="st">closed</span>
+            <span class="arrow">|</span><span class="st dim">skipped / timeout / cancelled</span>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system">
+        <summary>
+          <span class="idnum">03</span>
+          <span class="card-head-main">
+            <span class="pill system">状态 · 审核</span>
+            <span class="card-title">商家、身份、店铺、代理、提现</span>
+            <span class="card-kick">审核链都有“待审”入口，别在前端自己造状态</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>对象</th><th>状态链</th></tr></thead>
+              <tbody>
+                <tr><td>商家入驻</td><td><code>pending_audit</code> → <code>approved</code> / <code>rejected</code>；经营状态 <code>active</code> / <code>frozen</code> / <code>kicked</code></td></tr>
+                <tr><td>楼长 / 经理 / 负责人</td><td><code>active</code> / <code>inactive</code></td></tr>
+                <tr><td>业主小店</td><td><code>pending_deposit</code> → <code>pending_audit</code> → <code>approved</code> / <code>rejected</code></td></tr>
+                <tr><td>一级代理</td><td><code>pending</code> → <code>approved</code> / <code>rejected</code></td></tr>
+                <tr><td>提现</td><td><code>pending</code> → <code>approved</code> → <code>completed</code> / <code>rejected</code></td></tr>
+                <tr><td>物业币兑换</td><td><code>pending</code> → <code>approved</code> / <code>rejected</code> / <code>completed</code></td></tr>
+                <tr><td>奖励发放</td><td><code>pending_audit</code> → <code>approved</code> / <code>rejected</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system">
+        <summary>
+          <span class="idnum">04</span>
+          <span class="card-head-main">
+            <span class="pill system">状态 · 其他</span>
+            <span class="card-title">物业费、优惠券</span>
+            <span class="card-kick">两个容易忽略的辅助状态</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <h4>物业费</h4>
+          <div class="state-flow">
+            <span class="st">unpaid</span><span class="arrow">→</span><span class="st warn">partial</span><span class="arrow">→</span>
+            <span class="st good">paid</span><span class="arrow">|</span><span class="st bad">overdue</span>
+          </div>
+          <h4>优惠券</h4>
+          <div class="state-flow">
+            <span class="st">unused</span><span class="arrow">→</span><span class="st good">used</span>
+            <span class="arrow">/</span><span class="st bad">expired</span>
+          </div>
+          <p class="subnote">订单取消/退款会把已使用/未使用的券释放回 <code>unused</code>。</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- 10 审核 -->
+    <section id="audit">
+      <div class="section-head">
+        <div>
+          <h2>10 审核链路总表</h2>
+          <p>所有“申请 → 审核 → 落地”的路径放在一张表里，方便查谁该点通过。</p>
+        </div>
+        <span class="count">15 条</span>
+      </div>
+
+      <div class="card system" data-cat="system">
+        <div class="card-body" style="padding-top:18px">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>事项</th><th>谁发起</th><th>谁审核</th><th>通过后落地</th><th>通知</th></tr></thead>
+              <tbody>
+                <tr><td>商家入驻</td><td>住户 / 个体负责人</td><td>物业 / 平台</td><td><code>merchants.approved + active</code></td><td class="bad-t">无站内信</td></tr>
+                <tr><td>单元楼长</td><td>管理端直接指派</td><td>物业 / 平台</td><td><code>building_leaders</code> active</td><td class="bad-t">无</td></tr>
+                <tr><td>物业经理</td><td>管理端直接指派</td><td>物业 / 平台</td><td><code>property_managers</code> active</td><td class="bad-t">无</td></tr>
+                <tr><td>统筹 / 板块</td><td>管理端直接指派</td><td>物业 / 平台（板块也可由统筹）</td><td><code>coordinators</code> / <code>sector_leaders</code> active</td><td class="bad-t">无</td></tr>
+                <tr><td>个体负责人</td><td>住户申请</td><td>物业 / 平台</td><td><code>individual_leaders</code> active</td><td class="bad-t">只有查询接口</td></tr>
+                <tr><td>活动组组长</td><td>住户申请</td><td>物业 / 平台</td><td>身份表 active + 自动开 group_leader 店</td><td class="bad-t">只有查询接口</td></tr>
+                <tr><td>业主小店</td><td>业主申请 → 缴保证金</td><td>物业 / 平台</td><td>申请 active + resident_shop 店</td><td class="bad-t">只有查询接口</td></tr>
+                <tr><td>一级代理</td><td>任意登录用户申请</td><td>物业 / 平台</td><td><code>merchants.is_distributor=1</code> + approved</td><td class="bad-t">只有查询接口</td></tr>
+                <tr><td>商品价格 / 商家分成</td><td>商家 / 负责人</td><td>物业领导 / 板块负责人</td><td><code>products.price</code> / <code>merchant.individual_leader_rate</code></td><td class="bad-t">无</td></tr>
+                <tr><td>退款</td><td>住户</td><td>物业 / 平台</td><td><code>refunded</code> 或 <code>refund_rejected</code></td><td class="bad-t">无站内信</td></tr>
+                <tr><td>提现</td><td>商家 / 角色 / 物业</td><td>物业 / 平台；物业分成仅平台</td><td><code>withdrawal_records</code> / <code>merchant_withdrawals</code></td><td class="bad-t">无站内信</td></tr>
+                <tr><td>物业币兑换现金</td><td>商家</td><td>物业 / 平台</td><td><code>coin_withdrawals</code> approved/completed</td><td class="bad-t">无</td></tr>
+                <tr><td>奖励金 / 积分发放</td><td>住户 / 商家</td><td>物业</td><td>积分入账</td><td class="bad-t">无</td></tr>
+                <tr><td>楼栋变更</td><td>住户 / 物业</td><td>物业 / 平台</td><td>住户楼栋/单元/房号更新</td><td class="bad-t">无</td></tr>
+                <tr><td>广告投放</td><td>商家</td><td class="bad-t">无人工审核</td><td>支付后直接投放</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <span class="t">统一缺口</span>
+            这些审核服务<strong>基本都不写站内通知</strong>，只提供“查询我的申请状态”接口。前端如果要做“审核结果推送”，需要另加消息，不要假设后端已经发了。
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 差距 -->
+    <section id="gaps">
+      <div class="section-head">
+        <div>
+          <h2>11 代码现状与上线提醒</h2>
+          <p>这一节是整份文档最该先看的部分：不是功能清单，而是“按现状上线会遇到的真实问题”。</p>
+        </div>
+        <span class="count">必读</span>
+      </div>
+
+      <div class="callout bad">
+        <span class="t">结论先行</span>
+        主链路（登录、下单、支付、履约、退款、分账计算、提现审核）是通的；但<strong>资金真正到账方式、部分身份的收益、若干展示型功能</strong>与 PRD 预期不一致。下面按“上线前必须处理 / 功能与设计不一致 / 数据与运维”三组列出。
+      </div>
+
+      <details class="card system" data-cat="system" open>
+        <summary>
+          <span class="idnum">A</span>
+          <span class="card-head-main">
+            <span class="pill money">上线前必须处理</span>
+            <span class="card-title">会直接影响资金安全或验收的 5 件事</span>
+            <span class="card-kick">建议作为上线门禁逐条确认</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>现状</th><th>影响</th><th>处理</th></tr></thead>
+              <tbody>
+                <tr><td>A1</td><td><code>app.auth.test-mode</code> 默认 true，放开 <code>admin123456</code> 和住户管理端登录</td><td>弱口令 + 越权登录可能带到生产</td><td>上线设 <code>APP_AUTH_TEST_MODE=false</code>，执行 <code>sql/上线前账户安全清理_20261024.sql</code></td></tr>
+                <tr><td>A2</td><td><code>wechat-split.enabled</code> 与 <code>wechat-ecommerce.enabled</code> 默认都关闭</td><td>用户付款进平台商户号；商家提现靠人工；宣传“自动分账”会落空</td><td>确认商业模式：直连记账 or 开通服务商分账/收付通；配置接收方账号</td></tr>
+                <tr><td>A3</td><td>住户退款开关 <code>wechat-split.user-refund-enabled</code> 默认 false；商家无退款审核入口</td><td>用户无法自助退款；商家端找不到审核按钮</td><td>确认客服/售后流程；上线前决定是否打开开关，并明确退款由物业/平台审</td></tr>
+                <tr><td>A4</td><td><code>property_companies.settlement_balance</code> 在代码中只有提现扣减，没有订单完成自动入账</td><td>物业分成账户余额可能为 0，提现被拒</td><td>补订单完成入账逻辑，或上线前由平台手动调账并明确对账口径</td></tr>
+                <tr><td>A5</td><td>纯 <code>resident</code> 的一级代理没有提现入口</td><td>代理赚了货款但提不出来</td><td>给 <code>MerchantSupport</code> 放行一级代理，或在 <code>DistributorController</code> 增加提现端点</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system" open>
+        <summary>
+          <span class="idnum">B</span>
+          <span class="card-head-main">
+            <span class="pill merchant">功能与设计不一致</span>
+            <span class="card-title">联调时最容易“按 PRD 验收失败”的点</span>
+            <span class="card-kick">不是 bug 清单，是口径清单</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>模块</th><th>代码现状</th><th>联调建议</th></tr></thead>
+              <tbody>
+                <tr><td>B1</td><td>社区管理员</td><td><code>community_admin</code> 只是合法 role；<code>isCommunityAdmin</code> 无调用点，管理端只认 platform/property</td><td>当“预留角色”，不要给它做管理端入口</td></tr>
+                <tr><td>B2</td><td>活动组组长</td><td>不在分账接收方；订阅费没有组长入账；定价档只展示；无拼团</td><td>组长收益只按“group_leader 店货款”验收</td></tr>
+                <tr><td>B3</td><td>食堂定向余额</td><td><code>consumeForOrder</code> 无调用点，只展示不扣减</td><td>不要验收“定向余额扣款”，先确认是否本期做</td></tr>
+                <tr><td>B4</td><td>区域 / 项目负责人</td><td>只有组织架构和 <code>share_rate</code> 字段，分账代码未引用</td><td>不要承诺这两级分钱</td></tr>
+                <tr><td>B5</td><td>家庭</td><td>创建即合并个人资产；成员加入无审核；退出按人数均分；户主不能退出</td><td>按“家庭共担共享”验收，不按贡献比例</td></tr>
+                <tr><td>B6</td><td>资料奖励</td><td><code>birthday</code> 无写入接口；普通字段不校验是否填写</td><td>把奖励当运营激励，不当严格风控</td></tr>
+                <tr><td>B7</td><td><code>/points/redeem</code></td><td>只扣积分、返回折算金额，没有到账动作</td><td>确认是否废弃或补到账</td></tr>
+                <tr><td>B8</td><td>公告 / 催缴</td><td>公告 <code>readStatus</code> 未使用；催缴微信渠道未实现；物业费无自动出账</td><td>未读筛选/微信催缴/自动账单不要写进本期验收</td></tr>
+                <tr><td>B9</td><td>物业运营范围</td><td><code>property_operator_scopes</code> 只记录，不参与查询拦截</td><td>不要把它当数据隔离</td></tr>
+                <tr><td>B10</td><td>价格审批</td><td>只认 JWT role 字面值 <code>property_leader</code>；新建 <code>property_admin + subRole</code> 进不去</td><td>用存量 property_leader 账号验，或先修审批门</td></tr>
+                <tr><td>B11</td><td>配送计价</td><td>多档价格、距离、重量未参与实际算价；订单只读商家配送费/满免</td><td>按“基础配送费 + 满免”验收</td></tr>
+                <tr><td>B12</td><td>商家等级</td><td>只影响排序，不影响费率/权限</td><td>不要按等级做差异化结算</td></tr>
+                <tr><td>B13</td><td>广告</td><td>无人工审核；额度包只读；加额度靠管理端</td><td>投放即生效，不做审核流</td></tr>
+                <tr><td>B14</td><td>商家范围 / 距离</td><td>只存配置，不参与下单校验</td><td>不要验收“跨社区不能下单”</td></tr>
+                <tr><td>B15</td><td>积分/物业币规则表</td><td><code>point_rules</code> / <code>property_coin_rules</code> 无 Service 读取；实际用商家配置/物业字段</td><td>以后台实际字段为准</td></tr>
+                <tr><td>B16</td><td>审核通知</td><td>审核服务基本不写站内信</td><td>结果通知需另做</td></tr>
+                <tr><td>B17</td><td>退款拒绝后</td><td><code>refund_rejected</code> 后不能再取消订单</td><td>客服流程要提前约定</td></tr>
+                <tr><td>B18</td><td>业主小店 / 一级代理</td><td>listing 订单跳过四级分账，走按件结算</td><td>不要用普通商家分账口径验收</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system">
+        <summary>
+          <span class="idnum">C</span>
+          <span class="card-head-main">
+            <span class="pill system">数据与运维</span>
+            <span class="card-title">上线环境还要补的几件事</span>
+            <span class="card-kick">与代码逻辑无关，但会影响安全与稳定</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <ul>
+            <li><strong>账户清理：</strong>种子账号、演示数据、PII 需要按 <code>wuye_points_latest.sql</code> 复核后清理；平台超管口令必须改。</li>
+            <li><strong>密钥与回调：</strong>微信支付/分账/转账回调必须加入鉴权白名单；密钥轮换、证书路径、回调域名要逐项核对。</li>
+            <li><strong>静态文件：</strong><code>/static/**</code> 上传文件当前公开访问，上线前确认是否要加鉴权或转 OSS 私有读。</li>
+            <li><strong>CORS / MySQL：</strong>配置白名单，不要用 <code>*</code>；数据库账号给最小权限，不要用 root。</li>
+            <li><strong>单机限制：</strong>WebSocket 用 SimpleBroker、限流在内存，未 Redis 化前不能直接上双机。</li>
+            <li><strong>部署路径：</strong>生产 <code>spring.flyway.enabled=false</code>，新表/新列走 <code>sql/manual_upgrade_*.sql</code>；Flyway migration 只留档。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- 12 附录 -->
+    <section id="appendix">
+      <div class="section-head">
+        <div>
+          <h2>12 接口与术语</h2>
+          <p>按角色查接口前缀；最后是术语表，避免“平台盘/管理盘/抽佣基数”混用。</p>
+        </div>
+        <span class="count">附录</span>
+      </div>
+
+      <details class="card system" data-cat="system" open>
+        <summary>
+          <span class="idnum">01</span>
+          <span class="card-head-main">
+            <span class="pill system">附录 · 接口</span>
+            <span class="card-title">按角色划分的接口前缀</span>
+            <span class="card-kick">只列根路径，具体参数以 Swagger / API 文档为准</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>角色 / 域</th><th>主要接口前缀</th></tr></thead>
+              <tbody>
+                <tr><td>公共 / 登录</td><td><code>/auth</code>、<code>/files</code>、<code>/navigation-items</code>、<code>/announcements</code>、<code>/messages</code>、<code>/ws</code></td></tr>
+                <tr><td>住户</td><td><code>/residents</code>、<code>/families</code>、<code>/points</code>、<code>/property-coins</code>、<code>/property-fees</code>、<code>/cart</code>、<code>/orders</code>、<code>/coupons</code>、<code>/services</code>、<code>/service-orders</code>、<code>/service-requests</code>、<code>/consultations</code>、<code>/inquiries</code>、<code>/opinion-boxes</code>、<code>/community</code>、<code>/communities</code>、<code>/canteen</code>、<code>/deliveries</code>、<code>/reward-grants</code></td></tr>
+                <tr><td>商家</td><td><code>/merchants</code>、<code>/merchant/**</code>、<code>/products</code>、<code>/product-categories</code>、<code>/merchant-categories</code>、<code>/merchant-posts</code>、<code>/special-offers</code>、<code>/merchants/my/applyment</code>、<code>/merchant/withdrawals</code>、<code>/merchant/points</code>、<code>/merchant/ads</code>、<code>/merchant/coupons</code>、<code>/merchant/canteen</code></td></tr>
+                <tr><td>楼长 / 经理</td><td><code>/building-leaders</code>、<code>/property-managers</code></td></tr>
+                <tr><td>统筹 / 板块 / 个体</td><td><code>/coordinators</code>、<code>/sector-leaders</code>、<code>/individual-leaders</code>、<code>/regional-leaders</code>、<code>/project-leaders</code>、<code>/transfer-accounts</code></td></tr>
+                <tr><td>活动组</td><td><code>/activity-leader-applications</code>、<code>/activity-groups</code></td></tr>
+                <tr><td>业主小店 / 代理</td><td><code>/resident-merchants</code>、<code>/distributors</code></td></tr>
+                <tr><td>快递 / 技工</td><td><code>/deliveries</code>、<code>/courier-managers</code>、<code>/technicians</code></td></tr>
+                <tr><td>物业 / 平台管理</td><td><code>/admin/**</code>（住户、房间、商家、账单、内容、配送、积分币、审核、看板、交易、配置）</td></tr>
+                <tr><td>支付 / 分账</td><td><code>/payment/**</code>（微信支付/分账/转账回调）、<code>/distribution/*</code>、<code>/wallet/cards</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="card system" data-cat="system" open>
+        <summary>
+          <span class="idnum">02</span>
+          <span class="card-head-main">
+            <span class="pill system">附录 · 术语</span>
+            <span class="card-title">读资金部分之前先统一语言</span>
+            <span class="card-kick">同一个词在不同团队嘴里经常不是一个意思</span>
+          </span>
+          <span class="chev">展开</span>
+        </summary>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>术语</th><th>本文口径</th></tr></thead>
+              <tbody>
+                <tr><td>登录角色</td><td><code>residents.role</code> / JWT 里的 role，决定进哪个端、走哪套鉴权</td></tr>
+                <tr><td>叠加身份</td><td>住户之上的业务身份，由 <code>building_leaders</code>、<code>coordinators</code> 等表的 active 记录判定，不改 role</td></tr>
+                <tr><td>抽佣基数</td><td>（订单总额 − 优惠券）× 商家抽佣率，是平台盘分账的起点</td></tr>
+                <tr><td>可分配金额</td><td>抽佣基数 − 积分成本 − 物业币成本；负数记 <code>deficit</code></td></tr>
+                <tr><td>平台盘</td><td>可分配金额在平台/物业/管理盘之间分的那一层</td></tr>
+                <tr><td>管理盘</td><td>可分配金额 − 平台 − 物业毛；再由统筹/板块/个体分</td></tr>
+                <tr><td>物业毛 / 楼长净额</td><td>物业毛是物业分成的毛额；楼长从毛额里按比例拿，经理再抽，楼长拿净额</td></tr>
+                <tr><td>直连</td><td>钱进平台普通商户号，平台内部记账，不执行微信分账</td></tr>
+                <tr><td>普通分账</td><td>钱进平台商户号并冻结，订单完成后按接收方列表分账</td></tr>
+                <tr><td>收付通</td><td>钱直接进商家子商户号，平台只分佣金/配送，货款留商家</td></tr>
+                <tr><td>SplitSettled</td><td>微信侧已实时到账的部分，从内部可提现余额里扣掉，避免双算</td></tr>
+                <tr><td>家庭池</td><td>家庭成员共用的积分/物业币池；创建家庭时个人资产全额并入</td></tr>
+                <tr><td>物业积分池</td><td>吸收物业币过期、2 年欠费清零折算、负分账的池子，不是住户余额</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <footer>
+      <strong>角色流程全书</strong> · 2026-10-25 · 依据当前后端代码与生产库 dump 整理<br>
+      说明：本文为内部联调/验收资料，不是对外产品文档。文中“代码现状”仅代表整理时点，后续改动请以仓库为准；涉及金额、比例、开关的结论，上线前请再做一次代码与环境双复核。
+    </footer>
+
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function(){
+  var doc = document;
+  var cards = Array.prototype.slice.call(doc.querySelectorAll('details.card'));
+  var sections = Array.prototype.slice.call(doc.querySelectorAll('main section'));
+  var navLinks = Array.prototype.slice.call(doc.querySelectorAll('.nav-list a'));
+
+  // 展开 / 收起
+  function setAll(open){
+    cards.forEach(function(c){ c.open = open; });
+    toast(open ? '已全部展开' : '已全部收起');
+  }
+  doc.getElementById('expandBtn').addEventListener('click', function(){ setAll(true); });
+  doc.getElementById('collapseBtn').addEventListener('click', function(){ setAll(false); });
+
+  // 打印
+  doc.getElementById('printBtn').addEventListener('click', function(){ window.print(); });
+  window.addEventListener('beforeprint', function(){ cards.forEach(function(c){ c.open = true; }); });
+
+  // 回到顶部
+  doc.getElementById('topBtn').addEventListener('click', function(){
+    window.scrollTo({top:0, behavior:'smooth'});
+  });
+
+  // 移动端目录
+  var sidebar = doc.getElementById('sidebar');
+  doc.getElementById('menuBtn').addEventListener('click', function(){
+    sidebar.classList.toggle('open');
+  });
+  // 点击目录后关闭移动端抽屉
+  navLinks.forEach(function(a){
+    a.addEventListener('click', function(){
+      if (window.innerWidth <= 1060) sidebar.classList.remove('open');
+    });
+  });
+
+  // 搜索
+  var search = doc.getElementById('search');
+  var empty = doc.createElement('div');
+  empty.className = 'empty';
+  empty.textContent = '没有匹配的流程，换个关键词试试。';
+  doc.querySelector('main').insertBefore(empty, doc.querySelector('main section'));
+
+  function applySearch(){
+    var q = (search.value || '').trim().toLowerCase();
+    var visible = 0;
+    cards.forEach(function(c){
+      var hit = !q || c.textContent.toLowerCase().indexOf(q) !== -1;
+      c.hidden = !hit;
+      if (hit) visible++;
+    });
+    // 搜索时自动展开命中的卡片
+    if (q) cards.forEach(function(c){ if(!c.hidden) c.open = true; });
+    empty.classList.toggle('show', visible === 0);
+  }
+  var timer = null;
+  search.addEventListener('input', function(){
+    clearTimeout(timer);
+    timer = setTimeout(applySearch, 120);
+  });
+
+  // 角色筛选
+  var chips = Array.prototype.slice.call(doc.querySelectorAll('.chip'));
+  chips.forEach(function(chip){
+    chip.addEventListener('click', function(){
+      var group = chip.parentNode;
+      Array.prototype.slice.call(group.querySelectorAll('.chip')).forEach(function(c){
+        c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');
+      });
+      var filter = chip.getAttribute('data-filter');
+      cards.forEach(function(c){
+        var show = filter === 'all' || c.getAttribute('data-cat') === filter;
+        c.hidden = !show;
+        if (show) c.open = true;
+      });
+      empty.classList.toggle('show', filter !== 'all' && !cards.some(function(c){ return !c.hidden; }));
+    });
+  });
+
+  // 滚动进度 + 高亮
+  var bar = doc.getElementById('bar');
+  var pct = doc.getElementById('pct');
+  function onScroll(){
+    var h = doc.documentElement;
+    var max = h.scrollHeight - h.clientHeight;
+    var p = max > 0 ? Math.min(100, Math.round(h.scrollTop / max * 100)) : 0;
+    bar.style.width = p + '%';
+    pct.textContent = p + '%';
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if (!en.isIntersecting) return;
+        var id = en.target.id;
+        navLinks.forEach(function(a){
+          var href = a.getAttribute('href');
+          a.classList.toggle('active', href === '#' + id);
+        });
+      });
+    }, {rootMargin:'-90px 0px -65% 0px', threshold:0});
+    sections.forEach(function(s){ io.observe(s); });
+  }
+
+  // 复制公式
+  Array.prototype.slice.call(doc.querySelectorAll('.copy-btn')).forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var pre = btn.closest('.code-block').querySelector('pre');
+      var text = pre.innerText;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ toast('公式已复制'); });
+      } else {
+        var ta = doc.createElement('textarea');
+        ta.value = text; doc.body.appendChild(ta); ta.select();
+        try { doc.execCommand('copy'); toast('公式已复制'); } catch(e) { toast('复制失败，请手动选择'); }
+        doc.body.removeChild(ta);
+      }
+    });
+  });
+
+  var toastTimer = null;
+  function toast(msg){
+    var t = doc.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 1600);
+  }
+})();
+</script>
+</body>
+</html>

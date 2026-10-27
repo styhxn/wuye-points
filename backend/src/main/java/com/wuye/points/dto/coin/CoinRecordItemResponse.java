@@ -26,8 +26,14 @@ public class CoinRecordItemResponse {
     @Schema(description = "物业币数量", example = "10.00")
     private BigDecimal amount;
 
-    @Schema(description = "操作后余额", example = "110.50")
+    @Schema(description = "操作后个人余额", example = "110.50")
     private BigDecimal balance;
+
+    @Schema(description = "本次变动中家庭池的部分：正数=进入家庭池，负数=从家庭池扣除，0=仅个人池", example = "-10.00")
+    private BigDecimal familyAmount;
+
+    @Schema(description = "变动后的家庭物业币池余额快照；无家庭时为 null", example = "600.00")
+    private BigDecimal familyBalance;
 
     @Schema(description = "来源", example = "充值")
     private String source;

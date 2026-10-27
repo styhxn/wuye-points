@@ -327,6 +327,8 @@ public class ActivityGroupService {
         group.setMemberCount(1);
         group.setMonthlyFee(request.getMonthlyFee() != null ? request.getMonthlyFee() : BigDecimal.ZERO);
         group.setYearlyFee(request.getYearlyFee() != null ? request.getYearlyFee() : BigDecimal.ZERO);
+        group.setQuarterlyFee(request.getQuarterlyFee());
+        group.setPerTimeFee(request.getPerTimeFee());
         // 2026-09-07 前端问题 F（产品确认）：住户端创建活动组即刻生效（active），管理端审核仅为事后兜底：
         // approve 无影响；reject 永久删除该活动组。
         group.setStatus("active");
@@ -384,6 +386,18 @@ public class ActivityGroupService {
                 throw new BizException(ErrorCode.PARAM_INVALID, "yearlyFee不能为负数");
             }
             group.setYearlyFee(request.getYearlyFee());
+        }
+        if (request.getQuarterlyFee() != null) {
+            if (request.getQuarterlyFee().compareTo(BigDecimal.ZERO) < 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "quarterlyFee不能为负数");
+            }
+            group.setQuarterlyFee(request.getQuarterlyFee());
+        }
+        if (request.getPerTimeFee() != null) {
+            if (request.getPerTimeFee().compareTo(BigDecimal.ZERO) < 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "perTimeFee不能为负数");
+            }
+            group.setPerTimeFee(request.getPerTimeFee());
         }
         if (StringUtils.hasText(request.getStatus())) {
             if (!RoleGuard.ACTIVITY_GROUP_STATUS.contains(request.getStatus())) {
@@ -694,9 +708,12 @@ public class ActivityGroupService {
     private ActivityGroupSubscription buildSubscription(Resident resident, ActivityGroup group,
                                                         BigDecimal amount, String subType, String status) {
         LocalDate startDate = LocalDate.now();
-        LocalDate endDate = "yearly".equals(subType)
-                ? startDate.plusYears(1)
-                : startDate.plusMonths(1);
+        LocalDate endDate = switch (subType) {
+            case "yearly" -> startDate.plusYears(1);
+            case "quarterly" -> startDate.plusMonths(3);
+            case "per_time" -> startDate;
+            default -> startDate.plusMonths(1);
+        };
         ActivityGroupSubscription subscription = new ActivityGroupSubscription();
         subscription.setId(idGenerator.generateId("ags"));
         subscription.setGroupId(group.getId());
@@ -835,14 +852,15 @@ public class ActivityGroupService {
                                             ActivityGroup group,
                                             BigDecimal amount,
                                             String paymentMethod) {
+        boolean useFamilyPool = StringUtils.hasText(resident.getFamilyId());
         switch (paymentMethod) {
             case "property_coin" -> propertyCoinService.spendCoins(
-                    resident, amount, "manual", group.getId(), "活动组订阅", null, false);
+                    resident, amount, "manual", group.getId(), "活动组订阅", null, useFamilyPool);
             case "point" -> {
                 BigDecimal rate = resolvePointToFeeRate(resident.getPropertyCompanyId());
                 int points = amount.divide(rate, 0, RoundingMode.UP).intValue();
                 pointService.spendPoints(
-                        resident, points, "manual", group.getId(), "活动组订阅", null, false);
+                        resident, points, "manual", group.getId(), "活动组订阅", null, useFamilyPool);
             }
             case "wechat" -> {
                 // 微信支付由前端完成，后端记录订阅
@@ -852,9 +870,12 @@ public class ActivityGroupService {
     }
 
     private BigDecimal resolveSubscriptionAmount(ActivityGroup group, String subType) {
-        return "yearly".equals(subType)
-                ? activityGroupConverter.defaultFee(group.getYearlyFee())
-                : activityGroupConverter.defaultFee(group.getMonthlyFee());
+        return switch (subType) {
+            case "yearly" -> activityGroupConverter.defaultFee(group.getYearlyFee());
+            case "quarterly" -> activityGroupConverter.defaultFee(group.getQuarterlyFee());
+            case "per_time" -> activityGroupConverter.defaultFee(group.getPerTimeFee());
+            default -> activityGroupConverter.defaultFee(group.getMonthlyFee());
+        };
     }
 
     private BigDecimal resolvePointToFeeRate(String propertyCompanyId) {

@@ -73,7 +73,7 @@ public class AdminIndividualLeaderController {
     @DeleteMapping("/{id}")
     public ApiResponse<IndividualLeaderDetailResponse> revokeIndividualLeader(
             @Parameter(description = "资源ID") @PathVariable String id,
-            @Parameter(description = "撤销原因") @RequestParam String reason) {
+            @Parameter(description = "撤销原因（可选）") @RequestParam(required = false) String reason) {
         return ApiResponse.success(adminIndividualLeaderService.revokeIndividualLeader(id, reason));
     }
 }

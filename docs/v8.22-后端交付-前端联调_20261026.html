@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v8.22 后端交付说明 · 前端联调</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #5c6270;
+    --line: #e3e6ea;
+    --bg: #f6f7f5;
+    --card: #ffffff;
+    --accent: #1f5c46;
+    --accent-soft: #e8f1ec;
+    --warn: #8a5a00;
+    --warn-soft: #fff4dd;
+    --danger: #8c2f2f;
+    --danger-soft: #fdeceb;
+    --code: #f2f4f3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.hero {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 32px 34px;
+    margin-bottom: 24px;
+  }
+  .eyebrow {
+    display: inline-block;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 14px;
+  }
+  h1 { font-size: 30px; line-height: 1.3; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--muted); }
+  .meta b { color: var(--ink); font-weight: 600; }
+  nav.toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 22px;
+    margin-bottom: 28px;
+    columns: 2;
+    column-gap: 32px;
+  }
+  nav.toc a { display: block; color: var(--muted); text-decoration: none; font-size: 14px; padding: 4px 0; }
+  nav.toc a:hover { color: var(--accent); }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 30px;
+    margin-bottom: 22px;
+  }
+  h2 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; scroll-margin-top: 20px; }
+  h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .lead { color: var(--muted); margin: 0 0 18px; }
+  h3 { font-size: 16px; margin: 24px 0 10px; }
+  h3:first-of-type { margin-top: 14px; }
+  p { margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 16px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #fafbfa; color: var(--muted); font-weight: 600; font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--code); padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  pre { background: #1b1f1d; color: #e8ece9; padding: 16px 18px; border-radius: 12px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; }
+  .tag.new { background: var(--accent-soft); color: var(--accent); }
+  .tag.bad { background: var(--danger-soft); color: var(--danger); }
+  .tag.chg { background: var(--warn-soft); color: var(--warn); }
+  .callout { border-radius: 12px; padding: 14px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { background: var(--warn-soft); border: 1px solid #f0ddb4; color: #5f4104; }
+  .callout.danger { background: var(--danger-soft); border: 1px solid #f2cfcc; color: #67211f; }
+  .callout.ok { background: var(--accent-soft); border: 1px solid #cfe2d7; color: #174434; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 14px 0; }
+  .box { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; background: #fcfdfc; }
+  .box h4 { margin: 0 0 6px; font-size: 14px; }
+  .box p { margin: 4px 0; font-size: 13px; color: var(--muted); }
+  ul.check { list-style: none; padding: 0; margin: 10px 0; }
+  ul.check li { padding: 7px 0 7px 28px; position: relative; border-bottom: 1px dashed var(--line); font-size: 14px; }
+  ul.check li:last-child { border-bottom: none; }
+  ul.check li::before { content: ""; position: absolute; left: 2px; top: 14px; width: 12px; height: 12px; border: 1.5px solid #b9c0bb; border-radius: 3px; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; padding-top: 10px; }
+  @media (max-width: 760px) {
+    nav.toc { columns: 1; }
+    .grid { grid-template-columns: 1fr; }
+    section { padding: 22px 18px; }
+    header.hero { padding: 24px 20px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">BACKEND DELIVERY · v8.22</span>
+    <h1>前端 v8.20 改造 · 后端对接交付说明</h1>
+    <p class="sub">本文按《v8.20-改造说明-后端对接》逐项给出已实现的后端契约，并补充老板走查会确认的积分、代理订单规则。接口字段以本文为准。</p>
+    <div class="meta">
+      <span>交付日期 <b>2026-10-26</b></span>
+      <span>后端测试 <b>276 / 276 通过</b></span>
+      <span>数据库脚本 <b>sql/v8.22_前后端联调_20261026.sql</b></span>
+      <span>API 文档 <b>§107</b></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#s1">1. 本次交付范围</a>
+    <a href="#s2">2. 商家页汇总字段</a>
+    <a href="#s3">3. 广告：免费额度 + 微信支付</a>
+    <a href="#s4">4. 代理货源订单归属</a>
+    <a href="#s5">5. 楼长统一收益账户</a>
+    <a href="#s6">6. 会话楼长标识</a>
+    <a href="#s7">7. 推荐商家排序</a>
+    <a href="#s8">8. 奖励金转钱包</a>
+    <a href="#s9">9. 积分规则收敛</a>
+    <a href="#s10">10. 视频增量项</a>
+    <a href="#s11">11. 数据库与部署</a>
+    <a href="#s12">12. 联调检查清单</a>
+  </nav>
+
+  <section id="s1">
+    <h2><span class="num">01</span>本次交付范围</h2>
+    <p class="lead">前端文档里的 8 项后端需求已全部实现；另含 5 项老板走查会确认的后端增量。</p>
+    <table>
+      <thead><tr><th>#</th><th>事项</th><th>状态</th><th>前端感知</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>商家页 <code>totalOrders / pointBalance / profitBalance</code></td><td><span class="tag new">已实现</span></td><td>订单数、积分余额修正</td></tr>
+        <tr><td>2</td><td>广告免费额度永久一次 + 微信现金支付 + payStatus</td><td><span class="tag new">已实现</span></td><td>coin/point/mock 会报错</td></tr>
+        <tr><td>3</td><td>代理货源订单归属一级代理商 + 购买记录接口</td><td><span class="tag new">已实现</span></td><td>新增接口与字段</td></tr>
+        <tr><td>4</td><td>楼长收益并入账号统一收益账户</td><td><span class="tag new">已实现</span></td><td>同名字段口径变化</td></tr>
+        <tr><td>5</td><td>会话列表楼长标识</td><td><span class="tag new">已实现</span></td><td>新增字段</td></tr>
+        <tr><td>6</td><td>推荐商家排序覆盖业主小店</td><td><span class="tag new">已实现</span></td><td>推荐位结果变多</td></tr>
+        <tr><td>7</td><td>奖励金转钱包接口</td><td><span class="tag new">已实现</span></td><td>按钮可用了</td></tr>
+        <tr><td>8</td><td>积分抵物业费冲抵规则 + 用途收敛</td><td><span class="tag new">已实现</span></td><td>积分抵扣/转赠入口要下线</td></tr>
+        <tr><td>9</td><td>货源供给范围、活动组按季/按次、商品会话上下文、邻里置顶、商品带店铺字段</td><td><span class="tag new">已实现</span></td><td>见第 10 节</td></tr>
+        <tr><td>10</td><td>配送费按公里</td><td><span class="tag chg">暂缓</span></td><td>缺少配送方按公里报价的数据来源，需产品确认</td></tr>
+      </tbody>
+    </table>
+    <div class="callout ok">后端已全量编译通过并跑完 276 个测试，无失败。</div>
+  </section>
+
+  <section id="s2">
+    <h2><span class="num">02</span>商家页汇总字段 <span class="tag new">新增返回</span></h2>
+    <p class="lead"><code>GET /merchants/my</code> 顶层新增三个字段，前端不用再自己数订单或误读余额。</p>
+    <table>
+      <thead><tr><th>字段</th><th>类型</th><th>口径</th></tr></thead>
+      <tbody>
+        <tr><td><code>totalOrders</code></td><td>number</td><td>累计订单数，不含已取消/已退款</td></tr>
+        <tr><td><code>pointBalance</code></td><td>number</td><td>商家购分账户剩余积分（与 <code>/merchant/points/*</code> 同一账户）</td></tr>
+        <tr><td><code>profitBalance</code></td><td>number</td><td>盈利余额，与 <code>withdrawableAmount</code> 同口径</td></tr>
+      </tbody>
+    </table>
+    <pre><code>{
+  "code": 0,
+  "data": {
+    "id": "mch_xxx",
+    "withdrawableAmount": 1280.50,
+    "totalOrders": 128,
+    "pointBalance": 5000,
+    "profitBalance": 1280.50
+  }
+}</code></pre>
+    <div class="callout warn"><b>注意：</b><code>coinBalance</code> 仍是「商家绑定居民的物业币余额」，不要当积分余额使用。</div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="num">03</span>广告：免费额度永久一次 + 微信现金 <span class="tag chg">规则变更</span></h2>
+    <p class="lead">支付方式只保留 <code>free</code> 与 <code>wechat</code>；免费额度不再按周重置。</p>
+
+    <h3>3.1 支付方式</h3>
+    <table>
+      <thead><tr><th>paymentMethod</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>free</code></td><td>可用</td><td>每个商家永久仅一次</td></tr>
+        <tr><td><code>wechat</code></td><td>可用</td><td>返回 <code>payParams</code>，受服务端开关控制</td></tr>
+        <tr><td><code>coin</code> / <code>point</code> / <code>mock</code></td><td><span class="tag bad">已下线</span></td><td>返回 400：广告已不支持物业币、商家积分或模拟支付</td></tr>
+      </tbody>
+    </table>
+
+    <h3>3.2 报价与额度</h3>
+    <p><code>GET /merchant/ads/quote?days=7</code> 的 <code>freeQuotaRemaining</code> 改为“永久是否还有一次”：历史用过即 0。<code>freeQuotaPerWeek</code> 仅保留为配置值，请勿再用于“本周额度”判断。</p>
+
+    <h3>3.3 微信下单</h3>
+    <p><code>POST /merchant/ads</code> 或 <code>/targeted</code> 传 <code>paymentMethod=wechat</code> 时，广告先落 <code>pending_payment</code>，响应带支付参数：</p>
+    <pre><code>{
+  "code": 0,
+  "data": {
+    "id": "mad_xxx",
+    "status": "pending_payment",
+    "payStatus": "unpaid",
+    "paymentRecordId": "pay_xxx",
+    "payParams": {
+      "timeStamp": "1730000000",
+      "nonceStr": "abc123",
+      "package": "prepay_id=wx123",
+      "signType": "RSA",
+      "paySign": "xxxx"
+    }
+  }
+}</code></pre>
+    <div class="callout danger"><b>前端务必：</b>只有拿到 <code>payParams</code> 才调 <code>wx.requestPayment</code>；没有 <code>payParams</code> 不能当作免费成功。支付回调成功后才开始投放。</div>
+
+    <h3>3.4 列表状态</h3>
+    <p><code>GET /merchant/ads</code> 每项新增 <code>payStatus</code>（<code>unpaid/paid/refunded</code>）与 <code>paymentRecordId</code>，可在列表标注“待支付”。</p>
+  </section>
+
+  <section id="s4">
+    <h2><span class="num">04</span>代理货源订单归属 <span class="tag new">新增接口</span></h2>
+    <p class="lead">业主小店卖一级代理商的货：订单、发货、结算、售后面向一级代理商；业主小店只拿佣金。</p>
+    <div class="callout ok"><b>履约入口：</b>代销订单的 <code>merchantId</code> 写一级代理商，<code>residentMerchantId</code> 写业主小店。一级代理商可直接用既有 <code>POST /merchants/my/orders/{orderId}/fulfillment</code> 发货；业主小店不再出现在自己的订单销售列表，佣金在卖货明细里查看。</div>
+
+    <h3>4.1 订单新增字段</h3>
+    <table>
+      <thead><tr><th>字段</th><th>值</th><th>含义</th></tr></thead>
+      <tbody>
+        <tr><td><code>sourceType</code></td><td><code>mall</code> / <code>distributor</code></td><td>代销订单为 <code>distributor</code></td></tr>
+        <tr><td><code>distributorId</code></td><td>商家ID</td><td>一级代理商（结算主体）</td></tr>
+        <tr><td><code>residentMerchantId</code></td><td>商家ID</td><td>业主小店店铺主体</td></tr>
+        <tr><td><code>settlementOwner</code></td><td><code>distributor</code></td><td>结算归属方</td></tr>
+      </tbody>
+    </table>
+
+    <h3>4.2 一级代理商「用户购买记录」</h3>
+    <p><code>GET /distributors/my/orders?page=1&amp;pageSize=20&amp;orderStatus=completed</code></p>
+    <pre><code>{
+  "code": 0,
+  "data": {
+    "list": [{
+      "orderId": "ord_xxx",
+      "orderNo": "202610260001",
+      "orderStatus": "completed",
+      "totalAmount": 39.90,
+      "quantity": 2,
+      "productName": "五常大米 5kg",
+      "shopName": "张阿姨的小店",
+      "buyerName": "张*",
+      "buyerPhone": "138****8000",
+      "address": "幸福小区3栋2单元501",
+      "createdAt": "2026-10-26T10:00:00.000Z",
+      "settlementOwner": "distributor"
+    }],
+    "total": 1
+  }
+}</code></pre>
+
+    <h3>4.3 业主小店卖货明细</h3>
+    <p><code>GET /resident-merchants/settlements</code> 每项新增 <code>commissionAmount</code>（佣金，等于 <code>resellerProfit</code>）、<code>distributorMerchantId</code>、<code>sourceType=distributor</code>、<code>settlementOwner=distributor</code>。</p>
+    <div class="callout warn">小店端展示“到账金额”请用 <code>commissionAmount</code>，不要用 <code>orderAmount</code>（那是买家成交额）。</div>
+  </section>
+
+  <section id="s5">
+    <h2><span class="num">05</span>楼长统一收益账户 <span class="tag chg">口径变更</span></h2>
+    <p class="lead">字段名不变，数值改为账号级合并口径，提现也从统一账户校验。</p>
+    <table>
+      <thead><tr><th>字段</th><th>新口径</th></tr></thead>
+      <tbody>
+        <tr><td><code>totalEarning</code></td><td>楼长分成 + 业主卖货收益 + 名下商家剩余可提现</td></tr>
+        <tr><td><code>withdrawnAmount</code></td><td>账号下全部角色已完成提现</td></tr>
+        <tr><td><code>pendingAmount</code></td><td>账号下全部角色在途提现</td></tr>
+        <tr><td><code>withdrawableAmount</code></td><td>统一可提现（已扣除微信分账已到账部分）</td></tr>
+      </tbody>
+    </table>
+    <div class="callout ok">商家提现、业主卖货提现也加了统一账户兜底，避免同一住户用不同角色重复提同一笔钱。</div>
+  </section>
+
+  <section id="s6">
+    <h2><span class="num">06</span>会话楼长标识 <span class="tag new">新增字段</span></h2>
+    <p><code>GET /messages/conversations</code> 每项新增 <code>isBuildingLeader</code>；<code>GET /messages/neighbors</code> 新增 <code>isBuildingLeader</code> / <code>isUnitLeader</code>，并把楼长、单元负责人排在最前。</p>
+    <pre><code>{ "peerId": "res_xxx", "peerName": "李四", "isBuildingLeader": true }</code></pre>
+  </section>
+
+  <section id="s7">
+    <h2><span class="num">07</span>推荐商家排序 <span class="tag new">范围扩大</span></h2>
+    <p><code>GET /merchants/official-recommended</code> 与 <code>GET /merchants?recommended=true</code> 继续返回 <code>isRecommended</code>、<code>recommendedSort</code>，顺序为 <code>recommendedSort → rankOrder → levelWeight</code> 降序。</p>
+    <p>v8.22 起，被物业推荐的业主小店/代销小店也会出现在推荐结果中（此前会被常规列表过滤）。</p>
+  </section>
+
+  <section id="s8">
+    <h2><span class="num">08</span>奖励金转钱包 <span class="tag new">新增接口</span></h2>
+    <p class="lead"><code>POST /property-coins/transfer-to-wallet</code>，只从个人奖励金转出，不动家庭池。</p>
+    <div class="grid">
+      <div class="box">
+        <h4>请求</h4>
+        <pre><code>{ "coinAmount": 100.00 }</code></pre>
+      </div>
+      <div class="box">
+        <h4>响应</h4>
+        <pre><code>{
+  "recordId": "coin_xxx",
+  "coinBalance": 40.00,
+  "walletBalance": 100.00
+}</code></pre>
+      </div>
+    </div>
+    <p>规则：生成 <code>source=transfer_to_wallet</code> 的 spend 流水 + 钱包入账流水；不可撤销；余额不足返回 <code>COIN_INSUFFICIENT</code>。</p>
+  </section>
+
+  <section id="s9">
+    <h2><span class="num">09</span>积分规则收敛 <span class="tag chg">行为变更</span></h2>
+    <p class="lead">积分只有一种用途：转物业公司，抵扣物业费；积分在消费/交易中产生。</p>
+
+    <h3>9.1 转物业费</h3>
+    <p><code>POST /residents/me/points/transfer-to-property</code></p>
+    <ul>
+      <li>物业公司总开关 <code>point_transfer_enabled</code> 默认关闭，关闭时返回 400；</li>
+      <li>开启后还需入住满 <code>point_transfer_min_years</code>（默认 5 年）；</li>
+      <li>按账期由早到晚冲抵 <code>unpaid/partial/overdue</code> 账单，并回写账单状态；</li>
+      <li>响应新增 <code>appliedFeeAmount</code>（实际冲抵金额）。</li>
+    </ul>
+    <pre><code>{
+  "code": 0,
+  "data": {
+    "recordId": "pt_xxx",
+    "pointAmount": 100,
+    "balanceAfter": 400,
+    "appliedFeeAmount": 1.00,
+    "transferredAt": "2026-10-26T10:00:00Z"
+  }
+}</code></pre>
+
+    <h3>9.2 需要前端下线的入口</h3>
+    <table>
+      <thead><tr><th>入口</th><th>后端行为</th></tr></thead>
+      <tbody>
+        <tr><td><code>POST /points/transfer</code> 家庭内转赠</td><td>400：积分仅可用于抵扣物业费，暂不支持家庭内转赠</td></tr>
+        <tr><td>商城下单 <code>pointUsed &gt; 0</code></td><td>400：积分仅可用于抵扣物业费，商城下单不支持积分抵扣</td></tr>
+      </tbody>
+    </table>
+    <div class="callout danger">请移除商城结算页的“积分抵扣”勾选，<code>pointUsed</code> 固定传 0 或不传；否则试算/下单会被后端拦下。</div>
+  </section>
+
+  <section id="s10">
+    <h2><span class="num">10</span>视频增量后端项</h2>
+    <div class="grid">
+      <div class="box">
+        <h4>货源供给范围 <span class="tag new">新增</span></h4>
+        <p><code>supply_scope=company</code>：仅本物业公司小店可选品/拿货；</p>
+        <p><code>supply_scope=platform</code>：全平台小店可代销（超级代理商）。</p>
+      </div>
+      <div class="box">
+        <h4>活动组计费 <span class="tag new">扩展</span></h4>
+        <p>新增 <code>quarterlyFee</code>、<code>perTimeFee</code>；订阅 <code>subType</code> 支持 <code>monthly/quarterly/yearly/per_time</code>。</p>
+      </div>
+      <div class="box">
+        <h4>联系店主带商品 <span class="tag new">新增入参</span></h4>
+        <p><code>POST /messages</code>、<code>/messages/neighbor-chat</code> 可传 <code>relatedProductId</code> 或 <code>relatedListingId</code>。</p>
+      </div>
+      <div class="box">
+        <h4>商品流带店铺 <span class="tag new">新增字段</span></h4>
+        <p><code>GET /products</code> 新增 <code>shopId/shopName/shopStatus</code>，可直接跳店铺并定位商品。</p>
+      </div>
+    </div>
+    <div class="callout warn"><b>暂缓：</b>配送费按公里。现有配送费仍按商家配置与配送规则计算，需要产品先明确“配送方按公里报价”的数据来源与计价规则，再单独改造结算。</div>
+  </section>
+
+  <section id="s11">
+    <h2><span class="num">11</span>数据库与部署</h2>
+    <p>执行脚本：<code>sql/v8.22_前后端联调_20261026.sql</code>（同时作为 Flyway <code>V30</code>，可重复执行）。</p>
+    <table>
+      <thead><tr><th>表</th><th>新增列</th></tr></thead>
+      <tbody>
+        <tr><td><code>orders</code></td><td><code>source_type</code>、<code>distributor_id</code>、<code>resident_merchant_id</code>、<code>settlement_owner</code> + 索引</td></tr>
+        <tr><td><code>property_companies</code></td><td><code>point_transfer_enabled=0</code>、<code>point_transfer_min_years=5</code></td></tr>
+        <tr><td><code>distributor_products</code></td><td><code>supply_scope='company'</code></td></tr>
+        <tr><td><code>activity_groups</code></td><td><code>quarterly_fee</code>、<code>per_time_fee</code></td></tr>
+        <tr><td><code>messages</code></td><td><code>related_product_id</code>、<code>related_listing_id</code></td></tr>
+      </tbody>
+    </table>
+    <div class="callout warn">上线后如需开放积分转物业，请在管理端把对应物业公司的 <code>point_transfer_enabled</code> 置 1；默认关闭，存量数据不需要回填。</div>
+  </section>
+
+  <section id="s12">
+    <h2><span class="num">12</span>联调检查清单</h2>
+    <ul class="check">
+      <li>商家页订单数、积分余额显示正确，不再取最近 5 条。</li>
+      <li>广告只提交 <code>free</code> / <code>wechat</code>；免费额度用过后 <code>freeQuotaRemaining=0</code>。</li>
+      <li>广告微信支付拿到 <code>payParams</code> 才调起，未支付列表显示“待支付”。</li>
+      <li>代理货源订单展示「一级代理直供」，小店端金额按佣金展示。</li>
+      <li>一级代理商「用户购买记录」可见商品、地址、脱敏买家。</li>
+      <li>楼长工作台“我的收益”为全部角色合并口径，提现金额一致。</li>
+      <li>邻居会话楼长置顶；邻里列表楼长/单元负责人排最前。</li>
+      <li>奖励金转钱包返回 <code>coinBalance/walletBalance/recordId</code>。</li>
+      <li>积分页只保留“转物业费”；商城结算页无积分抵扣。</li>
+      <li>活动组可设置按季/按次价格并下单成功。</li>
+      <li>货源选品池按物业公司隔离；超级代理商品全平台可见。</li>
+    </ul>
+  </section>
+
+  <footer>物业积分服务系统 · 后端交付 · 2026-10-26 · 详细字段见 API 文档 §107</footer>
+</div>
+</body>
+</html>

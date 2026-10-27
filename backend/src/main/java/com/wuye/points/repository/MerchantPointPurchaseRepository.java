@@ -38,4 +38,9 @@ public interface MerchantPointPurchaseRepository extends JpaRepository<MerchantP
             + "where p.merchantId = :merchantId and p.auditStatus = 'approved' and p.remainingPoints > 0 "
             + "order by p.createdAt asc")
     List<MerchantPointPurchase> findApprovedWithRemainingForUpdate(@Param("merchantId") String merchantId);
+
+    /** 商家购分账户剩余积分（已审核通过的批次余额之和） */
+    @Query("SELECT COALESCE(SUM(p.remainingPoints), 0) FROM MerchantPointPurchase p "
+            + "WHERE p.merchantId = :merchantId AND p.auditStatus = 'approved'")
+    long sumRemainingPointsByMerchantId(@Param("merchantId") String merchantId);
 }

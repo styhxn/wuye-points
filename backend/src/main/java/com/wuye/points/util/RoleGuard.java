@@ -228,7 +228,7 @@ public class RoleGuard {
     public static final Set<String> ACTIVITY_MEMBER_STATUS = Set.of("active", "inactive");
     public static final Set<String> ACTIVITY_SUBSCRIPTION_STATUS = Set.of("active", "expired", "cancelled");
     public static final Set<String> ACTIVITY_GROUP_ROLES = Set.of("leader", "member");
-    public static final Set<String> SUBSCRIPTION_TYPES = Set.of("monthly", "yearly");
+    public static final Set<String> SUBSCRIPTION_TYPES = Set.of("monthly", "quarterly", "yearly", "per_time");
     public static final Set<String> MESSAGE_TYPES = Set.of(
             "property_message", "platform_message", "system_message",
             "community_message", "resident_message", "technician_message",

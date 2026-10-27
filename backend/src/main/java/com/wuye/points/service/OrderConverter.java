@@ -61,6 +61,9 @@ public class OrderConverter {
                 .merchantName(merchant != null ? merchant.getName() : null)
                 .merchantCoverUrl(resolveMerchantCover(merchant))
                 .orderStatus(order.getOrderStatus())
+                .refundStatus(order.getRefundStatus())
+                .refundFailReason(order.getRefundFailReason())
+                .cancelledBy(order.getCancelledBy())
                 .deliveryStatusCode(deliveryStatusCode)
                 .deliveryStatusLabel(DisplayLabelUtil.deliveryStatusLabel(deliveryStatusCode))
                 .totalAmount(defaultDecimal(order.getTotalAmount()))
@@ -84,6 +87,10 @@ public class OrderConverter {
                 .fulfillmentModeLabel(DisplayLabelUtil.fulfillmentModeLabel(order.getFulfillmentMode()))
                 .fulfillmentDeadline(DateTimeUtil.toIsoUtc(order.getFulfillmentDeadline()))
                 .fulfillmentChosenAt(DateTimeUtil.toIsoUtc(order.getFulfillmentChosenAt()))
+                .sourceType(order.getSourceType() != null ? order.getSourceType() : "mall")
+                .distributorId(order.getDistributorId())
+                .residentMerchantId(order.getResidentMerchantId())
+                .settlementOwner(order.getSettlementOwner() != null ? order.getSettlementOwner() : "merchant")
                 .build();
     }
 
@@ -119,6 +126,9 @@ public class OrderConverter {
                 .merchantName(base.getMerchantName())
                 .merchantCoverUrl(base.getMerchantCoverUrl())
                 .orderStatus(base.getOrderStatus())
+                .refundStatus(base.getRefundStatus())
+                .refundFailReason(base.getRefundFailReason())
+                .cancelledBy(base.getCancelledBy())
                 .deliveryStatusCode(base.getDeliveryStatusCode())
                 .deliveryStatusLabel(base.getDeliveryStatusLabel())
                 .totalAmount(base.getTotalAmount())
@@ -146,6 +156,7 @@ public class OrderConverter {
                 .contactPhone(contactPhone)
                 .remark(order.getRemark())
                 .cancelledAt(DateTimeUtil.toIsoUtc(order.getCancelledAt()))
+                .cancelReason(order.getCancelReason())
                 .version(order.getVersion())
                 .updatedAt(DateTimeUtil.toIsoUtc(order.getUpdatedAt()))
                 .deliveryId(delivery != null ? delivery.getId() : null)

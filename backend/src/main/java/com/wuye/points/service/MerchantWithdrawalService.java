@@ -39,10 +39,14 @@ public class MerchantWithdrawalService {
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
+    private static final BigDecimal MAX_WITHDRAWAL_AMOUNT = new BigDecimal("999999.99");
+
     private final MerchantWithdrawalRepository merchantWithdrawalRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final MerchantSupport merchantSupport;
     private final SnowflakeIdGenerator idGenerator;
+    private final WithdrawableService withdrawableService;
+    private final UnifiedEarningsService unifiedEarningsService;
 
     @Transactional
     public WithdrawalItemResponse apply(ApplyWithdrawalRequest request) {
@@ -50,15 +54,41 @@ public class MerchantWithdrawalService {
         PropertyCompany propertyCompany = propertyCompanyRepository.findById(merchant.getPropertyCompanyId())
                 .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
 
+        BigDecimal amount = request.getAmount();
+        if (amount.compareTo(MAX_WITHDRAWAL_AMOUNT) > 0) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE,
+                    "单笔提现金额不能超过 " + MAX_WITHDRAWAL_AMOUNT);
+        }
+        // 资金闸门：申请时必须校验商户真实可提现余额（含 pending/approved 占用），
+        // 不能只信任前端展示或本地校验。
+        WithdrawableService.MerchantWithdrawable withdrawable =
+                withdrawableService.calcMerchantWithdrawable(merchant);
+        if (withdrawable.withdrawalBlocked()) {
+            throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+        }
+        if (amount.compareTo(withdrawable.withdrawableAmount()) > 0) {
+            throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                    "可提现余额不足（最多 ¥" + withdrawable.withdrawableAmount().toPlainString() + "）");
+        }
+        // v8.21：账号统一收益账户兜底，防止同一住户先用其他角色把同一笔钱提走
+        if (merchant.getResidentId() != null) {
+            BigDecimal unifiedWithdrawable = unifiedEarningsService
+                    .calc(merchant.getResidentId()).withdrawableAmount();
+            if (amount.compareTo(unifiedWithdrawable) > 0) {
+                throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                        "账号统一收益余额不足（最多 ¥" + unifiedWithdrawable.toPlainString() + "）");
+            }
+        }
+
         BigDecimal feeRate = resolveFeeRate(propertyCompany);
-        BigDecimal feeAmount = request.getAmount().multiply(feeRate).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal actualAmount = request.getAmount().subtract(feeAmount);
+        BigDecimal feeAmount = amount.multiply(feeRate).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal actualAmount = amount.subtract(feeAmount);
 
         MerchantWithdrawal withdrawal = new MerchantWithdrawal();
         withdrawal.setId(idGenerator.generateId("mw"));
         withdrawal.setMerchantId(merchant.getId());
         withdrawal.setPropertyCompanyId(merchant.getPropertyCompanyId());
-        withdrawal.setAmount(request.getAmount());
+        withdrawal.setAmount(amount);
         withdrawal.setFeeRate(feeRate);
         withdrawal.setFeeAmount(feeAmount);
         withdrawal.setActualAmount(actualAmount);

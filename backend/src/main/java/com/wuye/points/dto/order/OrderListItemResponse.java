@@ -36,6 +36,17 @@ public class OrderListItemResponse {
     @Schema(description = "订单状态", example = "pending")
     private String orderStatus;
 
+    @Schema(description = "退款状态：null 无退款 / refunding 退款中 / refunded 已退款 / failed 退款失败",
+            example = "refunding")
+    private String refundStatus;
+
+    @Schema(description = "退款失败原因", example = "微信退款失败，需人工处理")
+    private String refundFailReason;
+
+    @Schema(description = "取消来源：user 用户取消 / system 系统超时 / merchant 商家拒单",
+            example = "user")
+    private String cancelledBy;
+
     @Schema(description = "配送单状态码（订单冗余，取关联配送单；历史值 delivered 归一化为 completed）",
             example = "completed", allowableValues = {"pending", "accepted", "delivering", "merchant_self", "completed", "failed", "property_fallback"})
     private String deliveryStatusCode;
@@ -108,4 +119,16 @@ public class OrderListItemResponse {
 
     @Schema(description = "履约方式选定时间", example = "2026-01-01T00:05:00.000Z")
     private String fulfillmentChosenAt;
+
+    @Schema(description = "订单来源：mall=商城/店铺直购，distributor=业主小店代销一级代理货源")
+    private String sourceType;
+
+    @Schema(description = "一级代理商商家ID（sourceType=distributor 时返回）")
+    private String distributorId;
+
+    @Schema(description = "业主小店店铺主体ID（代销场景）")
+    private String residentMerchantId;
+
+    @Schema(description = "结算归属方：merchant=商家，distributor=一级代理商")
+    private String settlementOwner;
 }

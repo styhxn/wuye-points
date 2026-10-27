@@ -29,4 +29,16 @@ public class PointBalanceResponse {
 
     @Schema(description = "过期日期", example = "2026-09-01")
     private String expiringDate;
+
+    @Schema(description = "是否开放积分转物业（物业公司开关，默认 false）", example = "false")
+    private Boolean pointTransferEnabled;
+
+    @Schema(description = "积分转物业所需最低入住年限", example = "5")
+    private Integer pointTransferMinYears;
+
+    @Schema(description = "当前是否满足积分转物业条件（开关开启且入住年限达标）", example = "false")
+    private Boolean pointTransferEligible;
+
+    @Schema(description = "不可转物业的原因；可转时为 null", example = "积分转物业费暂未开放")
+    private String pointTransferBlockedReason;
 }

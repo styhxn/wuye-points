@@ -1,7 +1,20 @@
 # 生产环境配置
+# 生产关闭 Swagger/OpenAPI，避免接口与 DTO 全量暴露
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 app:
+  auth:
+    # ⚠️ 测试模式：按当前联调要求默认开启，放开初始口令并跳过管理端角色校验。
+    # 正式上线前必须设 APP_AUTH_TEST_MODE=false（或删除本行，回落到 application.yml 的默认值）。
+    test-mode: ${APP_AUTH_TEST_MODE:true}
   wechat:
-    skip-api: false
+    # 默认 false；仅测试服可显式设 APP_WECHAT_SKIP_API=true 以启用 dev_ 免密登录。
+    # ⚠️ 生产必须保持 false，true 时任何人可用 dev_ 前缀伪造微信身份。
+    skip-api: ${APP_WECHAT_SKIP_API:false}
   payment:
     # 生产禁用模拟支付：保证金必须经微信支付或物业线下确认收款（fail-closed，此处再显式声明一次）
     mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:false}

@@ -76,6 +76,17 @@ public class Order extends BaseEntity {
     @Column(name = "cancel_reason", length = 200)
     private String cancelReason;
 
+    /** 取消来源：user 用户取消 / system 系统超时 / merchant 商家拒单 */
+    @Column(name = "cancelled_by", length = 20)
+    private String cancelledBy;
+
+    /** 退款状态：null 无退款 / refunding 退款中 / refunded 已退款 / failed 退款失败 */
+    @Column(name = "refund_status", length = 20)
+    private String refundStatus;
+
+    @Column(name = "refund_fail_reason", length = 255)
+    private String refundFailReason;
+
     @Column(name = "point_earned")
     private Integer pointEarned;
 
@@ -101,6 +112,22 @@ public class Order extends BaseEntity {
     /** 通过业主商户上架商品（resident_merchant_listings）成交时的上架ID */
     @Column(name = "listing_id", length = 32)
     private String listingId;
+
+    /** 订单来源：mall=商城/店铺直购，distributor=业主小店代销一级代理货源 */
+    @Column(name = "source_type", length = 20)
+    private String sourceType;
+
+    /** 一级代理商商家ID（source_type=distributor 时必填，订单/结算面向一级代理商） */
+    @Column(name = "distributor_id", length = 32)
+    private String distributorId;
+
+    /** 业主小店店铺主体ID（代销场景仅作展示与佣金归属，不作为结算主体） */
+    @Column(name = "resident_merchant_id", length = 32)
+    private String residentMerchantId;
+
+    /** 结算归属方：merchant/distributor */
+    @Column(name = "settlement_owner", length = 20)
+    private String settlementOwner;
 
     /** 定向商城主商家ID */
     @Column(name = "directed_main_merchant_id", length = 32)

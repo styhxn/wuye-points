@@ -113,6 +113,7 @@ public enum ErrorCode {
     MERCHANT_POINT_INSUFFICIENT(94002, "商家积分余额不足", 400),
     MERCHANT_WITHDRAWAL_INVALID(94003, "提现申请不允许操作", 400),
     COIN_WITHDRAWAL_AMOUNT_INVALID(94004, "兑换金额不合法", 400),
+    MERCHANT_WITHDRAWAL_INSUFFICIENT(94006, "可提现余额不足", 400),
 
     // 文件 95xxx
     FILE_NOT_FOUND(95001, "文件不存在", 404),

@@ -26,6 +26,7 @@ import com.wuye.points.dto.order.SendDeliveryResponse;
 import com.wuye.points.dto.order.UpdateOrderStatusRequest;
 import com.wuye.points.dto.order.UpdateOrderStatusResponse;
 import com.wuye.points.service.OrderService;
+import com.wuye.points.support.Idempotent;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,13 +53,15 @@ public class OrderController {
      * 创建订单
      * Auth: Required | Roles: resident
      */
-    @Operation(summary = "创建订单", description = "创建订单，需登录，角色：resident")
+    @Operation(summary = "创建订单", description = "创建订单，需登录，角色：resident；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping
     public ApiResponse<CreateOrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
         return ApiResponse.success(orderService.createOrder(request));
     }
 
-    @Operation(summary = "向业主商户下单", description = "购买业主商户从一级经销商拿货后上架的商品，订单记录上架ID，完成后结算差价并自动下架。需登录，角色：resident")
+    @Operation(summary = "向业主商户下单", description = "购买业主商户从一级经销商拿货后上架的商品，订单记录上架ID，完成后结算差价并自动下架。需登录，角色：resident；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping("/from-listing")
     public ApiResponse<CreateOrderResponse> createListingOrder(
             @Valid @RequestBody CreateListingOrderRequest request) {
@@ -101,7 +104,8 @@ public class OrderController {
      * 支付订单
      * Auth: Required | Roles: resident
      */
-    @Operation(summary = "支付订单", description = "支付订单，需登录，角色：resident")
+    @Operation(summary = "支付订单", description = "支付订单，需登录，角色：resident；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping("/{id}/pay")
     public ApiResponse<PayOrderResponse> payOrder(
             @Parameter(description = "订单ID", example = "1") @PathVariable String id,
@@ -165,7 +169,8 @@ public class OrderController {
      * 取消订单
      * Auth: Required | Roles: resident
      */
-    @Operation(summary = "取消订单", description = "取消订单，需登录，角色：resident")
+    @Operation(summary = "取消订单", description = "取消订单，需登录，角色：resident；支持 X-Request-Id 幂等")
+    @Idempotent
     @PostMapping("/{id}/cancel")
     public ApiResponse<CancelOrderResponse> cancelOrder(
             @Parameter(description = "订单ID", example = "1") @PathVariable String id,

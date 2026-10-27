@@ -4,6 +4,7 @@ import com.wuye.points.dto.admin.settlement.SettlementConfigResponse;
 import com.wuye.points.dto.admin.settlement.UpdateSettlementConfigRequest;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.service.PlatformSettingService;
+import com.wuye.points.util.RoleGuard;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -26,11 +27,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminSettlementConfigController {
 
     private final PlatformSettingService platformSettingService;
+    private final RoleGuard roleGuard;
 
     @Operation(summary = "查询结算/分账模式配置",
-            description = "返回当前所有结算模式开关与平台提现手续费配置。角色: platform_admin")
+            description = "返回当前所有结算模式开关与平台提现手续费配置。角色: platform_admin / property_admin（只读）")
     @GetMapping("/settlement-config")
     public ApiResponse<SettlementConfigResponse> getConfig() {
+        roleGuard.requireAnyRole("platform_admin", "property_admin");
         SettlementConfigResponse response = new SettlementConfigResponse();
         response.setWechatSplitEnabled(platformSettingService.isWechatSplitEnabled());
         response.setLedgerFallbackEnabled(platformSettingService.isLedgerFallbackEnabled());
@@ -51,6 +54,8 @@ public class AdminSettlementConfigController {
     @PutMapping("/settlement-config")
     public ApiResponse<SettlementConfigResponse> updateConfig(
             @Valid @RequestBody UpdateSettlementConfigRequest request) {
+        // 资金规则写操作只允许平台管理员，物业管理员仅可读。
+        roleGuard.requireAnyRole("platform_admin");
         platformSettingService.updateSettlementConfig(new PlatformSettingService.SettlementConfigUpdate(
                 request.getWechatSplitEnabled(),
                 request.getLedgerFallbackEnabled(),

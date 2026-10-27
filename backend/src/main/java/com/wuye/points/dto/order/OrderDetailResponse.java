@@ -36,6 +36,13 @@ public class OrderDetailResponse extends OrderListItemResponse {
     @Schema(description = "取消时间", example = "2026-01-01T00:00:00.000Z")
     private String cancelledAt;
 
+    @Schema(description = "取消原因", example = "不想要了")
+    private String cancelReason;
+
+    @Schema(description = "支付流水状态：pending/paid/closed/refunding/refunded/refund_failed/amount_mismatch；无流水为 null",
+            example = "amount_mismatch")
+    private String paymentStatus;
+
     @Schema(description = "版本号", example = "1")
     private Integer version;
 

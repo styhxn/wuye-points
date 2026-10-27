@@ -93,6 +93,12 @@ public class MerchantListItemResponse {
     @Schema(description = "商家状态", example = "active")
     private String status;
 
+    @Schema(description = "商家来源原始值（platform/group_leader/technician/resident_shop 等）", example = "platform")
+    private String merchantSource;
+
+    @Schema(description = "店铺类型：merchant 普通商家；resident 业主小店（推荐位跳转分流用）", example = "merchant")
+    private String shopType;
+
     @Schema(description = "是否官方/物业推荐", example = "true")
     private Boolean isRecommended;
 

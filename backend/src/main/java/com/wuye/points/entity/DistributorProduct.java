@@ -55,4 +55,8 @@ public class DistributorProduct extends BaseEntity {
     /** 服务区间 city(本市)/community(小区) */
     @Column(name = "service_scope", length = 20)
     private String serviceScope;
+
+    /** 供给范围：company=本物业公司（默认），platform=全平台所有业主小店可代销 */
+    @Column(name = "supply_scope", length = 20)
+    private String supplyScope = "company";
 }

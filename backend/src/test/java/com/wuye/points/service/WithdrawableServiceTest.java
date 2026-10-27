@@ -28,7 +28,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 
 /**
@@ -74,7 +73,7 @@ class WithdrawableServiceTest {
         when(orderRepository.countCompletedByMerchantId("m1")).thenReturn(3L);
         when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), eq("completed")))
                 .thenReturn(new BigDecimal("100"));
-        when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), isNull()))
+        when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(new BigDecimal("200"));
         // 默认无抽佣，便于单独验证其它分支
         when(distributionRecordRepository.sumCommissionByMerchantIdForCompletedOrders(anyString()))
@@ -132,7 +131,7 @@ class WithdrawableServiceTest {
     void deductsPlatformCommission() {
         when(orderRepository.sumCompletedRevenueByMerchantId("m1")).thenReturn(new BigDecimal("100"));
         when(orderRepository.countCompletedByMerchantId("m1")).thenReturn(1L);
-        when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), isNull()))
+        when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(BigDecimal.ZERO);
         when(distributionRecordRepository.sumCommissionByMerchantIdForCompletedOrders("m1"))
                 .thenReturn(new BigDecimal("20"));
@@ -151,7 +150,7 @@ class WithdrawableServiceTest {
     @DisplayName("calcMerchantWithdrawable: 抽佣+占用超过营收时截断为 0（不为负）")
     void commissionOverRevenue_clampToZero() {
         when(orderRepository.sumCompletedRevenueByMerchantId("m1")).thenReturn(new BigDecimal("100"));
-        when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), isNull()))
+        when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(new BigDecimal("90"));
         when(distributionRecordRepository.sumCommissionByMerchantIdForCompletedOrders("m1"))
                 .thenReturn(new BigDecimal("20"));
@@ -166,7 +165,7 @@ class WithdrawableServiceTest {
     @DisplayName("calcMerchantWithdrawable: 占用超过营收时截断为 0（不为负）")
     void negativeClampToZero() {
         when(orderRepository.sumCompletedRevenueByMerchantId("m1")).thenReturn(new BigDecimal("100"));
-        when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), isNull()))
+        when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(new BigDecimal("200"));
 
         WithdrawableService.MerchantWithdrawable r = withdrawableService.calcMerchantWithdrawable(merchant);
@@ -187,7 +186,7 @@ class WithdrawableServiceTest {
         // 技师路径仍会计提已占用（completed=100, all=100）
         when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), eq("completed")))
                 .thenReturn(new BigDecimal("100"));
-        when(merchantWithdrawalRepository.sumAmountByMerchantId(anyString(), isNull()))
+        when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(new BigDecimal("100"));
         when(distributionRecordRepository.sumMerchantIncomeForCompletedOrders("m1"))
                 .thenReturn(new BigDecimal("500"));

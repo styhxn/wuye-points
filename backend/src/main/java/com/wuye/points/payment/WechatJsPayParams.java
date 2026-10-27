@@ -26,4 +26,10 @@ public class WechatJsPayParams implements Serializable {
     private String signType;
 
     private String paySign;
+
+    /**
+     * 商户侧订单号（payment_records.out_trade_no，wxo_ 前缀）。
+     * 与 paymentRecordId（pr_ 前缀的内部流水ID）不是同一个值；客服对账/微信侧查询使用本字段。
+     */
+    private String outTradeNo;
 }

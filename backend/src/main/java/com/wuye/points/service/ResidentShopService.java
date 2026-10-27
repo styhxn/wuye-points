@@ -30,6 +30,7 @@ import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.payment.PayChannel;
 import com.wuye.points.payment.PaymentBizType;
 import com.wuye.points.repository.DistributorProductRepository;
+import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.OrderRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.ResidentMerchantApplicationRepository;
@@ -101,6 +102,7 @@ public class ResidentShopService {
     private final PlatformSettingService platformSettingService;
     private final TransactionTemplate transactionTemplate;
     private final ResidentShopMerchantService residentShopMerchantService;
+    private final MerchantRepository merchantRepository;
 
     @Value("${app.share.base-url:https://test.yuanxusoftware.top/h5/shop}")
     private String shareBaseUrl;
@@ -345,6 +347,15 @@ public class ResidentShopService {
         if (!"active".equals(product.getStatus())) {
             throw new BizException(ErrorCode.PRODUCT_NOT_FOUND);
         }
+        // v8.21：普通代理货源仅本物业公司的业主小店可拿货；platform 范围对所有物业公司开放
+        if (!"platform".equals(product.getSupplyScope())) {
+            com.wuye.points.entity.Merchant distributor = merchantRepository
+                    .findById(product.getDistributorMerchantId()).orElse(null);
+            if (distributor == null
+                    || !resident.getPropertyCompanyId().equals(distributor.getPropertyCompanyId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED, "该货源仅限本物业公司的业主小店代销");
+            }
+        }
         // 件数制：拿货件数从一级代理库存（stock=库存件数）一次性扣减
         int quantity = request.getQuantity() == null ? 1 : request.getQuantity();
         if (quantity < 1) {
@@ -481,9 +492,24 @@ public class ResidentShopService {
         }
         PageRequest pageable = PageRequest.of(page - 1, Math.min(Math.max(pageSize, 1), 100));
 
+        // v8.21：超级代理（supply_scope=platform）对所有物业公司可见；普通代理仅本物业公司可见
+        String propertyCompanyId = UserContext.currentPropertyCompanyId();
+        List<String> sameCompanyDistributorIds = StringUtils.hasText(propertyCompanyId)
+                ? merchantRepository.findByPropertyCompanyIdAndStatus(propertyCompanyId, "active").stream()
+                        .filter(m -> Boolean.TRUE.equals(m.getIsDistributor()))
+                        .map(com.wuye.points.entity.Merchant::getId)
+                        .toList()
+                : List.of();
         Specification<DistributorProduct> spec = (root, query, cb) -> {
             var predicates = cb.conjunction();
             predicates = cb.and(predicates, cb.equal(root.get("status"), "active"));
+            if (!sameCompanyDistributorIds.isEmpty()) {
+                predicates = cb.and(predicates, cb.or(
+                        cb.equal(root.get("supplyScope"), "platform"),
+                        root.get("distributorMerchantId").in(sameCompanyDistributorIds)));
+            } else {
+                predicates = cb.and(predicates, cb.equal(root.get("supplyScope"), "platform"));
+            }
             if (StringUtils.hasText(keyword)) {
                 String like = "%" + keyword.trim() + "%";
                 predicates = cb.and(predicates, cb.like(root.get("name"), like));
@@ -838,6 +864,7 @@ public class ResidentShopService {
                 .wholesalePrice(product.getWholesalePrice())
                 .suggestedRetailPrice(product.getSuggestedRetailPrice())
                 .stock(product.getStock())
+                .supplyScope(product.getSupplyScope() != null ? product.getSupplyScope() : "company")
                 .build();
     }
 

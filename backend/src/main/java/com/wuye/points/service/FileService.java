@@ -398,7 +398,8 @@ public class FileService {
     }
 
     private void requireUploadRole() {
-        roleGuard.requireAnyRole("platform_admin", "property_admin", "merchant", "resident", "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician");
+        roleGuard.requireAnyRole("platform_admin", "property_admin", "merchant", "resident", "courier",
+                "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician");
     }
 
     private record CategoryRule(long maxSize, Set<String> extensions, Integer maxTotalCount, boolean generateThumb) {

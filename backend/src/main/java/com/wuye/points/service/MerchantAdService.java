@@ -61,7 +61,9 @@ public class MerchantAdService {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final Set<String> TARGET_GENDER_VALUES = Set.of("male", "female", "all");
-    private static final Set<String> PAYMENT_METHODS = Set.of("free", "coin", "point", "wechat", "mock");
+    /** v8.21：广告只保留免费额度与微信现金支付；物业币/商家积分/模拟支付全部下线 */
+    private static final Set<String> PAYMENT_METHODS = Set.of("free", "wechat");
+    private static final Set<String> LEGACY_PAYMENT_METHODS = Set.of("coin", "point", "mock");
     private static final int MAX_DURATION_DAYS = 30;
     /** 重新发起支付时，作废超过该时长的旧 pending 流水（即时重试窗口，兜底于 PendingPaymentScheduler） */
     private static final int STALE_PENDING_MINUTES = 5;
@@ -74,17 +76,18 @@ public class MerchantAdService {
     private final AgeBracketConfigRepository ageBracketConfigRepository;
     private final MessageRepository messageRepository;
     private final PlatformSettingService platformSettingService;
-    private final PropertyCoinService propertyCoinService;
-    private final MerchantPointService merchantPointService;
     private final WebSocketService webSocketService;
     private final SnowflakeIdGenerator idGenerator;
     private final ObjectMapper objectMapper;
     private final PaymentRecordRepository paymentRecordRepository;
     private final PayChannel wechatPayService;
 
-    /** 模拟支付开关：仅开发环境（app.payment.mock-enabled=true）允许 mock 支付方式（fail-closed 默认 false） */
-    @Value("${app.payment.mock-enabled:false}")
-    private boolean mockPayEnabled;
+    /**
+     * 广告微信支付开关（fail-closed 默认 false）。
+     * 前端尚未支持 pending_payment 状态时保持关闭，避免「广告待支付、用户以为已投放」。
+     */
+    @Value("${app.merchant-ad.wechat-payment-enabled:false}")
+    private boolean adWechatPaymentEnabled;
 
     @Transactional(readOnly = true)
     public List<MerchantAdPackageResponse> listPackages() {
@@ -116,8 +119,8 @@ public class MerchantAdService {
     @Transactional(readOnly = true)
     public MerchantAdQuoteResponse quote(int durationDays) {
         validateDurationDays(durationDays);
-        MerchantAdQuota quota = currentWeekQuotaOrNull();
-        int freeQuotaRemaining = resolveFreeQuotaRemaining(quota);
+        Merchant merchant = requireCurrentMerchant();
+        int freeQuotaRemaining = resolveFreeQuotaRemaining(merchant.getId());
         return MerchantAdQuoteResponse.builder()
                 .durationDays(durationDays)
                 .dayPrice(platformSettingService.getAdDayPrice())
@@ -157,14 +160,13 @@ public class MerchantAdService {
         MerchantAdQuota quota = merchantAdQuotaRepository
                 .findByMerchantIdAndWeekStartDate(merchant.getId(), weekStart).orElse(null);
 
-        int freeQuota = platformSettingService.getAdFreeQuotaPerWeek();
-        if (!platformSettingService.isAdFreeQuotaEnabled()) {
-            freeQuota = 0;
-        }
+        int freeQuota = platformSettingService.isAdFreeQuotaEnabled()
+                ? platformSettingService.getAdFreeQuotaPerWeek() : 0;
         int purchasedQuota = quota != null ? defaultInt(quota.getPurchasedQuota()) : 0;
         int usedCount = quota != null ? defaultInt(quota.getUsedCount()) : 0;
         int freeUsedCount = quota != null ? defaultInt(quota.getFreeUsedCount()) : 0;
-        int freeQuotaRemaining = Math.max(freeQuota + purchasedQuota - freeUsedCount, 0);
+        // v8.21：免费额度永久仅一次；已购买的周额度仍按周单独计算，不混入免费口径
+        int freeQuotaRemaining = resolveFreeQuotaRemaining(merchant.getId());
 
         return MerchantAdQuotaResponse.builder()
                 .weekStart(weekStart.format(DATE_FMT))
@@ -173,7 +175,7 @@ public class MerchantAdService {
                 .purchasedQuota(purchasedQuota)
                 .usedCount(usedCount)
                 .freeUsedCount(freeUsedCount)
-                .remainingCount(freeQuotaRemaining)
+                .remainingCount(freeQuotaRemaining + purchasedQuota)
                 .freeQuotaRemaining(freeQuotaRemaining)
                 .freeQuotaEnabled(platformSettingService.isAdFreeQuotaEnabled())
                 .freeQuotaPerWeek(platformSettingService.getAdFreeQuotaPerWeek())
@@ -189,8 +191,16 @@ public class MerchantAdService {
         }
         PageRequest pageable = PageRequest.of(page - 1, Math.min(Math.max(pageSize, 1), 100));
         Page<MerchantAd> result = merchantAdRepository.findByMerchantIdOrderByCreatedAtDesc(merchant.getId(), pageable);
+        List<String> adIds = result.getContent().stream().map(MerchantAd::getId).toList();
+        Map<String, PaymentRecord> latestPayments = adIds.isEmpty()
+                ? Map.of()
+                : paymentRecordRepository
+                        .findByBizTypeAndBizIdInOrderByCreatedAtDesc(PaymentBizType.AD_PURCHASE, adIds)
+                        .stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                PaymentRecord::getBizId, r -> r, (first, ignored) -> first));
         List<MerchantAdListItemResponse> list = result.getContent().stream()
-                .map(ad -> toListItem(ad))
+                .map(ad -> toListItem(ad, latestPayments.get(ad.getId())))
                 .toList();
         return PageResponse.of(list, page, pageSize, result.getTotalElements());
     }
@@ -209,6 +219,7 @@ public class MerchantAdService {
         LocalDate weekStart = currentWeekStart();
         MerchantAdQuota quota = getOrCreateQuota(merchant.getId(), weekStart);
 
+        assertAdPaymentMethodAllowed(request.getPaymentMethod());
         MerchantAd ad = new MerchantAd();
         ad.setId(idGenerator.generateId("mad"));
         ad.setMerchantId(merchant.getId());
@@ -221,7 +232,7 @@ public class MerchantAdService {
         ad.setPaymentMethod(request.getPaymentMethod());
 
         BigDecimal payAmount = resolvePayAmount(request.getDurationDays(), request.getPaymentMethod(),
-                quota, merchant, merchantUser, ad.getId());
+                merchant.getId());
         ad.setPayAmount(payAmount);
 
         // 付费广告（wechat）：先落 pending_payment，微信回调确认后才投放；未收款绝不投放
@@ -250,6 +261,7 @@ public class MerchantAdService {
         LocalDate weekStart = currentWeekStart();
         MerchantAdQuota quota = getOrCreateQuota(merchant.getId(), weekStart);
 
+        assertAdPaymentMethodAllowed(request.getPaymentMethod());
         MerchantAd ad = new MerchantAd();
         ad.setId(idGenerator.generateId("mad"));
         ad.setMerchantId(merchant.getId());
@@ -262,7 +274,7 @@ public class MerchantAdService {
         ad.setPaymentMethod(request.getPaymentMethod());
 
         BigDecimal payAmount = resolvePayAmount(request.getDurationDays(), request.getPaymentMethod(),
-                quota, merchant, merchantUser, ad.getId());
+                merchant.getId());
         ad.setPayAmount(payAmount);
         ad.setTargetBuildings(toJsonString(request.getTargetBuildings()));
         ad.setTargetGender(StringUtils.hasText(request.getTargetGender()) ? request.getTargetGender() : null);
@@ -282,6 +294,25 @@ public class MerchantAdService {
     /** 是否为真实微信通道支付（现金部分需预下单，不可直接投放）。 */
     private boolean isChannelPayment(String paymentMethod) {
         return "wechat".equals(paymentMethod);
+    }
+
+    /**
+     * 支付方式白名单校验。
+     * 物业币/商家积分/模拟支付已下线，旧版客户端继续提交时返回明确业务错误，便于排查。
+     */
+    private void assertAdPaymentMethodAllowed(String paymentMethod) {
+        if (LEGACY_PAYMENT_METHODS.contains(paymentMethod)) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "广告已不支持物业币、商家积分或模拟支付，请使用免费额度或微信支付");
+        }
+        if (!PAYMENT_METHODS.contains(paymentMethod)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod不合法");
+        }
+        // 微信支付未配置时 fail-closed，绝不回退为「直接投放」
+        if ("wechat".equals(paymentMethod) && !adWechatPaymentEnabled) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "广告微信支付暂未开放，当前仅可使用免费额度");
+        }
     }
 
     /**
@@ -421,42 +452,19 @@ public class MerchantAdService {
     /**
      * 结算金额：免费额度投放=0；付费按 单日价×天数。
      */
-    private BigDecimal resolvePayAmount(int durationDays, String paymentMethod, MerchantAdQuota quota,
-                                        Merchant merchant, Resident merchantUser, String adId) {
-        if (!PAYMENT_METHODS.contains(paymentMethod)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod不合法");
-        }
+    private BigDecimal resolvePayAmount(int durationDays, String paymentMethod, String merchantId) {
         if ("free".equals(paymentMethod)) {
-            int freeQuotaRemaining = resolveFreeQuotaRemaining(quota);
+            int freeQuotaRemaining = resolveFreeQuotaRemaining(merchantId);
             if (freeQuotaRemaining <= 0) {
-                throw new BizException(ErrorCode.MERCHANT_AD_QUOTA_INSUFFICIENT, "本周免费额度已用完，请选择付费投放");
+                throw new BizException(ErrorCode.MERCHANT_AD_QUOTA_INSUFFICIENT,
+                        "免费额度已使用过（仅限一次），请选择微信支付投放");
             }
             return BigDecimal.ZERO;
         }
 
-        BigDecimal payAmount = platformSettingService.getAdDayPrice()
+        // free/wechat 已在上方白名单校验；wechat 的现金部分由预下单处理，此处仅计价
+        return platformSettingService.getAdDayPrice()
                 .multiply(BigDecimal.valueOf(durationDays));
-        switch (paymentMethod) {
-            case "coin" -> {
-                // 余额不足/冻结由 spendCoins 内部校验并抛出对应错误码
-                propertyCoinService.spendCoins(
-                        merchantUser, payAmount, "ad_purchase", adId,
-                        "商家广告位购买", merchantUser.getId(), false);
-            }
-            case "point" -> merchantPointService.spendPoints(
-                    merchant.getId(), merchant.getPropertyCompanyId(), payAmount, "商家广告位购买");
-            case "mock" -> {
-                // 模拟支付仅限开发环境；生产必须走真实微信或积分/物业币，否则等于免费投放
-                if (!mockPayEnabled) {
-                    throw new BizException(ErrorCode.PARAM_INVALID, "模拟支付仅在开发环境可用");
-                }
-            }
-            case "wechat" -> {
-                // 现金部分由微信预下单处理（initiateAdChannelPayment），此处仅计价
-            }
-            default -> throw new BizException(ErrorCode.PARAM_INVALID, "paymentMethod不合法");
-        }
-        return payAmount;
     }
 
     /**
@@ -555,19 +563,16 @@ public class MerchantAdService {
         }
     }
 
-    private int resolveFreeQuotaRemaining(MerchantAdQuota quota) {
-        int freeQuota = platformSettingService.isAdFreeQuotaEnabled()
-                ? platformSettingService.getAdFreeQuotaPerWeek() : 0;
-        int purchasedQuota = quota != null ? defaultInt(quota.getPurchasedQuota()) : 0;
-        int freeUsedCount = quota != null ? defaultInt(quota.getFreeUsedCount()) : 0;
-        return Math.max(freeQuota + purchasedQuota - freeUsedCount, 0);
-    }
-
-    private MerchantAdQuota currentWeekQuotaOrNull() {
-        Merchant merchant = requireCurrentMerchant();
-        return merchantAdQuotaRepository
-                .findByMerchantIdAndWeekStartDate(merchant.getId(), currentWeekStart())
-                .orElse(null);
+    /**
+     * 免费额度剩余：v8.21 起改为「永久仅一次」，不再按周重置。
+     * 历史上跨周使用过免费额度即视为已用尽；已购买的额度不混入免费额度口径。
+     */
+    private int resolveFreeQuotaRemaining(String merchantId) {
+        if (!platformSettingService.isAdFreeQuotaEnabled()) {
+            return 0;
+        }
+        long freeUsedTotal = merchantAdQuotaRepository.sumFreeUsedCountByMerchantId(merchantId);
+        return freeUsedTotal > 0 ? 0 : Math.max(platformSettingService.getAdFreeQuotaPerWeek(), 0);
     }
 
     @Transactional
@@ -613,6 +618,13 @@ public class MerchantAdService {
     }
 
     private MerchantAdListItemResponse toListItem(MerchantAd ad) {
+        return toListItem(ad, paymentRecordRepository
+                .findFirstByBizTypeAndBizIdOrderByCreatedAtDesc(PaymentBizType.AD_PURCHASE, ad.getId())
+                .orElse(null));
+    }
+
+    private MerchantAdListItemResponse toListItem(MerchantAd ad, PaymentRecord latestPayment) {
+        String status = resolveDisplayStatus(ad);
         return MerchantAdListItemResponse.builder()
                 .id(ad.getId())
                 .title(ad.getTitle())
@@ -625,9 +637,122 @@ public class MerchantAdService {
                 .endDate(ad.getEndDate() != null ? ad.getEndDate().format(DATE_FMT) : null)
                 .payAmount(ad.getPayAmount())
                 .paymentMethod(ad.getPaymentMethod())
-                .status(ad.getStatus() != null ? ad.getStatus() : "active")
+                .payStatus(resolvePayStatus(status, latestPayment))
+                .status(status)
+                .remainingDays(resolveRemainingDays(ad, status))
+                .canRepay(canRepay(ad, status, latestPayment))
                 .createdAt(DateTimeUtil.toLocalDateTimeString(ad.getCreatedAt()))
+                .paymentRecordId(latestPayment != null ? latestPayment.getId() : null)
                 .build();
+    }
+
+    /**
+     * 列表展示状态：数据库只存 pending_payment/active/cancelled，
+     * ended 为「已投放但超过 endDate」的派生态，不落库（避免依赖定时任务）。
+     */
+    private String resolveDisplayStatus(MerchantAd ad) {
+        String raw = ad.getStatus() != null ? ad.getStatus() : "active";
+        if ("active".equals(raw) && ad.getEndDate() != null
+                && ad.getEndDate().isBefore(LocalDate.now())) {
+            return "ended";
+        }
+        return raw;
+    }
+
+    /** 支付状态：优先以最近一笔支付流水为准；无流水时按广告状态推断（免费额度投放=已支付）。 */
+    private String resolvePayStatus(String displayStatus, PaymentRecord latestPayment) {
+        if (latestPayment != null) {
+            if ("paid".equals(latestPayment.getStatus())) {
+                return "paid";
+            }
+            if ("refunding".equals(latestPayment.getStatus())
+                    || "refunded".equals(latestPayment.getStatus())) {
+                return "refunded";
+            }
+            return "unpaid";
+        }
+        return "active".equals(displayStatus) || "ended".equals(displayStatus) ? "paid" : "unpaid";
+    }
+
+    private Integer resolveRemainingDays(MerchantAd ad, String displayStatus) {
+        if (!"active".equals(displayStatus) || ad.getEndDate() == null) {
+            return 0;
+        }
+        long days = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.now(), ad.getEndDate()) + 1;
+        return (int) Math.max(days, 0);
+    }
+
+    /** 可补付：待支付 / 支付超时取消，且为微信现金广告、尚未产生已支付流水。 */
+    private boolean canRepay(MerchantAd ad, String displayStatus, PaymentRecord latestPayment) {
+        boolean statusRepayable = "pending_payment".equals(displayStatus) || "cancelled".equals(displayStatus);
+        boolean wechatAmount = "wechat".equals(ad.getPaymentMethod())
+                && ad.getPayAmount() != null
+                && ad.getPayAmount().compareTo(BigDecimal.ZERO) > 0;
+        boolean notPaid = latestPayment == null || !"paid".equals(latestPayment.getStatus());
+        return statusRepayable && wechatAmount && notPaid;
+    }
+
+    /**
+     * 待支付广告补付（v8.23）：返回新的 payParams，前端直接调起 wx.requestPayment。
+     *
+     * <p>同一广告的并发补付用行锁串行化；5 分钟内的待支付流水复用（微信允许原商户单号重新预下单），
+     * 超时流水关闭后新建，避免触发 payment_records 的「同一业务仅一条 pending」唯一键。</p>
+     */
+    @Transactional
+    public MerchantAdListItemResponse repayAd(String adId) {
+        Merchant merchant = requireCurrentMerchant();
+        MerchantAd ad = merchantAdRepository.findByIdForUpdate(adId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_AD_NOT_FOUND));
+        if (!merchant.getId().equals(ad.getMerchantId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "无权操作其他商家的广告");
+        }
+        if (!"wechat".equals(ad.getPaymentMethod())
+                || ad.getPayAmount() == null
+                || ad.getPayAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "该广告无需支付");
+        }
+
+        List<PaymentRecord> records = paymentRecordRepository
+                .findByBizTypeAndBizIdOrderByCreatedAtDesc(PaymentBizType.AD_PURCHASE, ad.getId());
+        PaymentRecord paid = records.stream()
+                .filter(r -> "paid".equals(r.getStatus()))
+                .findFirst().orElse(null);
+        if (paid != null) {
+            // 微信已收款但回调/结算尚未把广告置 active：这里幂等补投，不重复收费
+            completeChannelPayment(paid);
+            return toListItem(ad, paid);
+        }
+        if ("active".equals(ad.getStatus()) || "ended".equals(ad.getStatus())) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "广告已投放，无需重复支付");
+        }
+        if (!adWechatPaymentEnabled) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "广告微信支付暂未开放");
+        }
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，暂无法补付");
+        }
+
+        ad.setStatus("pending_payment");
+        merchantAdRepository.save(ad);
+        closeStalePendingAdPayments(ad.getId());
+
+        Resident merchantUser = requireCurrentMerchantUser();
+        String openId = resolveOpenId(null, merchantUser);
+        PaymentRecord pending = paymentRecordRepository
+                .findFirstByBizTypeAndBizIdAndStatusOrderByCreatedAtDesc(
+                        PaymentBizType.AD_PURCHASE, ad.getId(), "pending")
+                .orElse(null);
+        PaymentRecord record = pending != null
+                ? pending
+                : wechatPayService.createIntent(
+                        PaymentBizType.AD_PURCHASE, ad.getId(), merchantUser.getId(),
+                        merchant.getPropertyCompanyId(), "wechat", ad.getPayAmount(),
+                        0, BigDecimal.ZERO, ad.getPayAmount());
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "商家广告投放");
+        MerchantAdListItemResponse item = toListItem(ad, record);
+        item.setPaymentRecordId(record.getId());
+        item.setPayParams(payParams);
+        return item;
     }
 
     private String toJsonString(List<String> values) {

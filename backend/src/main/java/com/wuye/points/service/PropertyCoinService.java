@@ -15,8 +15,11 @@ import com.wuye.points.dto.coin.HideCoinRequest;
 import com.wuye.points.dto.coin.HideCoinResponse;
 import com.wuye.points.dto.coin.RechargeCoinRequest;
 import com.wuye.points.dto.coin.RechargeCoinResponse;
+import com.wuye.points.dto.coin.RechargeStatusResponse;
 import com.wuye.points.dto.coin.SpendCoinRequest;
 import com.wuye.points.dto.coin.SpendCoinResponse;
+import com.wuye.points.dto.coin.TransferCoinToWalletRequest;
+import com.wuye.points.dto.coin.TransferCoinToWalletResponse;
 import com.wuye.points.dto.coin.UnfreezeCoinRequest;
 import com.wuye.points.dto.coin.UnfreezeCoinResponse;
 import com.wuye.points.dto.common.PageResponse;
@@ -33,10 +36,15 @@ import com.wuye.points.enums.CoinUseCondition;
 import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.payment.PayChannel;
+import com.wuye.points.payment.PaymentBizType;
+import com.wuye.points.payment.WechatJsPayParams;
 import com.wuye.points.repository.CoinFreezeRecordRepository;
 import com.wuye.points.repository.FamilyRepository;
+import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PropertyCoinRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
+import com.wuye.points.repository.WalletFlowRepository;
 import com.wuye.points.repository.PropertyFeeRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.PropertyCoinRecordSpecifications;
@@ -71,6 +79,10 @@ public class PropertyCoinService {
     /** 住户主动转给物业的流水来源标识，须与管理端对账查询（AdminTransferToPropertyService）保持一致。 */
     public static final String SOURCE_TRANSFER_TO_PROPERTY = "transfer_to_property";
 
+    /** 奖励金转钱包的流水来源与钱包入账类型 */
+    public static final String SOURCE_TRANSFER_TO_WALLET = "transfer_to_wallet";
+    private static final String ENTRY_COIN_TRANSFER_TO_WALLET = "coin_transfer_to_wallet";
+
     private final PropertyCoinRecordRepository coinRecordRepository;
     private final CoinFreezeRecordRepository coinFreezeRecordRepository;
     private final ResidentRepository residentRepository;
@@ -81,6 +93,10 @@ public class PropertyCoinService {
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final FeatureSwitchGuard featureSwitchGuard;
+    private final PayChannel wechatPayService;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final WalletFlowWriter walletFlowWriter;
+    private final WalletFlowRepository walletFlowRepository;
 
     @Transactional(readOnly = true)
     public CoinBalanceResponse getBalance() {
@@ -236,6 +252,13 @@ public class PropertyCoinService {
                 .build();
     }
 
+    /**
+     * 物业币充值预下单。
+     *
+     * <p>充值不再直接加余额：先创建支付流水并调微信 JSAPI 预下单，返给前端 {@code payParams}；
+     * 用户支付成功后由微信回调（{@code PaymentBizDispatcher}）调用 {@link #completeChannelPayment} 到账。
+     * 前端用 {@code GET /property-coins/recharge/{paymentRecordId}} 轮询到账状态。</p>
+     */
     @Transactional
     public RechargeCoinResponse recharge(RechargeCoinRequest request) {
         roleGuard.requireAnyRole("resident");
@@ -243,38 +266,94 @@ public class PropertyCoinService {
         assertCoinNotFrozen(resident);
         assertCoinDisplayEnabled(resident);
 
-        PropertyCoinRecord record = earnCoins(
-                resident,
-                request.getAmount(),
-                CoinType.recharge.name(),
-                "manual",
-                null,
-                "物业币充值",
-                null);
+        if (!wechatPayService.isEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "在线支付未开通，暂时无法充值物业币");
+        }
+        if (!StringUtils.hasText(resident.getOpenid())) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "openid不能为空（微信小程序支付需要）");
+        }
+        if (!paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
+                PaymentBizType.COIN_RECHARGE, resident.getId(), "pending").isEmpty()) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "充值支付处理中，请勿重复提交");
+        }
+
+        BigDecimal amount = request.getAmount();
+        PaymentRecord record = wechatPayService.createIntent(
+                PaymentBizType.COIN_RECHARGE,
+                resident.getId(),
+                resident.getId(),
+                resident.getPropertyCompanyId(),
+                "wechat",
+                amount,
+                0,
+                BigDecimal.ZERO,
+                amount);
+        WechatJsPayParams payParams = wechatPayService.miniPay(record, resident.getOpenid(), "物业币充值");
 
         return RechargeCoinResponse.builder()
-                .recordId(record.getId())
+                .paymentRecordId(record.getId())
+                .outTradeNo(record.getOutTradeNo())
+                .status("pending")
+                .payParams(payParams)
+                .amount(amount)
                 .residentId(resident.getId())
-                .amount(request.getAmount())
-                .balanceAfter(record.getBalance())
-                .familyBalanceAfter(resolveFamilyBalanceAfter(resident))
-                .rechargedAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                .build();
+    }
+
+    /**
+     * 查询充值支付状态。前端拉起微信支付后轮询本接口，只有 status=paid 且 rechargedAt 非空才视为到账。
+     */
+    @Transactional(readOnly = true)
+    public RechargeStatusResponse getRechargeStatus(String paymentRecordId) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        PaymentRecord record = paymentRecordRepository.findById(paymentRecordId)
+                .orElseThrow(() -> new BizException(ErrorCode.ORDER_NOT_FOUND, "充值流水不存在"));
+        if (!PaymentBizType.COIN_RECHARGE.equals(record.getBizType())
+                || !resident.getId().equals(record.getResidentId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+
+        PropertyCoinRecord coinRecord = coinRecordRepository
+                .findFirstByResidentIdAndSourceIdAndCoinTypeOrderByCreatedAtDesc(
+                        resident.getId(), record.getId(), CoinType.recharge.name())
+                .orElse(null);
+        BigDecimal familyBalance = resolveFamilyBalanceAfter(resident);
+
+        return RechargeStatusResponse.builder()
+                .paymentRecordId(record.getId())
+                .outTradeNo(record.getOutTradeNo())
+                .status(coinRecord != null ? "paid" : record.getStatus())
+                .amount(record.getAmount())
+                .balanceAfter(coinRecord != null ? coinRecord.getBalance() : null)
+                .familyBalanceAfter(coinRecord != null ? familyBalance : null)
+                .rechargedAt(coinRecord != null ? DateTimeUtil.toIsoUtc(coinRecord.getCreatedAt()) : null)
+                .failReason(record.getErrorMsg())
                 .build();
     }
 
     /**
      * 微信支付回调确认后物业币充值到账（幂等）。由 PaymentBizDispatcher 调用，无登录上下文。
-     * 充值走 outbox 单次投递保证不重复到账；此处仅对金额做兜底校验。
+     * 以源支付流水ID作为幂等键：同一笔支付重复投递只入账一次。
      */
     @Transactional
     public void completeChannelPayment(PaymentRecord record) {
-        Resident resident = residentRepository.findById(record.getResidentId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (record == null || !StringUtils.hasText(record.getResidentId())) {
+            return;
+        }
         BigDecimal amount = record.getAmount() != null ? record.getAmount() : BigDecimal.ZERO;
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        earnCoins(resident, amount, CoinType.recharge.name(), "manual",
+        if (coinRecordRepository.existsByResidentIdAndSourceIdAndCoinType(
+                record.getResidentId(), record.getId(), CoinType.recharge.name())) {
+            return;
+        }
+        Resident resident = residentRepository.findByIdForUpdate(record.getResidentId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        // 充值到账不受 coin_frozen 限制：用户已付款，冻结只限制消费，不能阻止入账。
+        creditCoins(resident, amount, CoinType.recharge.name(), "manual",
                 record.getId(), "物业币充值", null);
     }
 
@@ -578,7 +657,10 @@ public class PropertyCoinService {
     }
 
     /**
-     * 供其他模块调用的物业币获取
+     * 供其他模块调用的物业币获取。
+     *
+     * <p>记账边界（2026-10-25 调整）：物业币发放统一进入<b>个人余额</b>，不再进入家庭池；
+     * 家庭池仅保留历史余额，消费时仍可按 {@code useFamilyPool} 先扣家庭池、不足再扣个人余额。</p>
      */
     @Transactional
     public PropertyCoinRecord earnCoins(Resident resident,
@@ -588,26 +670,37 @@ public class PropertyCoinService {
                                         String sourceId,
                                         String description,
                                         String operatorId) {
-        assertCoinNotFrozen(resident);
-
-        BigDecimal newBalance = defaultCoinBalance(resident).add(amount);
-        resident.setCoinBalance(newBalance);
-
-        if (StringUtils.hasText(resident.getFamilyId())) {
-            Family family = familyRepository.findById(resident.getFamilyId())
-                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
-            family.setCoinBalance(defaultFamilyCoinBalance(family).add(amount));
-            familyRepository.save(family);
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "物业币变动数量必须大于0");
         }
+        Resident current = residentRepository.findByIdForUpdate(resident.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        assertCoinNotFrozen(current);
+        return creditCoins(current, amount, coinType, source, sourceId, description, operatorId);
+    }
 
-        residentRepository.save(resident);
-
+    /**
+     * 入账核心逻辑（调用方已完成加锁与幂等判断）：统一入个人余额。
+     * 充值到账不经过冻结校验：冻结限制的是消费，不应阻止已付款的充值到账。
+     */
+    private PropertyCoinRecord creditCoins(Resident current,
+                                           BigDecimal amount,
+                                           String coinType,
+                                           String source,
+                                           String sourceId,
+                                           String description,
+                                           String operatorId) {
+        BigDecimal newBalance = defaultCoinBalance(current).add(amount);
+        current.setCoinBalance(newBalance);
+        residentRepository.save(current);
         return createRecord(
-                resident,
-                resident.getFamilyId(),
+                current,
+                null,
                 coinType,
                 amount,
                 newBalance,
+                BigDecimal.ZERO,
+                null,
                 source,
                 sourceId,
                 description,
@@ -635,10 +728,19 @@ public class PropertyCoinService {
         if (!StringUtils.hasText(familyId)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "您尚未加入家庭，无家庭物业币可转赠物业");
         }
-        Family family = familyRepository.findById(familyId)
+        Family family = familyRepository.findByIdForUpdate(familyId)
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+        Resident current = residentRepository.findByIdForUpdate(resident.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!familyId.equals(current.getFamilyId())) {
+            throw new BizException(ErrorCode.ORDER_CONFLICT, "家庭状态已变更，请重试");
+        }
+        assertCoinNotFrozen(current);
 
         BigDecimal amount = request.getCoinAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "转赠金额必须大于0");
+        }
         BigDecimal familyBalance = defaultFamilyCoinBalance(family);
         if (familyBalance.compareTo(amount) < 0) {
             throw new BizException(ErrorCode.COIN_INSUFFICIENT, "家庭物业币余额不足，无法转赠物业");
@@ -649,8 +751,9 @@ public class PropertyCoinService {
         familyRepository.save(family);
 
         PropertyCoinRecord record = createRecord(
-                resident, familyId, CoinType.spend.name(), amount.negate(),
-                newFamilyBalance, SOURCE_TRANSFER_TO_PROPERTY, resident.getId(),
+                current, familyId, CoinType.spend.name(), amount.negate(),
+                defaultCoinBalance(current), amount.negate(), newFamilyBalance,
+                SOURCE_TRANSFER_TO_PROPERTY, current.getId(),
                 request.getRemark() != null ? request.getRemark() : "住户家庭物业币转赠物业", null);
         return TransferToPropertyCoinResponse.builder()
                 .recordId(record.getId())
@@ -662,7 +765,51 @@ public class PropertyCoinService {
     }
 
     /**
-     * 供其他模块调用的物业币消费（优先扣家庭池）
+     * 奖励金转钱包（v8.21）：仅从个人奖励金转出，不动家庭池；转出后奖励金减少、钱包增加，不可撤销。
+     */
+    @Transactional
+    public TransferCoinToWalletResponse transferToWallet(TransferCoinToWalletRequest request) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        featureSwitchGuard.assertCoinEnabled(resident.getPropertyCompanyId());
+        assertCoinNotFrozen(resident);
+
+        BigDecimal amount = request.getCoinAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "转出金额必须大于0");
+        }
+        Resident current = residentRepository.findByIdForUpdate(resident.getId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        BigDecimal balance = defaultCoinBalance(current);
+        if (balance.compareTo(amount) < 0) {
+            throw new BizException(ErrorCode.COIN_INSUFFICIENT, "个人奖励金余额不足");
+        }
+        BigDecimal newBalance = balance.subtract(amount);
+        current.setCoinBalance(newBalance);
+        residentRepository.save(current);
+
+        PropertyCoinRecord record = createRecord(
+                current, null, CoinType.spend.name(), amount.negate(), newBalance,
+                SOURCE_TRANSFER_TO_WALLET, current.getId(), "奖励金转钱包", current.getId());
+
+        walletFlowWriter.write(null, null, null,
+                "resident", current.getId(), ENTRY_COIN_TRANSFER_TO_WALLET,
+                amount, "withdrawable",
+                "coin:transfer_to_wallet:" + record.getId(), null);
+
+        BigDecimal walletBalance = walletFlowRepository
+                .sumAmountByOwnerIdAndBalanceType(current.getId(), "withdrawable");
+
+        return TransferCoinToWalletResponse.builder()
+                .recordId(record.getId())
+                .coinBalance(newBalance)
+                .walletBalance(walletBalance != null ? walletBalance : BigDecimal.ZERO)
+                .build();
+    }
+
+    /**
+     * 供其他模块调用的物业币消费（useFamilyPool=true 时先扣家庭池，不足再扣个人余额）。
+     * 家庭池与个人余额分别加行锁，避免并发读改写导致双花。
      */
     @Transactional
     public PropertyCoinRecord spendCoins(Resident resident,
@@ -672,41 +819,175 @@ public class PropertyCoinService {
                                          String description,
                                          String operatorId,
                                          boolean useFamilyPool) {
-        assertCoinNotFrozen(resident);
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "物业币变动数量必须大于0");
+        }
+        String familyId = useFamilyPool ? resident.getFamilyId() : null;
+        Family family = null;
+        Resident current;
+        if (StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId)
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (!familyId.equals(current.getFamilyId())) {
+                throw new BizException(ErrorCode.ORDER_CONFLICT, "家庭状态已变更，请重试");
+            }
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+        assertCoinNotFrozen(current);
 
         BigDecimal remaining = amount;
-
-        if (useFamilyPool && StringUtils.hasText(resident.getFamilyId())) {
-            Family family = familyRepository.findById(resident.getFamilyId())
-                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "家庭不存在"));
+        BigDecimal fromFamily = BigDecimal.ZERO;
+        BigDecimal familyBalanceAfter = null;
+        if (family != null) {
             BigDecimal familyBalance = defaultFamilyCoinBalance(family);
-            BigDecimal fromFamily = remaining.min(familyBalance);
+            fromFamily = remaining.min(familyBalance);
             if (fromFamily.compareTo(BigDecimal.ZERO) > 0) {
-                family.setCoinBalance(familyBalance.subtract(fromFamily));
+                familyBalanceAfter = familyBalance.subtract(fromFamily);
+                family.setCoinBalance(familyBalanceAfter);
                 familyRepository.save(family);
                 remaining = remaining.subtract(fromFamily);
+            } else {
+                familyBalanceAfter = familyBalance;
             }
         }
 
         if (remaining.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal personalBalance = defaultCoinBalance(resident);
+            BigDecimal personalBalance = defaultCoinBalance(current);
             if (personalBalance.compareTo(remaining) < 0) {
                 throw new BizException(ErrorCode.COIN_INSUFFICIENT);
             }
-            resident.setCoinBalance(personalBalance.subtract(remaining));
-            residentRepository.save(resident);
+            current.setCoinBalance(personalBalance.subtract(remaining));
+            residentRepository.save(current);
         }
 
         return createRecord(
-                resident,
-                resident.getFamilyId(),
+                current,
+                family != null ? familyId : current.getFamilyId(),
                 CoinType.spend.name(),
                 amount.negate(),
-                defaultCoinBalance(resident),
+                defaultCoinBalance(current),
+                fromFamily.negate(),
+                familyBalanceAfter,
                 source,
                 sourceId,
                 description,
                 operatorId);
+    }
+
+    /**
+     * 订单取消/退款时退回物业币：按原支付流水的家庭/个人扣减比例原路退回。
+     */
+    @Transactional
+    public void refundOrderCoins(Resident resident, String orderId, BigDecimal amount, String orderFamilyId) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        PropertyCoinRecord spend = coinRecordRepository
+                .findFirstBySourceIdAndSourceAndCoinTypeOrderByCreatedAtDesc(orderId, "order", CoinType.spend.name())
+                .orElse(null);
+        BigDecimal fromFamily = BigDecimal.ZERO;
+        if (spend != null && spend.getFamilyAmount() != null
+                && spend.getFamilyAmount().compareTo(BigDecimal.ZERO) < 0) {
+            fromFamily = amount.min(spend.getFamilyAmount().negate());
+        } else if (spend == null
+                && (StringUtils.hasText(orderFamilyId) || StringUtils.hasText(resident.getFamilyId()))) {
+            fromFamily = amount;
+        }
+
+        String familyId = StringUtils.hasText(orderFamilyId) ? orderFamilyId : resident.getFamilyId();
+        Family family = null;
+        Resident current;
+        if (fromFamily.compareTo(BigDecimal.ZERO) > 0 && StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId).orElse(null);
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (family == null) {
+                fromFamily = BigDecimal.ZERO;
+            }
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+
+        BigDecimal toPersonal = amount.subtract(fromFamily);
+        BigDecimal familyBalanceAfter = null;
+        if (family != null && fromFamily.compareTo(BigDecimal.ZERO) > 0) {
+            familyBalanceAfter = defaultFamilyCoinBalance(family).add(fromFamily);
+            family.setCoinBalance(familyBalanceAfter);
+            familyRepository.save(family);
+        }
+        if (toPersonal.compareTo(BigDecimal.ZERO) > 0) {
+            current.setCoinBalance(defaultCoinBalance(current).add(toPersonal));
+            residentRepository.save(current);
+        }
+
+        createRecord(current, family != null ? familyId : current.getFamilyId(),
+                CoinType.earn.name(), amount, defaultCoinBalance(current),
+                fromFamily, familyBalanceAfter, "order", orderId, "订单取消退回物业币", null);
+    }
+
+    /**
+     * 订单取消/退款时扣回已返还的物业币：按原返币流水的家庭/个人入账比例原路扣回。
+     */
+    @Transactional
+    public void reverseOrderEarnedCoins(Resident resident, String orderId, BigDecimal amount) {
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+        PropertyCoinRecord earn = coinRecordRepository
+                .findFirstBySourceIdAndSourceAndCoinTypeOrderByCreatedAtDesc(orderId, "order", CoinType.earn.name())
+                .orElse(null);
+        BigDecimal familyPortion = BigDecimal.ZERO;
+        if (earn != null && earn.getFamilyAmount() != null
+                && earn.getFamilyAmount().compareTo(BigDecimal.ZERO) > 0) {
+            familyPortion = amount.min(earn.getFamilyAmount());
+        } else if (earn == null && StringUtils.hasText(resident.getFamilyId())) {
+            familyPortion = amount;
+        }
+
+        String familyId = resident.getFamilyId();
+        Family family = null;
+        Resident current;
+        if (familyPortion.compareTo(BigDecimal.ZERO) > 0 && StringUtils.hasText(familyId)) {
+            family = familyRepository.findByIdForUpdate(familyId).orElse(null);
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        } else {
+            current = residentRepository.findByIdForUpdate(resident.getId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+
+        BigDecimal remaining = amount;
+        BigDecimal fromFamily = BigDecimal.ZERO;
+        BigDecimal familyBalanceAfter = null;
+        if (family != null && familyPortion.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal familyBalance = defaultFamilyCoinBalance(family);
+            fromFamily = remaining.min(familyPortion.min(familyBalance));
+            if (fromFamily.compareTo(BigDecimal.ZERO) > 0) {
+                familyBalanceAfter = familyBalance.subtract(fromFamily);
+                family.setCoinBalance(familyBalanceAfter);
+                familyRepository.save(family);
+                remaining = remaining.subtract(fromFamily);
+            } else {
+                familyBalanceAfter = familyBalance;
+            }
+        }
+        if (remaining.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal personalBalance = defaultCoinBalance(current);
+            if (personalBalance.compareTo(remaining) < 0) {
+                throw new BizException(ErrorCode.COIN_INSUFFICIENT);
+            }
+            current.setCoinBalance(personalBalance.subtract(remaining));
+            residentRepository.save(current);
+        }
+
+        createRecord(current, family != null ? familyId : current.getFamilyId(),
+                CoinType.spend.name(), amount.negate(), defaultCoinBalance(current),
+                fromFamily.negate(), familyBalanceAfter, "order", orderId, "订单取消扣回物业币返现", null);
     }
 
     private PropertyCoinRecord createRecord(Resident resident,
@@ -714,6 +995,21 @@ public class PropertyCoinService {
                                             String coinType,
                                             BigDecimal amount,
                                             BigDecimal balance,
+                                            String source,
+                                            String sourceId,
+                                            String description,
+                                            String operatorId) {
+        return createRecord(resident, familyId, coinType, amount, balance, null, null,
+                source, sourceId, description, operatorId);
+    }
+
+    private PropertyCoinRecord createRecord(Resident resident,
+                                            String familyId,
+                                            String coinType,
+                                            BigDecimal amount,
+                                            BigDecimal balance,
+                                            BigDecimal familyAmount,
+                                            BigDecimal familyBalance,
                                             String source,
                                             String sourceId,
                                             String description,
@@ -726,6 +1022,9 @@ public class PropertyCoinService {
         record.setCoinType(coinType);
         record.setAmount(amount);
         record.setBalance(balance);
+        record.setFamilyAmount(familyAmount);
+        record.setFamilyBalance(familyBalance);
+        record.setExpiredAmount(BigDecimal.ZERO);
         record.setSource(source);
         record.setSourceId(sourceId);
         record.setDescription(description);

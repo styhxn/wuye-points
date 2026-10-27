@@ -85,6 +85,19 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
     @Query("SELECT COUNT(o) FROM Order o WHERE o.merchantId = :merchantId AND o.orderStatus = 'completed'")
     long countCompletedByMerchantId(@Param("merchantId") String merchantId);
 
+    /** 商家累计订单总数（不含已取消/已退款，供商家工作台汇总） */
+    @Query("""
+            SELECT COUNT(o) FROM Order o
+            WHERE o.merchantId = :merchantId
+              AND o.orderStatus NOT IN ('cancelled', 'refunded')
+            """)
+    long countAllByMerchantId(@Param("merchantId") String merchantId);
+
+    /** 一级代理商用户购买记录（代理货源订单） */
+    Page<Order> findByDistributorId(String distributorId, Pageable pageable);
+
+    Page<Order> findByDistributorIdAndOrderStatus(String distributorId, String orderStatus, Pageable pageable);
+
     List<Order> findByOrderStatusAndVerificationDeadlineBefore(String orderStatus, LocalDateTime deadline);
 
     List<Order> findByOrderStatusAndFreezeEndDateBefore(String orderStatus, LocalDateTime deadline);

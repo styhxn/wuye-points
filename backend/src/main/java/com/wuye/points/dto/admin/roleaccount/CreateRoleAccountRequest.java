@@ -33,7 +33,7 @@ public class CreateRoleAccountRequest {
     @Pattern(regexp = "^1\\d{10}$", message = "手机号格式不正确")
     private String phone;
 
-    @Schema(description = "登录密码（管理端登录用，BCrypt加密存储）", example = "admin123456", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "登录密码（管理端登录用，BCrypt加密存储）", example = "A7kP2mQ9xR4tZ6", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "密码不能为空")
     @Size(min = 6, max = 32, message = "密码长度需在6-32之间")
     private String password;

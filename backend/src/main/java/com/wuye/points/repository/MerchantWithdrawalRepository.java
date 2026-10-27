@@ -1,10 +1,12 @@
 package com.wuye.points.repository;
 
 import com.wuye.points.entity.MerchantWithdrawal;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -28,6 +30,24 @@ public interface MerchantWithdrawalRepository extends JpaRepository<MerchantWith
     Page<MerchantWithdrawal> findByPropertyCompanyId(String propertyCompanyId, Pageable pageable);
 
     Optional<MerchantWithdrawal> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
+
+    /** 审核时行锁：防止同一笔提现被并发审核/重复打款 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT m FROM MerchantWithdrawal m WHERE m.id = :id")
+    Optional<MerchantWithdrawal> findByIdForUpdate(@Param("id") String id);
+
+    /** 占用中的提现金额（pending/approved/completed；rejected 不占用可提现余额） */
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses")
+    BigDecimal sumAmountByMerchantIdAndStatuses(@Param("merchantId") String merchantId,
+                                                @Param("statuses") Collection<String> statuses);
+
+    /** 审核单笔提现时，计算除当前单以外的占用额，避免把当前单重复扣减导致永远判为超额。 */
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses AND m.id <> :excludeId")
+    BigDecimal sumAmountByMerchantIdAndStatusesExcluding(@Param("merchantId") String merchantId,
+                                                         @Param("statuses") Collection<String> statuses,
+                                                         @Param("excludeId") String excludeId);
 
     @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
            "WHERE m.merchantId = :merchantId AND (:auditStatus IS NULL OR m.auditStatus = :auditStatus)")

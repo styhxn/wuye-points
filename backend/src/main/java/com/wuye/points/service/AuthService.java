@@ -36,6 +36,7 @@ import com.wuye.points.util.SnowflakeIdGenerator;
 import cn.hutool.crypto.digest.BCrypt;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -50,6 +51,10 @@ public class AuthService {
 
     private static final String TOKEN_TYPE_BEARER = "Bearer";
     private static final Set<String> PROFILE_ROLES = Set.of("resident", "property_admin", "platform_admin");
+
+    // 测试模式：放开历史初始口令，并允许普通住户登录管理端；上线前必须设为 false。
+    @Value("${app.auth.test-mode:true}")
+    private boolean testMode;
 
     private final WechatMpService wechatMpService;
     private final ResidentRepository residentRepository;
@@ -96,6 +101,11 @@ public class AuthService {
             throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "手机号或密码错误");
         }
 
+        // 测试模式放开历史初始口令；关闭测试模式后必须拒绝该弱口令。
+        if (!testMode && "admin123456".equals(request.getPassword())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "初始密码已禁用，请重置密码后再登录");
+        }
+
         assertAccountActive(resident);
 
         String role = RoleGuard.normalizeRole(resident.getRole());
@@ -103,7 +113,9 @@ public class AuthService {
         // 但其管理端登录权限不变——持有任意一种启用中负责人身份的住户仍可登录管理端。
         // 2026-10-21 组长标签化：活动组组长同为住户子身份，持组长身份的住户同样可登录管理端
         // （组长小店/提现等能力经 admin-login 使用）。
-        if (("resident".equals(role) || "tenant".equals(role))
+        // 测试模式下跳过管理端角色校验，方便普通住户测试账号联调；上线前必须关闭。
+        if (!testMode
+                && ("resident".equals(role) || "tenant".equals(role))
                 && !leaderIdentityGuard.hasAnyLeaderIdentity(
                         resident.getId(), resident.getPropertyCompanyId())
                 && !residentIdentityTags.isActivityLeader(resident)) {
@@ -130,7 +142,27 @@ public class AuthService {
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
 
         assertAccountActive(resident);
+        Integer tokenVersion = jwtUtil.getTokenVersion(claims);
+        // 新版本 refresh token 必须携带 tv；上线前签发的旧 refresh token 统一失效，用户重新登录一次。
+        if (tokenVersion == null || tokenVersion != tokenVersion(resident)) {
+            throw new BizException(ErrorCode.TOKEN_INVALID, "登录状态已失效，请重新登录");
+        }
         return buildTokenResponse(resident);
+    }
+
+    /**
+     * 登出：递增令牌版本号，使该账号所有旧 access/refresh token 立即失效。
+     */
+    @Transactional
+    public void logout() {
+        String userId = UserContext.currentUserId();
+        if (!StringUtils.hasText(userId)) {
+            throw new BizException(ErrorCode.TOKEN_MISSING);
+        }
+        Resident resident = residentRepository.findById(userId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        resident.setTokenVersion(tokenVersion(resident) + 1);
+        residentRepository.save(resident);
     }
 
     @Transactional
@@ -228,10 +260,16 @@ public class AuthService {
     }
 
     private void assertAccountActive(Resident resident) {
-        if (ResidentStatus.disabled.name().equals(resident.getStatus())
+        if (resident.getDeletedAt() != null
+                || ResidentStatus.deleted.name().equals(resident.getStatus())
+                || ResidentStatus.disabled.name().equals(resident.getStatus())
                 || ResidentStatus.frozen.name().equals(resident.getStatus())) {
             throw new BizException(ErrorCode.ACCOUNT_DISABLED);
         }
+    }
+
+    private int tokenVersion(Resident resident) {
+        return resident.getTokenVersion() != null ? resident.getTokenVersion() : 0;
     }
 
     /**
@@ -256,12 +294,14 @@ public class AuthService {
     }
 
     private TokenResponse buildTokenResponse(Resident resident) {
+        int tokenVersion = tokenVersion(resident);
         String accessToken = jwtUtil.generateAccessToken(
                 resident.getId(),
                 resident.getRole(),
                 resident.getPropertyCompanyId(),
-                resident.getFamilyId());
-        String refreshToken = jwtUtil.generateRefreshToken(resident.getId());
+                resident.getFamilyId(),
+                tokenVersion);
+        String refreshToken = jwtUtil.generateRefreshToken(resident.getId(), tokenVersion);
         return TokenResponse.builder()
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)

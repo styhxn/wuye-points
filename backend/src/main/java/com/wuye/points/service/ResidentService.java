@@ -251,6 +251,12 @@ public class ResidentService {
         if (userId == null) {
             throw new BizException(ErrorCode.TOKEN_MISSING);
         }
+        // 「我的资料」不允许修改角色：角色变更只能由平台管理员在管理端执行，
+        // 避免住户/物业管理员通过个人资料接口自我提权。原样回传当前角色不算修改。
+        Resident current = getResidentOrThrow(userId);
+        if (StringUtils.hasText(request.getRole()) && !request.getRole().equals(current.getRole())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, "我的资料不支持修改角色");
+        }
         return updateResident(userId, request);
     }
 
@@ -299,6 +305,11 @@ public class ResidentService {
                     .orElse(0);
         }
 
+        PropertyCompany company = StringUtils.hasText(resident.getPropertyCompanyId())
+                ? propertyCompanyRepository.findById(resident.getPropertyCompanyId()).orElse(null)
+                : null;
+        PointTransferPolicy.Decision transfer = PointTransferPolicy.evaluate(company, resident);
+
         return MyPointsResponse.builder()
                 .residentId(resident.getId())
                 .pointBalance(resident.getPointBalance() != null ? resident.getPointBalance() : 0)
@@ -308,6 +319,10 @@ public class ResidentService {
                 .spentThisMonth(spentThisMonth != null ? spentThisMonth : 0)
                 .expiringSoon(0)
                 .expiryDate(null)
+                .pointTransferEnabled(transfer.enabled())
+                .pointTransferMinYears(transfer.minYears())
+                .pointTransferEligible(transfer.eligible())
+                .pointTransferBlockedReason(transfer.blockedReason())
                 .build();
     }
 
@@ -442,7 +457,12 @@ public class ResidentService {
                 resident.setRoom(request.getRoom());
             }
         }
-        if (allowAddressUpdate && StringUtils.hasText(request.getRole())) {
+        if (StringUtils.hasText(request.getRole()) && !request.getRole().equals(resident.getRole())) {
+            // 角色属于权限边界，只允许平台管理员修改；物业管理员/住户本人即使能改资料也不能改角色。
+            // 若客户端只是原样回传当前角色，则视为未修改，避免误伤整对象提交的旧前端。
+            if (!roleGuard.isPlatformAdmin()) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED, "仅平台管理员可修改角色");
+            }
             if (!RoleGuard.VALID_ROLES.contains(request.getRole())) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "role值无效");
             }

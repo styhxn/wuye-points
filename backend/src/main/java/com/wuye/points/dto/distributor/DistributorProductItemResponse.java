@@ -17,4 +17,7 @@ public class DistributorProductItemResponse {
     private BigDecimal wholesalePrice;
     private BigDecimal suggestedRetailPrice;
     private Integer stock;
+
+    @Schema(description = "供给范围 company=本物业公司/platform=全平台", example = "company")
+    private String supplyScope;
 }

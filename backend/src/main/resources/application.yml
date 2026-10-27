@@ -1,9 +1,13 @@
 server:
   port: 8888
+  # 发布/重启时等待在途支付、退款、分账事务完成
+  shutdown: graceful
   servlet:
     context-path: /api/v1
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   profiles:
     active: dev
   datasource:
@@ -146,13 +150,21 @@ wechat-ecommerce:
   transfer-notify-url: ${WECHAT_ECOMMERCE_TRANSFER_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-transfer/notify}
 
 app:
+  auth:
+    # 测试模式：放开历史初始口令 admin123456，并允许普通住户登录管理端。
+    # ⚠️ 当前默认 true 仅为联调；上线前必须设 APP_AUTH_TEST_MODE=false。
+    test-mode: ${APP_AUTH_TEST_MODE:true}
+  merchant-ad:
+    # 广告微信支付开关：前端未支持 pending_payment 前保持 false（fail-closed）
+    wechat-payment-enabled: ${MERCHANT_AD_WECHAT_PAYMENT_ENABLED:false}
   payment:
     # 模拟支付开关（保证金/食堂额度等场景直接到账），fail-closed 默认 false。
     # 仅开发/联调环境显式置 true（application-dev.yml 已开）；生产必须保持 false，
     # 否则任何人可零成本拿到业主商户资格、食堂额度。
     mock-enabled: ${APP_PAYMENT_MOCK_ENABLED:false}
   wechat:
-    skip-api: ${APP_WECHAT_SKIP_API:true}
+    # fail-closed：只有 application-dev.yml 显式开启；生产/默认环境必须走真实微信接口
+    skip-api: ${APP_WECHAT_SKIP_API:false}
   upload:
     path: ${UPLOAD_PATH:/data/uploads}
     base-url: ${UPLOAD_BASE_URL:https://test.yuanxusoftware.top/api/v1/static}
