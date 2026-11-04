@@ -48,6 +48,8 @@ application-dev.yml
 # === 前端独立仓库（归前端同学，不并入后端仓库历史） ===
 panjinhuadi-wuyejifenxitong-WangYichen/
 logo素材*/
+# uni-app/APK 前端源码，只供后端对照接口，严禁入库（改名也拦住）
+前端源码-只读不改*/
 
 # === Logs ===
 *.log
