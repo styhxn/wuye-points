@@ -9,17 +9,20 @@ import com.wuye.points.dto.announcement.CollectFieldResponse;
 import com.wuye.points.dto.announcement.ActivityAnnouncementRequest;
 import com.wuye.points.dto.announcement.CreateAnnouncementRequest;
 import com.wuye.points.dto.announcement.DeleteAnnouncementResponse;
+import com.wuye.points.dto.announcement.ProductAnnouncementRequest;
 import com.wuye.points.dto.announcement.SubmitCollectRequest;
 import com.wuye.points.dto.announcement.SubmitCollectResponse;
 import com.wuye.points.dto.announcement.UpdateAnnouncementRequest;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.Announcement;
 import com.wuye.points.entity.AnnouncementCollect;
+import com.wuye.points.entity.Product;
 import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.AnnouncementCollectRepository;
 import com.wuye.points.repository.AnnouncementRepository;
+import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.AnnouncementSpecifications;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -54,6 +57,7 @@ public class AnnouncementService {
     private final AnnouncementRepository announcementRepository;
     private final AnnouncementCollectRepository announcementCollectRepository;
     private final ResidentRepository residentRepository;
+    private final ProductRepository productRepository;
     private final AnnouncementConverter announcementConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
@@ -159,6 +163,72 @@ public class AnnouncementService {
         announcement.setPublisherId(UserContext.currentUserId());
         announcement.setPublisherRole(UserContext.currentRole());
         announcement.setActivityGroupId(request.getActivityGroupId());
+        announcement.setCollectEnabled(false);
+        announcement.setStatus("published");
+        announcement.setPublishedAt(publishedAt);
+        announcementRepository.save(announcement);
+
+        Resident publisher = residentRepository.findById(announcement.getPublisherId()).orElse(null);
+        return announcementConverter.toDetail(announcement, publisher, false);
+    }
+
+    /**
+     * 发布产品推荐公告（§66.1）：前端 POST /announcements/product。
+     * 公告类型强制 merchant、content_type 强制 product；productId 必须指向未删除的在售商品。
+     * 商家归属以商品为准，请求体 merchantId 与商品归属不一致时直接拒绝，避免公告挂错商家。
+     */
+    @Transactional
+    public AnnouncementDetailResponse createProductAnnouncement(ProductAnnouncementRequest request) {
+        roleGuard.requireAnyRole("property_admin", "platform_admin", "merchant");
+
+        String propertyCompanyId = resolvePropertyCompanyId(null);
+        String communityId = trimToNull(request.getCommunityId());
+        validateOptionalId(communityId, "com_");
+
+        String productId = trimToNull(request.getProductId());
+        if (productId == null) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "productId不能为空");
+        }
+        Product product = productRepository.findById(productId)
+                .filter(item -> item.getDeletedAt() == null && "active".equals(item.getStatus()))
+                .orElseThrow(() -> new BizException(ErrorCode.PRODUCT_NOT_FOUND));
+
+        String merchantId = trimToNull(request.getMerchantId());
+        if (merchantId == null) {
+            merchantId = product.getMerchantId();
+        }
+        validateOptionalId(merchantId, "mch_");
+        if (!merchantId.equals(product.getMerchantId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "merchantId与商品归属商家不一致");
+        }
+        // 商家本人经此入口发布同样受 §22 每周限发约束；管理端代发布不受限。
+        if (roleGuard.isMerchant()) {
+            enforceMerchantWeeklyLimit(merchantId);
+        }
+
+        String coverUrl = trimToNull(request.getCoverUrl());
+        if (coverUrl == null) {
+            coverUrl = trimToNull(product.getCoverUrl());
+        }
+
+        LocalDateTime publishedAt = DateTimeUtil.parseLocalDateTime(request.getPublishedAt());
+        if (publishedAt == null) {
+            publishedAt = LocalDateTime.now();
+        }
+
+        Announcement announcement = new Announcement();
+        announcement.setId(idGenerator.generateId("ann"));
+        announcement.setTitle(request.getTitle());
+        announcement.setContent(request.getContent());
+        announcement.setAnnouncementType("merchant");
+        announcement.setContentType("product");
+        announcement.setPropertyCompanyId(propertyCompanyId);
+        announcement.setCommunityId(communityId);
+        announcement.setMerchantId(merchantId);
+        announcement.setProductId(product.getId());
+        announcement.setPublisherId(UserContext.currentUserId());
+        announcement.setPublisherRole(UserContext.currentRole());
+        announcement.setCoverUrls(announcementConverter.toJson(coverUrl == null ? List.of() : List.of(coverUrl)));
         announcement.setCollectEnabled(false);
         announcement.setStatus("published");
         announcement.setPublishedAt(publishedAt);
@@ -548,5 +618,9 @@ public class AnnouncementService {
         if (StringUtils.hasText(id) && !id.startsWith(prefix)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "ID格式不正确");
         }
+    }
+
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 }

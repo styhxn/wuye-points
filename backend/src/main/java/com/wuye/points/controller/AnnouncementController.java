@@ -6,6 +6,7 @@ import com.wuye.points.dto.announcement.AnnouncementListItemResponse;
 import com.wuye.points.dto.announcement.ActivityAnnouncementRequest;
 import com.wuye.points.dto.announcement.CreateAnnouncementRequest;
 import com.wuye.points.dto.announcement.DeleteAnnouncementResponse;
+import com.wuye.points.dto.announcement.ProductAnnouncementRequest;
 import com.wuye.points.dto.announcement.SubmitCollectRequest;
 import com.wuye.points.dto.announcement.SubmitCollectResponse;
 import com.wuye.points.dto.announcement.UpdateAnnouncementRequest;
@@ -43,6 +44,13 @@ public class AnnouncementController {
     public ApiResponse<AnnouncementDetailResponse> createAnnouncement(
             @Valid @RequestBody CreateAnnouncementRequest request) {
         return ApiResponse.success(announcementService.createAnnouncement(request));
+    }
+
+    @Operation(summary = "发布产品推荐公告", description = "角色：property_admin/platform_admin/merchant；公告类型强制为 merchant、content_type 强制为 product，productId 必须指向在售未下架商品")
+    @PostMapping("/product")
+    public ApiResponse<AnnouncementDetailResponse> createProductAnnouncement(
+            @Valid @RequestBody ProductAnnouncementRequest request) {
+        return ApiResponse.success(announcementService.createProductAnnouncement(request));
     }
 
     @Operation(summary = "发布活动公告（移动端活动组长）", description = "发布活动类公告，角色：activity_leader/property_admin/platform_admin；公告类型强制为 activity。无需传 announcementType")

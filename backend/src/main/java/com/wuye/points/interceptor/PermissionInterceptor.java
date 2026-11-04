@@ -233,6 +233,8 @@ public class PermissionInterceptor implements HandlerInterceptor {
      */
     private static final Map<String, String> ADMIN_OPERATION_PERMISSIONS = Map.ofEntries(
             Map.entry("POST:/announcements", "announcement:publish"),
+            // /announcements/product 的末段是字面量 product，不会被 toExactPath 归一成 *，必须单列一条
+            Map.entry("POST:/announcements/product", "announcement:publish"),
             Map.entry("PUT:/announcements/*", "announcement:publish"),
             Map.entry("DELETE:/announcements/*", "announcement:publish"),
             // 注意：/merchants POST（住户入驻申请）与 PUT（商家/组长/技工改本人店）是移动端共用接口，
