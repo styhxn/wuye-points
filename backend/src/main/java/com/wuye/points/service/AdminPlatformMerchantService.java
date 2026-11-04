@@ -56,6 +56,7 @@ public class AdminPlatformMerchantService {
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
+    private final MerchantCategoryService merchantCategoryService;
 
     @Transactional(readOnly = true)
     public PageResponse<PlatformMerchantListItemResponse> list(
@@ -185,8 +186,9 @@ public class AdminPlatformMerchantService {
         if (!StringUtils.hasText(category)) {
             throw new BizException(ErrorCode.PARAM_MISSING, "品类不能为空");
         }
-        if (!RoleGuard.MERCHANT_CATEGORIES.contains(category)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
+        if (!merchantCategoryService.activeCategoryNames().contains(category)) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "category值无效，可选品类见 GET /merchant-categories");
         }
     }
 

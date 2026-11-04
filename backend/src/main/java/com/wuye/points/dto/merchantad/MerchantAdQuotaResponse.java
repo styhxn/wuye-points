@@ -40,4 +40,7 @@ public class MerchantAdQuotaResponse {
 
     /** 广告单日价（元） */
     private BigDecimal dayPrice;
+
+    /** 广告微信支付是否可用 */
+    private Boolean wechatPaymentEnabled;
 }

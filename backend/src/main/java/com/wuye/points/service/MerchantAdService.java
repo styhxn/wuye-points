@@ -83,10 +83,10 @@ public class MerchantAdService {
     private final PayChannel wechatPayService;
 
     /**
-     * 广告微信支付开关（fail-closed 默认 false）。
-     * 前端尚未支持 pending_payment 状态时保持关闭，避免「广告待支付、用户以为已投放」。
+     * 广告微信支付开关（默认开启）。
+     * 微信支付通道未配置时仍由 PayChannel 拒绝，不会出现「未收款却已投放」。
      */
-    @Value("${app.merchant-ad.wechat-payment-enabled:false}")
+    @Value("${app.merchant-ad.wechat-payment-enabled:true}")
     private boolean adWechatPaymentEnabled;
 
     @Transactional(readOnly = true)
@@ -128,6 +128,7 @@ public class MerchantAdService {
                         .multiply(BigDecimal.valueOf(durationDays)))
                 .freeQuotaRemaining(freeQuotaRemaining)
                 .freeQuotaEnabled(platformSettingService.isAdFreeQuotaEnabled())
+                .wechatPaymentEnabled(isAdWechatPaymentAvailable())
                 .build();
     }
 
@@ -180,6 +181,7 @@ public class MerchantAdService {
                 .freeQuotaEnabled(platformSettingService.isAdFreeQuotaEnabled())
                 .freeQuotaPerWeek(platformSettingService.getAdFreeQuotaPerWeek())
                 .dayPrice(platformSettingService.getAdDayPrice())
+                .wechatPaymentEnabled(isAdWechatPaymentAvailable())
                 .build();
     }
 
@@ -296,6 +298,11 @@ public class MerchantAdService {
         return "wechat".equals(paymentMethod);
     }
 
+    /** 广告微信支付可用 = 开关开启且直连商户通道已配置（广告为平台自营收款，不分账）。 */
+    private boolean isAdWechatPaymentAvailable() {
+        return adWechatPaymentEnabled && wechatPayService.isDirectEnabled();
+    }
+
     /**
      * 支付方式白名单校验。
      * 物业币/商家积分/模拟支付已下线，旧版客户端继续提交时返回明确业务错误，便于排查。
@@ -346,9 +353,9 @@ public class MerchantAdService {
      */
     private MerchantAdListItemResponse initiateAdChannelPayment(MerchantAd ad, Merchant merchant,
                                                                 Resident merchantUser, String requestOpenId) {
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID,
-                    "在线支付未开通，请使用物业币或商家积分支付");
+                    "在线支付未开通，请稍后再试或使用免费额度");
         }
         ad.setStatus("pending_payment");
         merchantAdRepository.save(ad);
@@ -728,7 +735,7 @@ public class MerchantAdService {
         if (!adWechatPaymentEnabled) {
             throw new BizException(ErrorCode.PARAM_INVALID, "广告微信支付暂未开放");
         }
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，暂无法补付");
         }
 

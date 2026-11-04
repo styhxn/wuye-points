@@ -7,14 +7,22 @@ import java.math.BigDecimal;
 /**
  * 统一支付通道接口。
  *
- * <p>支付通道抽象：统一微信支付（平台微信支付分账 partner 模式）实现，业务侧只依赖本接口。
- *
- * <p>微信侧下单走「平台微信支付分账 partner JSAPI」(/{@code v3/pay/partner/transactions/jsapi})，
- * 返给前端的 {@link WechatJsPayParams} 字段（appId/timeStamp/nonceStr/package/signType/paySign）由前端原样透传给 wx.requestPayment。
+ * <p>统一微信支付实现（{@code WechatPayService}），业务侧只依赖本接口。平台接入两个独立商户主体：
+ * 直连商户（平台自营业务）与服务商（商城订单 + 官方分账），由支付流水固化的 {@code pay_mode} 路由；
+ * 返给前端的 {@link WechatJsPayParams} 字段（appId/timeStamp/nonceStr/package/signType/paySign）
+ * 由前端原样透传给 wx.requestPayment。</p>
  */
 public interface PayChannel {
 
     boolean isEnabled();
+
+    /**
+     * 直连商户通道是否就绪（平台自营业务：物业费/充值/食堂/广告/服务预约等）。
+     * 默认与 {@link #isEnabled()} 一致；双通道实现按直连商户实际配置判断。
+     */
+    default boolean isDirectEnabled() {
+        return isEnabled();
+    }
 
     void validate();
 

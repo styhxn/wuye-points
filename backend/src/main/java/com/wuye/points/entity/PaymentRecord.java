@@ -87,9 +87,20 @@ public class PaymentRecord extends BaseEntity {
     @Column(name = "channel_order_no", length = 64)
     private String channelOrderNo;
 
-    /** 该笔支付实际入账的微信二级商户号（电商收付通模式，按订单商家路由） */
+    /** 该笔支付实际入账的微信二级商户号（服务商/电商模式，按订单商家路由） */
     @Column(name = "sub_mchid", length = 32)
     private String subMchid;
+
+    /**
+     * 支付通道：direct 直连商户 / partner 服务商普通分账 / ecommerce 电商收付通。
+     * 预下单时固化，查单/退款/关单/分账均按本字段路由到对应微信商户主体。
+     */
+    @Column(name = "pay_mode", length = 20)
+    private String payMode;
+
+    /** 实际收款商户号（下单时快照，便于审计与多商户切换排障） */
+    @Column(name = "mch_id", length = 32)
+    private String mchId;
 
     /** 微信退款单号 out_refund_no */
     @Column(name = "out_refund_no", length = 64)

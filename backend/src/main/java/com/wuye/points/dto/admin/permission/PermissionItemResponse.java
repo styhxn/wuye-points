@@ -26,6 +26,9 @@ public class PermissionItemResponse {
     @Schema(description = "是否仅平台可用", example = "false")
     private Boolean isPlatformOnly;
 
+    @Schema(description = "是否允许授予活动组长/负责人/社区管理员等标签身份", example = "false")
+    private Boolean grantableToTagIdentities;
+
     @Schema(description = "状态", example = "active")
     private String status;
 }

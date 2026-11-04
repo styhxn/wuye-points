@@ -15,4 +15,8 @@ public class ApplyWithdrawalRequest {
     @NotNull(message = "提现金额不能为空")
     @DecimalMin(value = "0.01", message = "提现金额必须大于0")
     private BigDecimal amount;
+
+    @Schema(description = "资金来源：legacy内部收益（默认）/coin_receivable物业币应收",
+            example = "legacy", allowableValues = {"legacy", "coin_receivable"})
+    private String source;
 }

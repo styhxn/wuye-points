@@ -31,6 +31,10 @@ public class TransactionLedgerSql {
             TransactionLabels.GROUP_PAYMENT, TransactionLabels.GROUP_WALLET,
             TransactionLabels.GROUP_SETTLEMENT, TransactionLabels.GROUP_VALUE);
 
+    /** {@link #byId} 的兜底时间窗：id 谓词已下推到分支主键，窗口只用于命中 created_at 索引 */
+    private static final LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
+    private static final LocalDateTime FAR_FUTURE = LocalDateTime.of(2100, 1, 1, 0, 0);
+
     private static final Map<String, String> GROUP_OF = Map.ofEntries(
             Map.entry("payment", TransactionLabels.GROUP_PAYMENT),
             Map.entry("refund", TransactionLabels.GROUP_PAYMENT),
@@ -50,7 +54,8 @@ public class TransactionLedgerSql {
                           String direction,
                           String status,
                           String keyword,
-                          String propertyCompanyId) {
+                          String propertyCompanyId,
+                          String id) {
     }
 
     public record SqlQuery(String sql, MapSqlParameterSource params) {
@@ -68,6 +73,24 @@ public class TransactionLedgerSql {
                 + where(filters)
                 + " ORDER BY q.occurred_at DESC, q.id DESC, q.category ASC"
                 + " LIMIT :limit OFFSET :offset";
+        return new SqlQuery(sql, params);
+    }
+
+    /**
+     * 按「分类 + 记录ID」精确取一条流水（打印流水详情用）。
+     *
+     * <p>{@code id} 谓词下推到分支内部，走各来源表的主键，不会把整段账本物化后再筛；
+     * 时间窗只作兜底。{@code payment} 与 {@code refund} 共用同一条 {@code payment_records.id}，
+     * 所以必须连 {@code category} 一起传，只给 ID 无法区分是收款还是退款。</p>
+     */
+    public SqlQuery byId(String category, String id) {
+        Filters filters = new Filters(category, null, null, null, null, null, id);
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("start", EPOCH)
+                .addValue("end", FAR_FUTURE)
+                .addValue("id", id);
+        String sql = "SELECT q.* FROM (" + enriched(filters, true) + ") q"
+                + " ORDER BY q.occurred_at DESC LIMIT 5";
         return new SqlQuery(sql, params);
     }
 
@@ -137,7 +160,15 @@ public class TransactionLedgerSql {
         if (filters.keyword() != null) {
             params.addValue("keyword", "%" + filters.keyword().toLowerCase(Locale.ROOT) + "%");
         }
+        if (filters.id() != null) {
+            params.addValue("id", filters.id());
+        }
         return params;
+    }
+
+    /** id 谓词下推到来源表，避免整段账本物化后再筛（详情/打印是高频单条查询）。 */
+    private String idFilter(String expression, Filters filters) {
+        return filters.id() == null ? "" : "\n      AND " + expression + " = :id";
     }
 
     private String where(Filters filters) {
@@ -273,7 +304,8 @@ public class TransactionLedgerSql {
                        COALESCE(p.directed_balance_used, 0.00) AS directed_used
                 FROM payment_records p
                 WHERE p.created_at BETWEEN :start AND :end
-                """ + pcFilter("p.property_company_id", filters);
+                """ + pcFilter("p.property_company_id", filters)
+                + idFilter("p.id", filters);
     }
 
     private String refund(Filters filters) {
@@ -302,7 +334,8 @@ public class TransactionLedgerSql {
                 FROM payment_records p
                 WHERE p.updated_at BETWEEN :start AND :end
                   AND (p.out_refund_no IS NOT NULL OR p.status IN ('refunding', 'refunded', 'refund_failed'))
-                """ + pcFilter("p.property_company_id", filters);
+                """ + pcFilter("p.property_company_id", filters)
+                + idFilter("p.id", filters);
     }
 
     private String wallet(Filters filters) {
@@ -353,7 +386,8 @@ public class TransactionLedgerSql {
                          WHEN 'property_manager' THEN (SELECT r.property_company_id FROM residents r WHERE r.id = w.owner_id)
                          WHEN 'courier' THEN (SELECT c.property_company_id FROM courier_managers c WHERE c.id = w.owner_id)
                          ELSE NULL
-                       END""", filters);
+                       END""", filters)
+                + idFilter("w.id", filters);
     }
 
     private String distribution(Filters filters) {
@@ -381,7 +415,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM distribution_records d
                 WHERE d.created_at BETWEEN :start AND :end
-                """ + pcFilter("d.property_company_id", filters);
+                """ + pcFilter("d.property_company_id", filters)
+                + idFilter("d.id", filters);
     }
 
     private String split(Filters filters) {
@@ -416,7 +451,8 @@ public class TransactionLedgerSql {
                        COALESCE(
                          (SELECT p.property_company_id FROM payment_records p WHERE p.id = s.payment_record_id),
                          (SELECT o.property_company_id FROM orders o WHERE o.id = s.order_id)
-                       )""", filters);
+                       )""", filters)
+                + idFilter("s.id", filters);
     }
 
     private String merchantWithdrawal(Filters filters) {
@@ -447,7 +483,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM merchant_withdrawals m
                 WHERE m.created_at BETWEEN :start AND :end
-                """ + pcFilter("m.property_company_id", filters);
+                """ + pcFilter("m.property_company_id", filters)
+                + idFilter("m.id", filters);
     }
 
     private String coinWithdrawal(Filters filters) {
@@ -475,7 +512,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM coin_withdrawals c
                 WHERE c.created_at BETWEEN :start AND :end
-                """ + pcFilter("c.property_company_id", filters);
+                """ + pcFilter("c.property_company_id", filters)
+                + idFilter("c.id", filters);
     }
 
     private String roleWithdrawal(Filters filters) {
@@ -506,7 +544,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM withdrawal_records w
                 WHERE w.created_at BETWEEN :start AND :end
-                """ + pcFilter("w.property_company_id", filters);
+                """ + pcFilter("w.property_company_id", filters)
+                + idFilter("w.id", filters);
     }
 
     private String transfer(Filters filters) {
@@ -549,7 +588,8 @@ public class TransactionLedgerSql {
                          WHEN 'sector_leader' THEN (SELECT s.property_company_id FROM sector_leaders s WHERE s.id = t.owner_id)
                          WHEN 'individual_leader' THEN (SELECT i.property_company_id FROM individual_leaders i WHERE i.id = t.owner_id)
                          ELSE NULL
-                       END""", filters);
+                       END""", filters)
+                + idFilter("t.id", filters);
     }
 
     private String settlement(Filters filters) {
@@ -577,7 +617,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM resident_merchant_settlements r
                 WHERE r.created_at BETWEEN :start AND :end
-                """ + pcFilter("(SELECT o.property_company_id FROM orders o WHERE o.id = r.order_id)", filters);
+                """ + pcFilter("(SELECT o.property_company_id FROM orders o WHERE o.id = r.order_id)", filters)
+                + idFilter("r.id", filters);
     }
 
     private String point(Filters filters) {
@@ -605,7 +646,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM point_records p
                 WHERE p.created_at BETWEEN :start AND :end
-                """ + pcFilter("p.property_company_id", filters);
+                """ + pcFilter("p.property_company_id", filters)
+                + idFilter("p.id", filters);
     }
 
     private String coin(Filters filters) {
@@ -633,7 +675,8 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM property_coin_records c
                 WHERE c.created_at BETWEEN :start AND :end
-                """ + pcFilter("c.property_company_id", filters);
+                """ + pcFilter("c.property_company_id", filters)
+                + idFilter("c.id", filters);
     }
 
     private String canteen(Filters filters) {
@@ -661,6 +704,7 @@ public class TransactionLedgerSql {
                        0.00 AS directed_used
                 FROM canteen_directed_flows c
                 WHERE c.created_at BETWEEN :start AND :end
-                """ + pcFilter("(SELECT m.property_company_id FROM merchants m WHERE m.id = c.main_merchant_id)", filters);
+                """ + pcFilter("(SELECT m.property_company_id FROM merchants m WHERE m.id = c.main_merchant_id)", filters)
+                + idFilter("c.id", filters);
     }
 }

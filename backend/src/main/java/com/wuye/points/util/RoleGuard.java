@@ -1,6 +1,7 @@
 package com.wuye.points.util;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.entity.Resident;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import org.springframework.stereotype.Component;
@@ -57,14 +58,10 @@ public class RoleGuard {
     }
 
     public void requireAnyRole(String... allowedRoles) {
-        String role = normalizeRole(UserContext.currentRole());
-        if (role == null) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        if (matchedRoleOrInterceptedAdminGrant(allowedRoles)) {
+            return;
         }
-        boolean matched = Arrays.stream(allowedRoles).anyMatch(role::equals);
-        if (!matched) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED);
-        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED);
     }
 
     public boolean isPlatformAdmin() {
@@ -73,6 +70,16 @@ public class RoleGuard {
 
     public boolean isPropertyAdmin() {
         return "property_admin".equals(normalizeRole(UserContext.currentRole()));
+    }
+
+    /**
+     * 是否按“物业管理员数据范围”处理当前管理端请求。
+     *
+     * <p>标签身份本身不是 property_admin，但请求已被管理端拦截器按权限码授权时，
+     * 数据范围应与其所属物业公司一致，供脱敏、列表范围等分支复用。</p>
+     */
+    public boolean isAdminScopeUser() {
+        return isPlatformAdmin() || isPropertyAdmin() || AdminAuthorizationContext.isGranted();
     }
 
     public boolean isResident() {
@@ -116,7 +123,7 @@ public class RoleGuard {
      * 的混合门改造——负责人角色值已归一化为 resident，身份按业务表 active 记录判定。
      */
     public void requireAnyRoleOrLeaderIdentity(String... allowedRoles) {
-        if (matchesRole(allowedRoles)) {
+        if (matchedRoleOrInterceptedAdminGrant(allowedRoles)) {
             return;
         }
         if ("resident".equals(normalizeRole(UserContext.currentRole()))
@@ -132,7 +139,7 @@ public class RoleGuard {
      * （原门中负责人角色只含 coordinator 时使用，严格保持原有行为，不放行板块/个体负责人）。
      */
     public void requireAnyRoleOrCoordinatorIdentity(String... allowedRoles) {
-        if (matchesRole(allowedRoles)) {
+        if (matchedRoleOrInterceptedAdminGrant(allowedRoles)) {
             return;
         }
         if ("resident".equals(normalizeRole(UserContext.currentRole()))
@@ -140,6 +147,24 @@ public class RoleGuard {
             return;
         }
         throw new BizException(ErrorCode.PERMISSION_DENIED);
+    }
+
+    /**
+     * 角色门放行：命中角色名单，或当前请求已被管理端拦截器按权限码授权，
+     * 且该门允许物业管理员（property_admin）通过。
+     *
+     * <p>标签身份（活动组长/负责人/社区管理员）在管理端不落 property_admin 角色，
+     * 但其权限码已在拦截器完成校验；此处仅放行原本就属于“物业管理员”的历史角色门，
+     * 平台专属门（如仅 platform_admin）不会被放行。</p>
+     */
+    private boolean matchedRoleOrInterceptedAdminGrant(String... allowedRoles) {
+        if (matchesRole(allowedRoles)) {
+            return true;
+        }
+        // 标记由 PermissionInterceptor 在校验权限码前先通过 requireAdminWorkspace 后写入，
+        // 因此带标记即代表当前请求具备管理端工作台身份，无需重复查库判断身份。
+        return AdminAuthorizationContext.isGranted()
+                && Arrays.asList(allowedRoles).contains("property_admin");
     }
 
     private boolean matchesRole(String... allowedRoles) {
@@ -165,6 +190,9 @@ public class RoleGuard {
             return;
         }
         if (isPlatformAdmin() || isPropertyAdmin()) {
+            return;
+        }
+        if (AdminAuthorizationContext.isGranted()) {
             return;
         }
         throw new BizException(ErrorCode.PERMISSION_DENIED);
@@ -195,9 +223,8 @@ public class RoleGuard {
 
     public static final Set<String> MERCHANT_LEVELS = Set.of(
             "official_certified", "property_certified", "normal");
-    public static final Set<String> MERCHANT_CATEGORIES = Set.of(
-            "外卖", "周围商家", "自营", "农家", "外卖小吃", "团购",
-            "美食", "酒店民宿", "洗浴汗蒸", "按摩足疗", "看病买药", "外卖小区");
+    // 商家品类清单以 merchant_category_dict 表为唯一事实源（GET /merchant-categories），
+    // 这里不再硬编码一份——两份清单已经漂移过一次，前端下拉选到校验不认的品类就报 400。
     public static final Set<String> MERCHANT_AUDIT_STATUS = Set.of(
             "pending_audit", "approved", "rejected");
     public static final Set<String> MERCHANT_OPERATION_STATUS = Set.of("active", "frozen");
@@ -238,7 +265,8 @@ public class RoleGuard {
     public static final Set<String> BROADCAST_TARGET_ROLES = Set.of(
             "resident", "property_admin", "technician", "courier", "merchant");
     public static final Set<String> FILE_CATEGORIES = Set.of(
-            "avatar", "announcement", "merchant", "service", "activity", "product");
+            "avatar", "announcement", "merchant", "service", "activity", "product",
+            "delivery_proof", "withdrawal_proof");
     public static final Set<String> SERVICE_CATEGORIES = Set.of(
             "cleaning_repair", "canteen", "tutoring", "elderly_care", "medical",
             "pet_medical", "life_service", "dating");
@@ -271,6 +299,59 @@ public class RoleGuard {
         return "community_admin".equals(UserContext.currentRole());
     }
 
+    /**
+     * 是否具备管理端工作台身份。
+     *
+     * <p>管理端不是“只有物业管理员能进”：社区管理员、活动组组长、统筹、板块负责人、
+     * 个体负责人都可能通过管理端登录并使用被授予的能力。此处只回答“能不能进管理端工作台”，
+     * 具体能做什么仍由权限码（{@link PermissionGuard}）决定。</p>
+     */
+    public boolean isAdminWorkspaceUser() {
+        String role = normalizeRole(UserContext.currentRole());
+        if (role == null) {
+            return false;
+        }
+        if (isAdminWorkspaceRole(role)) {
+            return true;
+        }
+        if (!"resident".equals(role)) {
+            return false;
+        }
+        return leaderIdentityGuard.isCurrentCoordinator()
+                || leaderIdentityGuard.isCurrentSectorLeader()
+                || leaderIdentityGuard.isCurrentIndividualLeader()
+                || leaderIdentityGuard.isCurrentActivityLeader();
+    }
+
+    /** 按指定住户判断是否具备管理端工作台身份（登录响应/权限配置列表使用）。 */
+    public boolean isAdminWorkspaceUser(Resident resident) {
+        if (resident == null) {
+            return false;
+        }
+        String role = normalizeRole(resident.getRole());
+        if (role == null) {
+            return false;
+        }
+        if (isAdminWorkspaceRole(role)) {
+            return true;
+        }
+        if (!"resident".equals(role)) {
+            return false;
+        }
+        String residentId = resident.getId();
+        String propertyCompanyId = resident.getPropertyCompanyId();
+        return leaderIdentityGuard.activeCoordinator(residentId, propertyCompanyId).isPresent()
+                || !leaderIdentityGuard.activeSectorLeaders(residentId, propertyCompanyId).isEmpty()
+                || leaderIdentityGuard.activeIndividualLeader(residentId, propertyCompanyId).isPresent()
+                || leaderIdentityGuard.activeActivityLeader(residentId, propertyCompanyId).isPresent();
+    }
+
+    private boolean isAdminWorkspaceRole(String normalizedRole) {
+        return "platform_admin".equals(normalizedRole)
+                || "property_admin".equals(normalizedRole)
+                || "community_admin".equals(normalizedRole);
+    }
+
     public boolean isActivityLeader() {
         // 2026-10-21 组长标签化：身份改由 activity_leader_identities 表 active 记录判定
         // （兼容存量 JWT role=activity_leader）
@@ -284,7 +365,7 @@ public class RoleGuard {
      * （如商家端商品管理、组长公告发布）——组长角色值已归一化为 resident，身份按业务表判定。
      */
     public void requireAnyRoleOrActivityLeaderIdentity(String... allowedRoles) {
-        if (matchesRole(allowedRoles)) {
+        if (matchedRoleOrInterceptedAdminGrant(allowedRoles)) {
             return;
         }
         if ("resident".equals(normalizeRole(UserContext.currentRole()))

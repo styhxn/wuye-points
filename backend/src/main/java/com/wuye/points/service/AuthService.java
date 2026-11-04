@@ -5,6 +5,7 @@ import com.wuye.points.dto.auth.AdminLoginRequest;
 import com.wuye.points.dto.auth.AuthLoginResponse;
 import com.wuye.points.dto.auth.BindPhoneRequest;
 import com.wuye.points.dto.auth.BindPhoneResponse;
+import com.wuye.points.dto.auth.MyPermissionsResponse;
 import com.wuye.points.dto.auth.ProfileResponse;
 import com.wuye.points.dto.auth.RefreshTokenRequest;
 import com.wuye.points.dto.auth.ResidentAuthSummaryResponse;
@@ -30,12 +31,14 @@ import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.JwtUtil;
 import com.wuye.points.util.LeaderIdentityGuard;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import cn.hutool.crypto.digest.BCrypt;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,12 +48,14 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
     private static final String TOKEN_TYPE_BEARER = "Bearer";
-    private static final Set<String> PROFILE_ROLES = Set.of("resident", "property_admin", "platform_admin");
+    private static final Set<String> PROFILE_ROLES = Set.of(
+            "resident", "property_admin", "platform_admin", "community_admin");
 
     // 测试模式：放开历史初始口令，并允许普通住户登录管理端；上线前必须设为 false。
     @Value("${app.auth.test-mode:true}")
@@ -65,6 +70,8 @@ public class AuthService {
     private final SnowflakeIdGenerator idGenerator;
     private final LeaderIdentityGuard leaderIdentityGuard;
     private final ResidentIdentityTags residentIdentityTags;
+    private final PermissionGuard permissionGuard;
+    private final RoleGuard roleGuard;
 
     @Transactional
     public AuthLoginResponse wechatLogin(WechatLoginRequest request) {
@@ -74,8 +81,17 @@ public class AuthService {
         boolean newUser = false;
 
         if (resident == null) {
-            resident = createResident(session, request.getPropertyCompanyId());
-            newUser = true;
+            // 首次微信登录（该 openid 没见过）必须授权手机号：管理端预建账号只有手机号，
+            // 不要求授权就会新建一条「有 openid 没手机号」的幽灵记录，本人永远对不上号。
+            if (!StringUtils.hasText(request.getPhoneCode())) {
+                throw new BizException(ErrorCode.WECHAT_PHONE_AUTH_REQUIRED);
+            }
+            String phone = wechatMpService.getPhoneNumber(request.getPhoneCode());
+            resident = bindWechatToExistingAccount(session, request, phone);
+            if (resident == null) {
+                resident = createResident(session, request.getPropertyCompanyId(), phone);
+                newUser = true;
+            }
         } else {
             updateWechatSession(resident, session, request.getPropertyCompanyId());
         }
@@ -212,16 +228,100 @@ public class AuthService {
                     .orElse(null);
         }
 
-        return toProfile(resident, propertyName, communityName);
+        return enrichProfilePermissions(toProfile(resident, propertyName, communityName), resident);
     }
 
-    private Resident createResident(WechatMpService.WechatSession session, String propertyCompanyId) {
+    /** 当前用户有效权限码，供前端权限配置页/按钮级渲染直接使用。 */
+    @Transactional(readOnly = true)
+    public MyPermissionsResponse getMyPermissions() {
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        Set<String> roleCodes = permissionGuard.listEffectiveRoleCodes(
+                resident.getId(), resident.getPropertyCompanyId());
+        List<String> permissions = permissionGuard
+                .listEffectivePermissionCodes(resident.getId(), resident.getPropertyCompanyId())
+                .stream().map(code -> code.replace('.', ':')).sorted().toList();
+        return MyPermissionsResponse.builder()
+                .role(resident.getRole())
+                .normalizedRole(PermissionGuard.normalizeBaseRole(resident.getRole()))
+                .propertySubRole(resident.getPropertySubRole())
+                .propertyCompanyId(resident.getPropertyCompanyId())
+                .adminWorkspace(roleGuard.isAdminWorkspaceUser(resident))
+                .roleCodes(roleCodes.stream().sorted().toList())
+                .permissions(permissions)
+                .build();
+    }
+
+    private ProfileResponse enrichProfilePermissions(ProfileResponse profile, Resident resident) {
+        Set<String> roleCodes = permissionGuard.listEffectiveRoleCodes(
+                resident.getId(), resident.getPropertyCompanyId());
+        List<String> permissions = permissionGuard
+                .listEffectivePermissionCodes(resident.getId(), resident.getPropertyCompanyId())
+                .stream().map(code -> code.replace('.', ':')).sorted().toList();
+        var preset = permissionGuard.findPrimaryPreset(roleCodes).orElse(null);
+        profile.setNormalizedRole(PermissionGuard.normalizeBaseRole(resident.getRole()));
+        profile.setPropertySubRole(resident.getPropertySubRole());
+        profile.setEffectiveRoleCodes(roleCodes.stream().sorted().toList());
+        profile.setEffectivePermissions(permissions);
+        if (preset != null) {
+            profile.setRolePresetId(preset.getId());
+            profile.setRolePresetName(preset.getName());
+        }
+        return profile;
+    }
+
+    /**
+     * 首次微信登录时，把微信身份绑到该手机号已有的账号上。
+     *
+     * <p>管理端预建的商家/组长/技工/配送员账号 openid 为空，此前登录只按 openid 匹配，本人一进小程序就新建一条记录，
+     * 于是「有手机号的账号没 openid、有 openid 的账号没手机号」，分账个人接收方永远登记不到人。</p>
+     *
+     * <p>{@code residents.openid} 是唯一索引：一旦把 openid 绑到错的账号，正确账号就再也绑不上，
+     * 只能走管理端「微信身份认领」解开。所以同手机号命中多条账号时一律拒绝自动绑定，不做「取第一条」的猜测。</p>
+     *
+     * @param phone 已由 {@code phoneCode} 换取的手机号
+     * @return 绑定完成的已有账号；该手机号下没有可绑账号时返回 null（按新建处理）
+     */
+    private Resident bindWechatToExistingAccount(WechatMpService.WechatSession session,
+                                                 WechatLoginRequest request,
+                                                 String phone) {
+        String scopedPropertyCompanyId = resolvePropertyCompanyId(request.getPropertyCompanyId());
+        List<Resident> candidates = residentRepository.findAllByPhone(phone).stream()
+                .filter(r -> r.getDeletedAt() == null && !ResidentStatus.deleted.name().equals(r.getStatus()))
+                .filter(r -> !StringUtils.hasText(scopedPropertyCompanyId)
+                        || scopedPropertyCompanyId.equals(r.getPropertyCompanyId()))
+                .toList();
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() > 1) {
+            throw new BizException(ErrorCode.WECHAT_PHONE_ACCOUNT_AMBIGUOUS,
+                    "手机号 " + PhoneUtil.mask(phone) + " 在当前范围内匹配到 " + candidates.size()
+                            + " 个账号，无法自动绑定，请联系物业在管理端做微信身份认领");
+        }
+        Resident existing = candidates.get(0);
+        if (StringUtils.hasText(existing.getOpenid()) && !existing.getOpenid().equals(session.getOpenid())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "该手机号账号已绑定其他微信身份，请先在管理端做微信身份认领");
+        }
+        existing.setOpenid(session.getOpenid());
+        existing.setUnionid(session.getUnionid());
+        existing.setWechatBound(true);
+        Resident saved = residentRepository.save(existing);
+        log.info("[微信登录] 微信身份绑到已有账号 residentId={} propertyCompanyId={}",
+                saved.getId(), saved.getPropertyCompanyId());
+        return saved;
+    }
+
+    private Resident createResident(WechatMpService.WechatSession session, String propertyCompanyId, String phone) {
         String resolvedPropertyCompanyId = resolvePropertyCompanyId(propertyCompanyId);
 
         Resident resident = new Resident();
         resident.setId(idGenerator.generateId("res"));
         resident.setOpenid(session.getOpenid());
         resident.setUnionid(session.getUnionid());
+        // 新建即带手机号：此后不再存在「有 openid 没手机号」的记录形态
+        resident.setPhone(phone);
         resident.setPropertyCompanyId(resolvedPropertyCompanyId);
         resident.setRole("resident");
         resident.setUserType("owner");
@@ -326,6 +426,7 @@ public class AuthService {
                 .avatarUrl(resident.getAvatarUrl())
                 .phone(PhoneUtil.mask(resident.getPhone()))
                 .role(resident.getRole())
+                .adminWorkspace(roleGuard.isAdminWorkspaceUser(resident))
                 .propertyCompanyId(resident.getPropertyCompanyId())
                 .communityId(resident.getCommunityId())
                 .familyId(resident.getFamilyId())
@@ -383,6 +484,7 @@ public class AuthService {
                 .hasChildren(resident.getHasChildren())
                 .userType(resident.getUserType())
                 .role(resident.getRole())
+                .adminWorkspace(roleGuard.isAdminWorkspaceUser(resident))
                 .propertyCompanyId(resident.getPropertyCompanyId())
                 .propertyName(propertyName)
                 .communityId(resident.getCommunityId())

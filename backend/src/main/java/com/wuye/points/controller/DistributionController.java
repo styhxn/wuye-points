@@ -45,6 +45,15 @@ public class DistributionController {
                 individualLeaderId, propertyCompanyId, startDate, endDate));
     }
 
+    @Operation(summary = "我的分成记录",
+            description = "按当前身份自动收敛：商家/组长/技工看店铺，统筹/板块/个体/楼长看本人挂接记录，只返回本人份额。Auth: Required")
+    @GetMapping("/distribution/records/mine")
+    public ApiResponse<PageResponse<com.wuye.points.dto.distribution.MyDistributionRecordItemResponse>> listMyRecords(
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(distributionService.listMyRecords(page, pageSize));
+    }
+
     @Operation(summary = "分成统计", description = "分成统计。Auth: Required | Roles: coordinator, property_admin, platform_admin")
     @GetMapping("/distribution/stats")
     public ApiResponse<DistributionStatsResponse> getStats(

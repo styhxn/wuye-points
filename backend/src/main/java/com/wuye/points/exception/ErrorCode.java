@@ -96,6 +96,8 @@ public enum ErrorCode {
     PROPERTY_MANAGER_ALREADY_EXISTS(91006, "该物业公司已存在在职物业经理", 400),
     PROPERTY_MANAGER_NOT_ACTIVE(91007, "物业经理身份已停用", 403),
     PROPERTY_MANAGER_SELF_RATE_FORBIDDEN(91008, "物业经理不可修改自己的分成比例", 403),
+    UNIT_NOTICE_DAILY_LIMIT(91009, "楼长今日单元通知发布次数已达上限", 400),
+    UNIT_PRODUCT_SHARE_DAILY_LIMIT(91010, "楼长今日商品分享次数已达上限", 400),
 
     // 权限 92xxx
     PERMISSION_NOT_FOUND(92001, "权限项不存在", 404),
@@ -114,9 +116,11 @@ public enum ErrorCode {
     MERCHANT_WITHDRAWAL_INVALID(94003, "提现申请不允许操作", 400),
     COIN_WITHDRAWAL_AMOUNT_INVALID(94004, "兑换金额不合法", 400),
     MERCHANT_WITHDRAWAL_INSUFFICIENT(94006, "可提现余额不足", 400),
+    PROPERTY_COIN_FUND_INSUFFICIENT(94007, "物业币代管资金余额不足", 400),
 
     // 文件 95xxx
     FILE_NOT_FOUND(95001, "文件不存在", 404),
+    FILE_TOO_LARGE(95002, "文件超过服务端大小限制", 413),
 
     // 社区服务 96xxx
     SERVICE_NOT_FOUND(96001, "服务不存在", 404),
@@ -132,6 +136,15 @@ public enum ErrorCode {
     ACCOUNT_DELETION_PENDING_FEE(30007, "存在未缴纳的物业费，请先处理", 400),
     ACCOUNT_DELETION_COIN_BALANCE(30008, "物业币余额不为0，请先处理", 400),
     ACCOUNT_DELETION_FAMILY_MEMBERS(30009, "您是户主，请先移除家庭成员", 400),
+
+    /**
+     * 首次微信登录缺少手机号授权：小程序需拉起 getPhoneNumber 授权后带 phoneCode 重试。
+     * 前端处理：收到本码立即弹手机号授权，拿到 code 重新调 /auth/wechat-login，不要当错误展示。
+     */
+    WECHAT_PHONE_AUTH_REQUIRED(30010, "首次登录需授权手机号", 400),
+
+    /** 该手机号在当前物业公司下匹配到多条账号，无法自动判定绑哪一条，须走管理端「微信身份认领」 */
+    WECHAT_PHONE_ACCOUNT_AMBIGUOUS(30011, "该手机号匹配到多个账号，请联系物业在管理端确认微信身份", 400),
 
     // 社区 96xxx 扩展
     COMMUNITY_POST_TOO_LONG(96010, "帖子内容过长", 400),
@@ -210,8 +223,14 @@ public enum ErrorCode {
     CONSULTATION_APPOINTMENT_UNAVAILABLE(96034, "咨询预约不可用", 400),
 
     // 角色账号 97xxx 扩展
-    ROLE_ACCOUNT_HAS_BUSINESS_DATA(97010, "角色账号存在业务数据，不可删除", 400),
-    ROLE_ACCOUNT_ALREADY_DELETED(97011, "角色账号已删除", 400),
+    // 原用 97010/97011，但《API接口文档》把这两个号段标给了「订单已完成分账」「配送已完成结算」
+    // （那两个码在代码里从未实现）。为避免前端本地码表按文档含义误映射，2026-11-02 迁到 97072+ 空段。
+    ROLE_ACCOUNT_HAS_BUSINESS_DATA(97072, "角色账号存在业务数据，不可删除", 400),
+    ROLE_ACCOUNT_ALREADY_DELETED(97073, "角色账号已删除", 400),
+    ROLE_ACCOUNT_PERSIST_FAILED(97074, "业务角色建号写库失败", 400),
+
+    /** 按「分类 + 记录ID」查流水详情时未命中：分类传错（如把退款当 payment 查）也走这里 */
+    TRANSACTION_NOT_FOUND(97075, "交易流水不存在", 404),
 
     // 分账比例校验 97006（2026-09-08 前端问题：商品平台盘一级三档合计必须为 100%）
     SHARE_RATE_PRIMARY_TOTAL_INVALID(97006, "商品平台盘一级分成比例合计必须为100%", 400),
@@ -238,8 +257,8 @@ public enum ErrorCode {
     INVALID_SHARE_RATE_TOTAL(92035, "分成比例合计不合法", 400),
 
     // 功能开关 97xxx
-    POINT_FEATURE_DISABLED(97020, "积分功能未开启", 400),
-    COIN_FEATURE_DISABLED(97021, "物业币功能未开启", 400),
+    POINT_FEATURE_DISABLED(97070, "本小区未启用积分功能", 400),
+    COIN_FEATURE_DISABLED(97071, "本小区未启用物业币功能", 400),
 
     // 订单验证 93xxx
     ORDER_VERIFICATION_EXPIRED(93030, "订单验证已过期", 400),
@@ -253,6 +272,7 @@ public enum ErrorCode {
     APPLYMENT_STATE_INVALID(99007, "进件申请状态不允许该操作", 400),
     APPLYMENT_ALREADY_EXISTS(99008, "该商家已存在进件申请", 400),
     APPLYMENT_UPLOAD_FAILED(99009, "进件资料上传微信失败", 502),
+    WECHAT_APPLYMENT_NOT_CONFIGURED(99016, "微信进件未配置（服务商凭据或结算规则缺失）", 502),
     TRANSFER_ACCOUNT_NOT_VERIFIED(99010, "收款账号未核验，无法转账", 400),
     TRANSFER_NOT_FOUND(99011, "转账单不存在", 404),
     TRANSFER_AMOUNT_INVALID(99012, "转账金额不合法", 400),
@@ -272,6 +292,8 @@ public enum ErrorCode {
     COUPON_CLAIM_LIMIT_EXCEEDED(60048, "已达到每人限领上限", 400),
     COUPON_NOT_CLAIMABLE(60049, "该优惠券不可领取", 400),
     COUPON_TEMPLATE_IN_USE(60050, "优惠券模板已发放，不可修改关键字段", 400),
+
+    PRODUCT_NOT_IN_COMMUNITY(60051, "该商品不在本小区服务范围", 400),
 
     SYSTEM_ERROR(99001, "内部服务异常", 500);
 

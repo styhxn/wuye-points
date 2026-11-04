@@ -57,6 +57,16 @@ public interface WithdrawalRecordRepository extends JpaRepository<WithdrawalReco
     BigDecimal sumAmountByResidentIdAndStatusIn(@Param("residentId") String residentId,
                                                 @Param("statuses") java.util.Collection<String> statuses);
 
+    /** 某申请人在途提现占用额（pending/approved；completed 已在完成时冲减钱包余额，不重复占用） */
+    @Query("""
+            SELECT COALESCE(SUM(w.amount), 0) FROM WithdrawalRecord w
+            WHERE w.applicantId = :applicantId
+              AND w.withdrawalType = :withdrawalType
+              AND w.auditStatus IN ('pending', 'approved')
+            """)
+    BigDecimal sumOccupiedAmountByApplicantAndType(@Param("applicantId") String applicantId,
+                                                   @Param("withdrawalType") String withdrawalType);
+
     // ============== 管理端审批看板汇总 ==============
 
     @Query("""

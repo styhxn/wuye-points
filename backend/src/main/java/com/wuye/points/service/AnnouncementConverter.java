@@ -48,6 +48,8 @@ public class AnnouncementConverter {
                 .publishedAt(DateTimeUtil.toIsoUtc(announcement.getPublishedAt()))
                 .createdAt(DateTimeUtil.toIsoUtc(announcement.getCreatedAt()))
                 .activityGroupId(announcement.getActivityGroupId())
+                .contentType(announcement.getContentType())
+                .productId(announcement.getProductId())
                 .build();
     }
 
@@ -76,6 +78,10 @@ public class AnnouncementConverter {
                 .activityGroupId(announcement.getActivityGroupId())
                 .targetRoles(parseStringList(announcement.getTargetRoles()))
                 .targetBuildings(parseStringList(announcement.getTargetBuildings()))
+                .targetUnits(parseStringList(announcement.getTargetUnits()))
+                .contentType(base.getContentType())
+                .productId(base.getProductId())
+                .deliveryChannel(announcement.getDeliveryChannel())
                 .collectFields(parseCollectFields(announcement.getCollectFields()))
                 .status(announcement.getStatus())
                 .updatedAt(DateTimeUtil.toIsoUtc(announcement.getUpdatedAt()))

@@ -47,4 +47,10 @@ public class MessageListItemResponse {
 
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;
+
+    @Schema(description = "卡片类型：product/order；为空表示纯文本消息（楼长分享商品为 product）", example = "product")
+    private String cardType;
+
+    @Schema(description = "卡片关联ID（商品ID / 订单ID），前端据此渲染卡片", example = "prd_xxxxxxxx")
+    private String cardId;
 }

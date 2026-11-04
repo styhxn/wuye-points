@@ -1,5 +1,6 @@
 package com.wuye.points.controller;
 
+import com.wuye.points.dto.admin.transaction.TransactionDetailResponse;
 import com.wuye.points.dto.admin.transaction.TransactionItemResponse;
 import com.wuye.points.dto.admin.transaction.TransactionOverviewResponse;
 import com.wuye.points.dto.common.ApiResponse;
@@ -63,6 +64,17 @@ public class AdminTransactionController {
             @RequestParam(defaultValue = "20") int pageSize) {
         return ApiResponse.success(adminTransactionService.list(propertyCompanyId, startDate, endDate,
                 group, category, direction, status, keyword, page, pageSize));
+    }
+
+    @Operation(summary = "交易流水详情（打印用）",
+            description = "按「category + id」精确取一条流水，返回流水行本体 + 来源表 + 关联单号 + 可继续调用的关联接口，"
+                    + "供管理端打印流水详情/对账单。category 必传：payment 与 refund 共用同一条 payment_records.id，"
+                    + "只给 ID 分不清收款还是退款。未命中返回 97075。角色: platform_admin。")
+    @GetMapping("/detail")
+    public ApiResponse<TransactionDetailResponse> detail(
+            @Parameter(description = "交易分类（11 类之一）", example = "payment") @RequestParam String category,
+            @Parameter(description = "来源记录ID", example = "pr_xxx") @RequestParam String id) {
+        return ApiResponse.success(adminTransactionService.detail(category, id));
     }
 
     @Operation(summary = "交易总览",

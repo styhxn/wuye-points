@@ -13,8 +13,8 @@ import com.wuye.points.repository.CommunityPostRepository;
 import com.wuye.points.repository.ResidentForumBanRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.PhoneUtil;
-import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +52,7 @@ public class ForumBanService {
     private final ResidentRepository residentRepository;
     private final CommunityPostRepository postRepository;
     private final CommunityCommentRepository commentRepository;
-    private final RoleGuard roleGuard;
+    private final PermissionGuard permissionGuard;
     private final SnowflakeIdGenerator idGenerator;
 
     /**
@@ -75,11 +75,11 @@ public class ForumBanService {
 
     /**
      * 管理端禁言某住户（影子封禁）。
-     * 权限：property_admin / platform_admin；数据范围限本物业公司（platform_admin 无归属物业时可跨物业）。
+     * 权限：community.manage；数据范围限本物业公司（platform_admin 无归属物业时可跨物业）。
      */
     @Transactional
     public ResidentForumBanItemResponse ban(String targetResidentId, ForumBanRequest request) {
-        Resident admin = requireAdmin();
+        Resident admin = requireAdmin("community.manage");
         Resident target = requireTargetResident(targetResidentId, admin);
 
         Optional<ResidentForumBan> existing = findActiveBan(target.getId());
@@ -121,7 +121,7 @@ public class ForumBanService {
      */
     @Transactional
     public ResidentForumBanItemResponse unban(String targetResidentId) {
-        Resident admin = requireAdmin();
+        Resident admin = requireAdmin("community.manage");
         Resident target = requireTargetResident(targetResidentId, admin);
 
         ResidentForumBan ban = findActiveBan(target.getId())
@@ -136,7 +136,7 @@ public class ForumBanService {
      */
     @Transactional(readOnly = true)
     public PageResponse<ResidentForumBanItemResponse> listBans(int page, int pageSize, String status) {
-        Resident admin = requireAdmin();
+        Resident admin = requireAdmin("community.read");
         int p = Math.max(0, page - 1);
         int size = Math.min(Math.max(pageSize, 1), 100);
         Specification<ResidentForumBan> spec = (root, query, cb) -> {
@@ -214,8 +214,8 @@ public class ForumBanService {
         return banRepository.findFirstByResidentIdAndStatusOrderByBannedAtDesc(residentId, "active");
     }
 
-    private Resident requireAdmin() {
-        roleGuard.requireAnyRole("property_admin", "platform_admin");
+    private Resident requireAdmin(String permissionCode) {
+        permissionGuard.requirePermission(permissionCode);
         Resident admin = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
         return admin;

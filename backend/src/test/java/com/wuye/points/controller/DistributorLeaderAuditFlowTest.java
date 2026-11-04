@@ -20,7 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -59,6 +61,17 @@ class DistributorLeaderAuditFlowTest extends ControllerTestBase {
     private MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     @Autowired
     private PlatformMerchantRepository platformMerchantRepository;
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    /**
+     * @CreatedDate 审计会在 persist 时覆盖手工赋的 createdAt，两条申请同毫秒落库时
+     * 「按 createdAt 倒序取最新」就变成随机结果。用 JDBC 固定时间戳消除歧义。
+     */
+    private void pinCreatedAt(String table, String id, LocalDateTime createdAt) {
+        jdbcTemplate.update("update " + table + " set created_at = ? where id = ?",
+                Timestamp.valueOf(createdAt), id);
+    }
 
     @BeforeEach
     void seed() {
@@ -177,6 +190,8 @@ class DistributorLeaderAuditFlowTest extends ControllerTestBase {
                 "dap_old", "res_applicant", "pc_test001", "rejected", LocalDateTime.of(2026, 10, 1, 10, 0)));
         distributorApplicationRepository.save(distributorApplication(
                 "dap_new", "res_applicant", "pc_test001", "pending", LocalDateTime.of(2026, 10, 2, 10, 0)));
+        pinCreatedAt("distributor_applications", "dap_old", LocalDateTime.of(2026, 10, 1, 10, 0));
+        pinCreatedAt("distributor_applications", "dap_new", LocalDateTime.of(2026, 10, 2, 10, 0));
 
         mockMvc.perform(get("/distributors/my/application")
                         .header("Authorization", bearer("res_applicant", "resident", "pc_test001", null)))
@@ -188,6 +203,8 @@ class DistributorLeaderAuditFlowTest extends ControllerTestBase {
                 "ila_old", "rejected", LocalDateTime.of(2026, 10, 1, 10, 0)));
         individualLeaderApplicationRepository.save(individualLeaderApplication(
                 "ila_new", "pending", LocalDateTime.of(2026, 10, 2, 10, 0)));
+        pinCreatedAt("individual_leader_applications", "ila_old", LocalDateTime.of(2026, 10, 1, 10, 0));
+        pinCreatedAt("individual_leader_applications", "ila_new", LocalDateTime.of(2026, 10, 2, 10, 0));
 
         mockMvc.perform(get("/individual-leaders/my-application")
                         .header("Authorization", bearer("res_applicant", "resident", "pc_test001", null)))

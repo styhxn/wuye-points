@@ -8,6 +8,7 @@ import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -19,40 +20,70 @@ import java.util.LinkedHashMap;
 import java.util.UUID;
 
 /**
- * 微信官方支付服务（平台微信支付分账 partner JSAPI），实现 {@link PayChannel}。
+ * 微信官方支付服务，实现 {@link PayChannel}；按流水固化的通道路由到两个独立商户主体。
  *
- * <p>下单走「平台微信支付分账 partner 模式」(/{@code v3/pay/partner/transactions/jsapi})，
- * 与已废弃的 CBK / 扫呗（LCSW）聚合支付无关。返给前端的 {@link WechatJsPayParams} 由前端原样透传 wx.requestPayment。</p>
+ * <ul>
+ *   <li><b>直连商户</b>（{@code wechat.direct}）：平台自营业务（物业费/充值/食堂/广告/服务预约等），
+ *       走 {@code /v3/pay/transactions/jsapi}，资金进平台直连商户号，不做微信分账；</li>
+ *   <li><b>服务商</b>（{@code wechat.pay}，sp_mchid）：商城订单，走
+ *       {@code /v3/pay/partner/transactions/jsapi}，资金进商家特约商户号，下单即标记
+ *       {@code settle_info.profit_sharing=true}，订单完成后走官方分账；</li>
+ *   <li><b>电商收付通</b>：同为 partner 下单，但分账/退款走 {@code /v3/ecommerce/*}（需 ICP/EDI，二期）。</li>
+ * </ul>
+ *
+ * <p><b>路由原则</b>：预下单时把 {@code pay_mode} 与 {@code mch_id} 写入流水，之后查单/退款/关单
+ * 一律按流水通道选择对应的 HTTP 客户端与接口，禁止按“当前配置”猜测——运营调整配置不会影响历史流水。</p>
  */
 @Slf4j
 @Service
 public class WechatPayService implements PayChannel {
 
-    private final WechatHttpClient httpClient;
-    private final WechatPayProperties props;
-    private final WechatCertManager certManager;
+    private final WechatHttpClient partnerClient;
+    private final WechatHttpClient directClient;
+    private final WechatPayProperties partnerProps;
+    private final WechatDirectProperties directProps;
+    private final EcommerceSplitProperties ecommerceProps;
     private final PaymentRecordRepository paymentRecordRepository;
     private final SnowflakeIdGenerator idGenerator;
 
-    public WechatPayService(WechatHttpClient httpClient, WechatPayProperties props,
-                            WechatCertManager certManager, PaymentRecordRepository paymentRecordRepository,
+    public WechatPayService(@Qualifier("wechatHttpClient") WechatHttpClient partnerClient,
+                            @Qualifier("directWechatHttpClient") WechatHttpClient directClient,
+                            WechatPayProperties partnerProps,
+                            WechatDirectProperties directProps,
+                            EcommerceSplitProperties ecommerceProps,
+                            PaymentRecordRepository paymentRecordRepository,
                             SnowflakeIdGenerator idGenerator) {
-        this.httpClient = httpClient;
-        this.props = props;
-        this.certManager = certManager;
+        this.partnerClient = partnerClient;
+        this.directClient = directClient;
+        this.partnerProps = partnerProps;
+        this.directProps = directProps;
+        this.ecommerceProps = ecommerceProps;
         this.paymentRecordRepository = paymentRecordRepository;
         this.idGenerator = idGenerator;
     }
 
+    /** 任一通道就绪即视为在线支付可用（具体业务在下单时校验对应通道）。 */
     @Override
     public boolean isEnabled() {
-        return props.isConfigured();
+        return isDirectEnabled() || isPartnerEnabled();
+    }
+
+    /** 直连商户通道是否就绪（平台自营业务使用）。 */
+    @Override
+    public boolean isDirectEnabled() {
+        return directProps.isConfigured();
+    }
+
+    /** 服务商通道是否就绪（商城订单 + 官方分账使用）。 */
+    public boolean isPartnerEnabled() {
+        return partnerProps.isConfigured();
     }
 
     @Override
     public void validate() {
-        if (!props.isConfigured()) {
-            throw new WechatPayException("WECHAT_PAY_NOT_CONFIGURED", "微信支付未配置（mchId/apiV3Key/私钥缺失）", null);
+        if (!isEnabled()) {
+            throw new WechatPayException("WECHAT_PAY_NOT_CONFIGURED",
+                    "微信支付未配置（服务商 wechat.pay / 直连 wechat.direct 均未就绪）", null);
         }
     }
 
@@ -88,22 +119,17 @@ public class WechatPayService implements PayChannel {
         }
     }
 
+    /**
+     * 直连商户下单（平台自营业务）：POST /v3/pay/transactions/jsapi。
+     * 资金直接进平台直连商户号，无二级商户号、不做微信分账。
+     */
     @Override
     public WechatJsPayParams miniPay(PaymentRecord record, String openId, String orderBody) {
-        // 电商收付通模式（流水有真实二级商户号）：走服务商 partner 接口，payer 用 sp_openid。
-        // 直连商户模式（无二级商户号）：走 /v3/pay/transactions/jsapi，payer 用 openid。
-        if (StringUtils.hasText(record.getSubMchid())) {
-            return partnerMiniPay(record, openId, orderBody);
-        }
-        return directMiniPay(record, openId, orderBody);
-    }
+        requireDirectConfigured();
+        record.setPayMode(WechatPayModes.DIRECT);
+        record.setMchId(directProps.getMchId());
+        paymentRecordRepository.save(record);
 
-    /**
-     * 直连商户下单：POST /v3/pay/transactions/jsapi，payer 用 openid，资金直接进商户号 mchid。
-     * <p>微信硬规则：服务商不能把自己的 sp_mchid 设为 sub_mchid；普通分账 /v3/profitsharing
-     * 只认直连商户号收款。故非收付通场景必须走直连，才能与分账/退款链路自洽。</p>
-     */
-    private WechatJsPayParams directMiniPay(PaymentRecord record, String openId, String orderBody) {
         LinkedHashMap<String, Object> amount = new LinkedHashMap<>();
         amount.put("total", Integer.parseInt(fen(record.getCashAmount())));
         amount.put("currency", "CNY");
@@ -112,37 +138,44 @@ public class WechatPayService implements PayChannel {
         payer.put("openid", openId);
 
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-        body.put("appid", props.getAppId());
-        body.put("mchid", props.getMchId());
+        body.put("appid", directProps.getAppId());
+        body.put("mchid", directProps.getMchId());
         body.put("description", orderBody);
         body.put("out_trade_no", record.getOutTradeNo());
-        body.put("notify_url", props.getNotifyUrl());
+        body.put("notify_url", directProps.getNotifyUrl());
         body.put("amount", amount);
         body.put("payer", payer);
-        // 微信 APIv3 硬规则：分账标识必须放在 settle_info.profit_sharing。
-        // 顶层平铺 profit_sharing 会报 PARAM_ERROR「请求中含有未在API文档中定义的参数」；
-        // 而不带此标识，后续 /v3/profitsharing 冻结又会报「非分账订单不支持分账」，导致全部分账失败。
-        if (props.isProfitSharing()) {
-            LinkedHashMap<String, Object> settleInfo = new LinkedHashMap<>();
-            settleInfo.put("profit_sharing", true);
-            body.put("settle_info", settleInfo);
-        }
 
-        String resp = httpClient.post(props.getGateway() + "/v3/pay/transactions/jsapi", body);
+        String resp = directClient.post(directProps.getGateway() + "/v3/pay/transactions/jsapi", body);
         String prepayId = parseField(resp, "prepay_id");
         if (prepayId == null) {
             throw new WechatPayException("WECHAT_JSAPI_NO_PREPAY", "微信 JSAPI 下单未返回 prepay_id", resp);
         }
-        return buildJsPayParams(prepayId, record.getOutTradeNo());
+        return buildJsPayParams(prepayId, record.getOutTradeNo(), directClient, directProps.getAppId());
     }
 
     /**
-     * 电商收付通下单：POST /v3/pay/partner/transactions/jsapi，payer 用 sp_openid，
-     * 用户付款直进「订单商家二级商户号」。本平台为统一单小程序、无商家独立 sub_appid，
+     * 服务商下单（商城订单）：POST /v3/pay/partner/transactions/jsapi，payer 用 sp_openid，
+     * 用户付款直进「订单商家特约商户号」。本平台为统一小程序、商家无独立 sub_appid，
      * 故 sp_openid 直接用居民在该小程序下的 openid。
+     *
+     * <p>{@code settle_info.profit_sharing} 必须为 true：缺失时微信将该笔订单标记为「非分账订单」，
+     * 后续 {@code /v3/profitsharing/orders} 会以「非分账订单不支持分账」拒绝。凡走服务商通道的
+     * 订单都必然需要分账，故此处强制开启，不依赖配置开关。</p>
      */
-    private WechatJsPayParams partnerMiniPay(PaymentRecord record, String openId, String orderBody) {
-        String subMchId = resolveSubMchid(record);
+    @Override
+    public WechatJsPayParams miniPay(PaymentRecord record, String openId, String orderBody, String subMchid) {
+        if (!StringUtils.hasText(subMchid)) {
+            throw new WechatPayException("WECHAT_SUB_MCHID_MISSING",
+                    "服务商模式缺少商家特约商户号(sub_mchid)，禁止回退服务商号", null);
+        }
+        requirePartnerConfigured();
+        boolean ecommerce = ecommerceProps.isEnabled();
+        record.setSubMchid(subMchid);
+        record.setPayMode(ecommerce ? WechatPayModes.ECOMMERCE : WechatPayModes.PARTNER);
+        record.setMchId(partnerProps.getMchId());
+        paymentRecordRepository.save(record);
+
         LinkedHashMap<String, Object> amount = new LinkedHashMap<>();
         amount.put("total", Integer.parseInt(fen(record.getCashAmount())));
         amount.put("currency", "CNY");
@@ -150,70 +183,41 @@ public class WechatPayService implements PayChannel {
         LinkedHashMap<String, Object> payer = new LinkedHashMap<>();
         payer.put("sp_openid", openId);
 
+        LinkedHashMap<String, Object> settleInfo = new LinkedHashMap<>();
+        settleInfo.put("profit_sharing", true);
+
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-        body.put("sp_appid", props.getAppId());
-        body.put("sp_mchid", props.getMchId());
-        body.put("sub_mchid", subMchId);
+        body.put("sp_appid", partnerProps.getAppId());
+        body.put("sp_mchid", partnerProps.getMchId());
+        body.put("sub_mchid", subMchid);
         body.put("description", orderBody);
         body.put("out_trade_no", record.getOutTradeNo());
-        body.put("notify_url", props.getNotifyUrl());
+        body.put("notify_url", partnerProps.getNotifyUrl());
         body.put("amount", amount);
         body.put("payer", payer);
-        // 服务商下单同样以 settle_info.profit_sharing 标记分账；缺失会导致后续电商分账报「非分账订单不支持分账」
-        if (props.isProfitSharing()) {
-            LinkedHashMap<String, Object> settleInfo = new LinkedHashMap<>();
-            settleInfo.put("profit_sharing", true);
-            body.put("settle_info", settleInfo);
-        }
+        body.put("settle_info", settleInfo);
 
-        String resp = httpClient.post(props.getGateway() + "/v3/pay/partner/transactions/jsapi", body);
+        String resp = partnerClient.post(partnerProps.getGateway() + "/v3/pay/partner/transactions/jsapi", body);
         String prepayId = parseField(resp, "prepay_id");
         if (prepayId == null) {
-            throw new WechatPayException("WECHAT_JSAPI_NO_PREPAY", "微信 JSAPI 下单未返回 prepay_id", resp);
+            throw new WechatPayException("WECHAT_JSAPI_NO_PREPAY", "微信服务商 JSAPI 下单未返回 prepay_id", resp);
         }
-        return buildJsPayParams(prepayId, record.getOutTradeNo());
-    }
-
-    /**
-     * 指定入账二级商户号发起支付（电商收付通模式：用户付款直进「订单商家」的二级商户号）。
-     * sub_mchid 同时回写支付流水，供后续查单 / 退款 / 电商分账按商家路由。
-     */
-    @Override
-    public WechatJsPayParams miniPay(PaymentRecord record, String openId, String orderBody, String subMchid) {
-        if (StringUtils.hasText(subMchid)) {
-            record.setSubMchid(subMchid);
-            paymentRecordRepository.save(record);
-        }
-        return miniPay(record, openId, orderBody);
-    }
-
-    /**
-     * 解析该笔支付的入账二级商户号：仅流水回写值有效（fail-closed）。
-     * <p>微信硬规则：服务商不能把 sp_mchid 设为 sub_mchid，缺真实二级商户号必须拒绝，
-     * 禁止兜底回退服务商号，否则 partner 下单会被微信业务校验拒绝。</p>
-     */
-    private String resolveSubMchid(PaymentRecord record) {
-        if (record != null && StringUtils.hasText(record.getSubMchid())) {
-            return record.getSubMchid();
-        }
-        throw new WechatPayException("WECHAT_SUB_MCHID_MISSING",
-                "电商收付通模式缺少真实二级商户号(sub_mchid)，禁止回退服务商号", null);
+        return buildJsPayParams(prepayId, record.getOutTradeNo(), partnerClient, partnerProps.getAppId());
     }
 
     @Override
     public String query(PaymentRecord record) {
+        Channel ch = channelOf(record);
         String url;
-        if (StringUtils.hasText(record.getSubMchid())) {
-            // 电商收付通：partner 模式，按二级商户号查单
-            url = props.getGateway() + "/v3/pay/partner/transactions/out-trade-no/" + record.getOutTradeNo()
-                    + "?sub_mchid=" + resolveSubMchid(record);
+        if (ch.partner()) {
+            url = ch.props().getGateway() + "/v3/pay/partner/transactions/out-trade-no/" + record.getOutTradeNo()
+                    + "?sp_mchid=" + ch.props().getMchId()
+                    + "&sub_mchid=" + requireSubMchid(record, ch.mode());
         } else {
-            // 直连商户：按 mchid 查单
-            url = props.getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo()
-                    + "?mchid=" + props.getMchId();
+            url = ch.props().getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo()
+                    + "?mchid=" + ch.props().getMchId();
         }
-        String resp = httpClient.get(url);
-        return parseField(resp, "trade_state");
+        return parseField(ch.client().get(url), "trade_state");
     }
 
     /**
@@ -224,39 +228,26 @@ public class WechatPayService implements PayChannel {
         if (!StringUtils.hasText(record.getOutTradeNo())) {
             return null;
         }
+        Channel ch = channelOf(record);
         String url;
-        if (StringUtils.hasText(record.getSubMchid())) {
-            url = props.getGateway() + "/v3/pay/partner/transactions/out-trade-no/" + record.getOutTradeNo()
-                    + "?sub_mchid=" + resolveSubMchid(record);
+        if (ch.partner()) {
+            url = ch.props().getGateway() + "/v3/pay/partner/transactions/out-trade-no/" + record.getOutTradeNo()
+                    + "?sp_mchid=" + ch.props().getMchId()
+                    + "&sub_mchid=" + requireSubMchid(record, ch.mode());
         } else {
-            url = props.getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo()
-                    + "?mchid=" + props.getMchId();
+            url = ch.props().getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo()
+                    + "?mchid=" + ch.props().getMchId();
         }
-        String resp = httpClient.get(url);
-        return parseField(resp, "transaction_id");
+        return parseField(ch.client().get(url), "transaction_id");
     }
 
     @Override
     public String refund(PaymentRecord record, BigDecimal refundAmountYuan, String reason) {
+        Channel ch = channelOf(record);
         String outRefundNo = idGenerator.generateId("rf_");
-        // 电商收付通模式（资金在商家二级商户号）：走 /v3/ecommerce/refunds/apply
-        if (StringUtils.hasText(record.getSubMchid())) {
-            return ecommerceRefund(record, refundAmountYuan, reason, outRefundNo);
-        }
-        // 直连商户模式（非收付通）：资金在平台商户号，走通用退款接口 /v3/refund/domestic/refunds
-        LinkedHashMap<String, Object> amount = new LinkedHashMap<>();
-        amount.put("refund", Integer.parseInt(fen(refundAmountYuan)));
-        amount.put("total", Integer.parseInt(fen(record.getCashAmount())));
-        amount.put("currency", "CNY");
-
-        LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-        body.put("out_trade_no", record.getOutTradeNo());
-        body.put("out_refund_no", outRefundNo);
-        body.put("reason", reason);
-        body.put("notify_url", StringUtils.hasText(props.getRefundNotifyUrl()) ? props.getRefundNotifyUrl() : props.getNotifyUrl());
-        body.put("amount", amount);
-
-        String resp = httpClient.post(props.getGateway() + "/v3/refund/domestic/refunds", body);
+        String resp = WechatPayModes.ECOMMERCE.equals(ch.mode())
+                ? ecommerceRefund(record, ch, refundAmountYuan, reason, outRefundNo)
+                : domesticRefund(record, ch, refundAmountYuan, reason, outRefundNo);
         String returned = parseField(resp, "out_refund_no");
         if (!StringUtils.hasText(returned)) {
             throw new WechatPayException("WECHAT_REFUND_FAIL", "微信退款未返回 out_refund_no", resp);
@@ -268,32 +259,50 @@ public class WechatPayService implements PayChannel {
     }
 
     /**
-     * 电商收付通退款：POST /v3/ecommerce/refunds/apply（退款从商家二级商户号余额扣减）。
-     * 若该笔已发起过分账，退款前需先走分账回退（PERSONAL_OPENID 不可回退，业务侧另行处理）。
+     * 直连 / 服务商普通退款：POST /v3/refund/domestic/refunds。
+     * 服务商模式必须携带 sub_mchid（退款从特约商户号扣减），签名主体为 sp_mchid。
      */
-    private String ecommerceRefund(PaymentRecord record, BigDecimal refundAmountYuan, String reason, String outRefundNo) {
+    private String domesticRefund(PaymentRecord record, Channel ch, BigDecimal refundAmountYuan,
+                                  String reason, String outRefundNo) {
         LinkedHashMap<String, Object> amount = new LinkedHashMap<>();
         amount.put("refund", Integer.parseInt(fen(refundAmountYuan)));
         amount.put("total", Integer.parseInt(fen(record.getCashAmount())));
         amount.put("currency", "CNY");
 
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-        body.put("appid", props.getAppId());
-        body.put("sub_mchid", record.getSubMchid());
+        if (ch.partner()) {
+            body.put("sub_mchid", requireSubMchid(record, ch.mode()));
+        }
+        body.put("out_trade_no", record.getOutTradeNo());
+        body.put("out_refund_no", outRefundNo);
+        body.put("reason", reason);
+        body.put("notify_url", notifyUrlOf(ch));
+        body.put("amount", amount);
+
+        return ch.client().post(ch.props().getGateway() + "/v3/refund/domestic/refunds", body);
+    }
+
+    /**
+     * 电商收付通退款：POST /v3/ecommerce/refunds/apply（退款从商家二级商户号余额扣减）。
+     * 若该笔已发起过分账，退款前需先走分账回退（个人 openid 不可回退，业务侧另行处理）。
+     */
+    private String ecommerceRefund(PaymentRecord record, Channel ch, BigDecimal refundAmountYuan,
+                                   String reason, String outRefundNo) {
+        LinkedHashMap<String, Object> amount = new LinkedHashMap<>();
+        amount.put("refund", Integer.parseInt(fen(refundAmountYuan)));
+        amount.put("total", Integer.parseInt(fen(record.getCashAmount())));
+        amount.put("currency", "CNY");
+
+        LinkedHashMap<String, Object> body = new LinkedHashMap<>();
+        body.put("appid", ch.props().getAppId());
+        body.put("sub_mchid", requireSubMchid(record, ch.mode()));
         body.put("out_trade_no", record.getOutTradeNo());
         body.put("out_refund_no", outRefundNo);
         body.put("reason", reason);
         body.put("amount", amount);
-        body.put("notify_url", StringUtils.hasText(props.getRefundNotifyUrl()) ? props.getRefundNotifyUrl() : props.getNotifyUrl());
+        body.put("notify_url", notifyUrlOf(ch));
 
-        String resp = httpClient.post(props.getGateway() + "/v3/ecommerce/refunds/apply", body);
-        String returned = parseField(resp, "out_refund_no");
-        if (!StringUtils.hasText(returned)) {
-            throw new WechatPayException("WECHAT_ECOMMERCE_REFUND_FAIL", "电商收付通退款未返回 out_refund_no", resp);
-        }
-        record.setOutRefundNo(outRefundNo);
-        paymentRecordRepository.save(record);
-        return outRefundNo;
+        return ch.client().post(ch.props().getGateway() + "/v3/ecommerce/refunds/apply", body);
     }
 
     @Override
@@ -301,30 +310,36 @@ public class WechatPayService implements PayChannel {
         if (!StringUtils.hasText(record.getOutRefundNo())) {
             return null;
         }
+        Channel ch = channelOf(record);
         String url;
-        if (StringUtils.hasText(record.getSubMchid())) {
-            url = props.getGateway() + "/v3/ecommerce/refunds/out-refund-no/" + record.getOutRefundNo()
-                    + "?sub_mchid=" + record.getSubMchid();
+        if (WechatPayModes.ECOMMERCE.equals(ch.mode())) {
+            url = ch.props().getGateway() + "/v3/ecommerce/refunds/out-refund-no/" + record.getOutRefundNo()
+                    + "?sub_mchid=" + requireSubMchid(record, ch.mode());
+        } else if (WechatPayModes.PARTNER.equals(ch.mode())) {
+            url = ch.props().getGateway() + "/v3/refund/domestic/refunds/out-refund-no/" + record.getOutRefundNo()
+                    + "?sub_mchid=" + requireSubMchid(record, ch.mode());
         } else {
-            url = props.getGateway() + "/v3/refund/domestic/refunds/out-refund-no/" + record.getOutRefundNo();
+            url = ch.props().getGateway() + "/v3/refund/domestic/refunds/out-refund-no/" + record.getOutRefundNo();
         }
-        String resp = httpClient.get(url);
-        return parseField(resp, "status");
+        return parseField(ch.client().get(url), "status");
     }
 
     @Override
     public void close(PaymentRecord record) {
-        if (StringUtils.hasText(record.getSubMchid())) {
-            // 电商收付通：服务商关单（按二级商户号）
+        Channel ch = channelOf(record);
+        if (ch.partner()) {
+            // 服务商/电商：按 sp_mchid + sub_mchid 关单
             LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-            body.put("sp_mchid", props.getMchId());
-            body.put("sub_mchid", resolveSubMchid(record));
-            httpClient.post(props.getGateway() + "/v3/pay/partner/transactions/out-trade-no/" + record.getOutTradeNo() + "/close", body);
+            body.put("sp_mchid", ch.props().getMchId());
+            body.put("sub_mchid", requireSubMchid(record, ch.mode()));
+            ch.client().post(ch.props().getGateway() + "/v3/pay/partner/transactions/out-trade-no/"
+                    + record.getOutTradeNo() + "/close", body);
         } else {
-            // 直连商户：普通关单（按 mchid）
+            // 直连商户：按 mchid 关单
             LinkedHashMap<String, Object> body = new LinkedHashMap<>();
-            body.put("mchid", props.getMchId());
-            httpClient.post(props.getGateway() + "/v3/pay/transactions/out-trade-no/" + record.getOutTradeNo() + "/close", body);
+            body.put("mchid", ch.props().getMchId());
+            ch.client().post(ch.props().getGateway() + "/v3/pay/transactions/out-trade-no/"
+                    + record.getOutTradeNo() + "/close", body);
         }
         record.setStatus("closed");
         paymentRecordRepository.save(record);
@@ -337,13 +352,14 @@ public class WechatPayService implements PayChannel {
         paymentRecordRepository.save(record);
     }
 
-    private WechatJsPayParams buildJsPayParams(String prepayId, String outTradeNo) {
+    private WechatJsPayParams buildJsPayParams(String prepayId, String outTradeNo,
+                                               WechatHttpClient client, String appId) {
         String timeStamp = String.valueOf(System.currentTimeMillis() / 1000);
         String nonceStr = UUID.randomUUID().toString().replace("-", "");
-        String message = props.getAppId() + "\n" + timeStamp + "\n" + nonceStr + "\nprepay_id=" + prepayId + "\n";
-        String paySign = WechatCrypto.sign(httpClient.getPrivateKey(), message);
+        String message = appId + "\n" + timeStamp + "\n" + nonceStr + "\nprepay_id=" + prepayId + "\n";
+        String paySign = WechatCrypto.sign(client.getPrivateKey(), message);
         WechatJsPayParams params = new WechatJsPayParams();
-        params.setAppId(props.getAppId());
+        params.setAppId(appId);
         params.setTimeStamp(timeStamp);
         params.setNonceStr(nonceStr);
         params.setPkg("prepay_id=" + prepayId);
@@ -351,6 +367,45 @@ public class WechatPayService implements PayChannel {
         params.setPaySign(paySign);
         params.setOutTradeNo(outTradeNo);
         return params;
+    }
+
+    /** 按流水固化的通道解析出「客户端 + 配置 + 是否 partner 系」。 */
+    private Channel channelOf(PaymentRecord record) {
+        String mode = WechatPayModes.resolve(record.getPayMode(), record.getSubMchid(), ecommerceProps.isEnabled());
+        if (WechatPayModes.ECOMMERCE.equals(mode) || WechatPayModes.PARTNER.equals(mode)) {
+            return new Channel(mode, partnerClient, partnerProps, true);
+        }
+        return new Channel(WechatPayModes.DIRECT, directClient, directProps, false);
+    }
+
+    private String requireSubMchid(PaymentRecord record, String mode) {
+        if (record == null || !StringUtils.hasText(record.getSubMchid())) {
+            throw new WechatPayException("WECHAT_SUB_MCHID_MISSING",
+                    "该笔支付为 " + mode + " 通道但缺少 sub_mchid，无法调用微信接口 recordId="
+                            + (record == null ? null : record.getId()), null);
+        }
+        return record.getSubMchid();
+    }
+
+    private String notifyUrlOf(Channel ch) {
+        return StringUtils.hasText(ch.props().getRefundNotifyUrl())
+                ? ch.props().getRefundNotifyUrl() : ch.props().getNotifyUrl();
+    }
+
+    private void requireDirectConfigured() {
+        if (!isDirectEnabled()) {
+            throw new WechatPayException("WECHAT_DIRECT_NOT_CONFIGURED",
+                    "直连商户通道未配置（wechat.direct.enabled/mch-id/私钥/APIv3 密钥/证书序列号），"
+                            + "平台自营业务暂不可在线支付", null);
+        }
+    }
+
+    private void requirePartnerConfigured() {
+        if (!isPartnerEnabled()) {
+            throw new WechatPayException("WECHAT_PARTNER_NOT_CONFIGURED",
+                    "服务商通道未配置（wechat.pay.enabled/mch-id/私钥/APIv3 密钥/证书序列号），"
+                            + "商城订单暂不可在线支付", null);
+        }
     }
 
     private static String fen(BigDecimal yuan) {
@@ -367,5 +422,9 @@ public class WechatPayService implements PayChannel {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 通道路由结果：模式 + HTTP 客户端 + 该通道配置。 */
+    private record Channel(String mode, WechatHttpClient client, WechatMerchantProperties props, boolean partner) {
     }
 }

@@ -26,6 +26,8 @@ public interface WechatSplitRecordRepository extends JpaRepository<WechatSplitRe
 
     List<WechatSplitRecord> findByOrderIdAndStatusIn(String orderId, List<String> statuses);
 
+    List<WechatSplitRecord> findByOrderIdInAndStatusIn(java.util.Collection<String> orderIds, List<String> statuses);
+
     List<WechatSplitRecord> findByGroupNo(String groupNo);
 
     boolean existsByOrderIdAndOwnerType(String orderId, String ownerType);

@@ -29,6 +29,7 @@ import com.wuye.points.repository.NeighborContactLimitRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.MessageSpecifications;
+import com.wuye.points.util.AdminAuthorizationContext;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
@@ -858,7 +859,9 @@ public class MessageService {
             }
             return message.getToRole().equals(viewer.getRole());
         }
-        return roleGuard.isPropertyAdmin();
+        // 管理端会话接口已按 user.manage 授权，标签身份可查看本物业会话。
+        return roleGuard.isPropertyAdmin()
+                || (AdminAuthorizationContext.isGranted() && roleGuard.isAdminWorkspaceUser());
     }
 
     private void assertCanMarkRead(Message message) {

@@ -18,17 +18,19 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 微信官方「服务商分账 / profit sharing」API 封装（/{@code v3/profitsharing/*}）。
  *
- * <p>与已废弃的 CBK / 扫呗（LCSW）聚合支付无关——这里只调微信官方分账接口：
+ * <p>与已废弃的 CBK / 扫呗（LCSW）聚合支付无关——这里只调微信官方分账接口（普通服务商文档族
+ * {@code /v3/profitsharing/*}，勿与电商收付通的 {@code /v3/ecommerce/profitsharing/*}
+ * 及品牌服务商的 {@code /v3/brand/profitsharing/*} 混用）：
  * 请求分账 ({@code /orders})、解冻剩余资金 ({@code /orders/unfreeze})、
  * 分账回退 ({@code /return-orders})、查询分账结果 ({@code /orders/{out_order_no}})、
+ * 查询剩余待分金额 ({@code /transactions/{transaction_id}/amounts})、
  * 添加分账接收方 ({@code /receivers/add})。接收方类型为 MERCHANT_ID / PERSONAL_OPENID，
  * 不使用电商收付通的 sub_mchid 进件模式。</p>
  *
  * <p><b>2026-10-17 按微信官方文档（合作伙伴文档中心·分账）校准的关键约定</b>：</p>
  * <ul>
  *   <li>资金冻结在<b>特约商户（子商户）号</b>内，服务商通过 {@code sub_mchid} 指定分账出资方；
- *       请求分账 / 解冻剩余资金 / 回退 / 查单 / 添加接收方<b>均须携带 sub_mchid</b>
- *       （直连收款模式留空，分账方即平台商户号）;</li>
+ *       请求分账 / 解冻剩余资金 / 回退 / 查单 / 添加接收方<b>均须携带 sub_mchid</b>；</li>
  *   <li>请求分账应答的微信分账单号字段是 {@code order_id}（历史实现误取 sub_trade_no，
  *       导致回退时拿不到微信分账单号）;</li>
  *   <li>{@code appid} 在含 PERSONAL_OPENID 接收方时必填；敏感字段 name 需平台证书加密，
@@ -77,9 +79,9 @@ public class WechatSplitApiService {
      *
      * <p>微信官方要求 transaction_id 必须为「微信支付订单号」（支付回调/查单返回的 transaction_id），
      * 商户订单号(out_trade_no)传入会被拒绝。服务商模式下 sub_mchid 为分账出资方（收款商家子商户号），
-     * 直连模式传 null。</p>
+     * 本平台服务商分账必须携带该字段。</p>
      *
-     * @param subMchid 特约商户号（分账出资方）；直连模式传 null
+     * @param subMchid 特约商户号（分账出资方，必填）
      * @return 微信分账单号 order_id（解析失败返回 null）
      */
     public String freezeAllocate(String splitNo, String transactionId, String subMchid, String payeeAccount,
@@ -115,9 +117,9 @@ public class WechatSplitApiService {
 
     /**
      * 解冻剩余资金（售后窗口到期完结划账）：POST /v3/profitsharing/orders/unfreeze。
-     * 将剩余未分账资金解冻回分账方（子商户 / 直连平台商户号）。
+     * 将剩余未分账资金解冻回分账方（商家特约商户号）。
      *
-     * @param subMchid 特约商户号（分账出资方）；直连模式传 null
+     * @param subMchid 特约商户号（分账出资方，必填）
      */
     public void finishOrder(String splitNo, String transactionId, String subMchid) {
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
@@ -137,7 +139,7 @@ public class WechatSplitApiService {
      * 与商户分账单号 out_order_no 二选一；return_mchid 为原分账接收方账号；
      * <b>仅 MERCHANT_ID 类型接收方支持回退</b>，个人 openid 由调用方走垫付+追回台账。</p>
      *
-     * @param subMchid        特约商户号（分账出资方）；直连模式传 null
+     * @param subMchid        特约商户号（分账出资方，必填）
      * @param wechatOrderId   微信分账单号（可为空，届时仅凭商户分账单号回退）
      * @param receiverAccount 原分账接收方账号（return_mchid）
      * @return 微信回退单号 return_id
@@ -148,10 +150,12 @@ public class WechatSplitApiService {
         if (StringUtils.hasText(subMchid)) {
             body.put("sub_mchid", subMchid);
         }
+        // 微信文档：「微信分账单号和商户分账单号二选一填写」，同时传两个属参数错误
         if (StringUtils.hasText(wechatOrderId)) {
             body.put("order_id", wechatOrderId);
+        } else {
+            body.put("out_order_no", splitNo);
         }
-        body.put("out_order_no", splitNo);
         body.put("out_return_no", splitNo + "_RET");
         body.put("return_mchid", receiverAccount);
         body.put("amount", Integer.parseInt(fen(amount)));
@@ -164,10 +168,10 @@ public class WechatSplitApiService {
      * 查询分账结果：GET /v3/profitsharing/orders/{out_order_no}?sub_mchid=xxx&amp;transaction_id=xxx。
      *
      * <p>微信<b>不推送</b>普通分账结果异步通知（请求体亦不含 notify_url），本地 frozen 记录
-     * 只能靠本接口定期查单校核。应答状态字段为 {@code state}（PROCESSING/FINISHED），
+     * 只能靠本接口定期查单校核。应答状态字段为 {@code status}（PROCESSING/FINISHED），
      * 各接收方结果在 receivers[].result。由 {@code SplitReconcileScheduler} 定时调用。</p>
      *
-     * @param subMchid 特约商户号（分账出资方）；直连模式传 null
+     * @param subMchid 特约商户号（分账出资方，必填）
      * @return 微信原始响应 JSON（含 state / receivers）；查询失败返回 null
      */
     public JSONObject querySplitResult(String splitNo, String transactionId, String subMchid) {
@@ -185,18 +189,53 @@ public class WechatSplitApiService {
     }
 
     /**
+     * 查询订单剩余待分金额：GET /v3/profitsharing/transactions/{transaction_id}/amounts。
+     *
+     * <p>官方文档：请求分账前应先查剩余可分金额；分账总额不能超过「订单金额减去手续费的净额」，
+     * 而 30% 比例校验的基数是订单金额，两者取小才是安全上限。应答字段
+     * {@code unsplit_amount}（整数，单位分）。查询失败返回 null，由调用方退回按订单金额校验。</p>
+     *
+     * @param transactionId 微信支付订单号
+     * @return 剩余待分金额（分）；查询失败返回 null
+     */
+    public Long queryUnsplitAmount(String transactionId) {
+        if (!StringUtils.hasText(transactionId)) {
+            return null;
+        }
+        try {
+            String resp = httpClient.get(props.getGateway()
+                    + "/v3/profitsharing/transactions/" + transactionId + "/amounts");
+            JSONObject obj = JSONUtil.parseObj(resp);
+            if (obj.containsKey("unsplit_amount")) {
+                return obj.getLong("unsplit_amount");
+            }
+            log.warn("[微信分账] 查询剩余待分金额应答缺 unsplit_amount: {}", resp);
+            return null;
+        } catch (Exception e) {
+            log.warn("[微信分账] 查询剩余待分金额失败 transactionId={}: {}", transactionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 添加分账接收方（分账前置）：POST /v3/profitsharing/receivers/add。
      *
      * <p>分账前必须先把接收方加入<b>该子商户</b>的分账接收方列表，否则请求分账报
      * 「分账接收方关系不存在」。MERCHANT_ID 的 name 为商户全称（必传），
      * PERSONAL_OPENID 的 name 为个人姓名（选传，传则校验实名一致性）。</p>
      *
-     * @param subMchid     特约商户号（分账出资方）；直连模式传 null
-     * @param account      接收方账号（商户号或 openid）
-     * @param name         接收方全称/姓名（敏感字段，自动加密；可为空）
-     * @param relationType 与分账方的关系类型（SERVICE_PROVIDER/STORE/PARTNER/...）
+     * <p>relation_type 官方可选取值：SERVICE_PROVIDER / STORE / STAFF / STORE_OWNER /
+     * PARTNER / HEADQUARTER / BRAND / DISTRIBUTOR / USER / SUPPLIER / CUSTOM；
+     * 取 CUSTOM 时 {@code custom_relation} 必填（最多 10 字），其余取值不得填写。</p>
+     *
+     * @param subMchid      特约商户号（分账出资方，必填）
+     * @param account       接收方账号（商户号或 openid）
+     * @param name          接收方全称/姓名（敏感字段，自动加密；可为空）
+     * @param relationType  与分账方的关系类型
+     * @param customRelation CUSTOM 关系时的自定义说明（其余类型传 null）
      */
-    public void addReceiver(String subMchid, String account, String name, String relationType) {
+    public void addReceiver(String subMchid, String account, String name, String relationType,
+                            String customRelation) {
         LinkedHashMap<String, Object> body = new LinkedHashMap<>();
         if (StringUtils.hasText(subMchid)) {
             body.put("sub_mchid", subMchid);
@@ -210,7 +249,11 @@ public class WechatSplitApiService {
         if (encName != null) {
             body.put("name", encName);
         }
-        body.put("relation_type", StringUtils.hasText(relationType) ? relationType : "PARTNER");
+        String type = StringUtils.hasText(relationType) ? relationType : "PARTNER";
+        body.put("relation_type", type);
+        if ("CUSTOM".equals(type) && StringUtils.hasText(customRelation)) {
+            body.put("custom_relation", customRelation);
+        }
         httpClient.post(props.getGateway() + "/v3/profitsharing/receivers/add", body, serialHeaders(encName));
     }
 
@@ -221,7 +264,8 @@ public class WechatSplitApiService {
      * NO_RELATION / 「分账接收方关系不存在」暴露，落 freeze_failed 交由补偿调度重试，
      * 重试路径会再次调用本方法。</p>
      */
-    public void ensureReceiverAdded(String subMchid, String account, String name, String relationType) {
+    public void ensureReceiverAdded(String subMchid, String account, String name, String relationType,
+                                    String customRelation) {
         if (!StringUtils.hasText(account)) {
             return;
         }
@@ -230,7 +274,7 @@ public class WechatSplitApiService {
             return; // 本进程已成功添加过
         }
         try {
-            addReceiver(subMchid, account, name, relationType);
+            addReceiver(subMchid, account, name, relationType, customRelation);
         } catch (Exception e) {
             addedReceivers.remove(key); // 失败移除，允许后续重试
             log.warn("[微信分账] 添加分账接收方失败 subMchid={} account={}: {}", subMchid, account, e.getMessage());

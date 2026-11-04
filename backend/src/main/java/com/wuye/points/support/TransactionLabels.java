@@ -192,7 +192,8 @@ public final class TransactionLabels {
             Map.entry("sector_leader", "板块负责人提现"),
             Map.entry("building_leader", "楼长提现"),
             Map.entry("resident_seller", "业主卖家提现"),
-            Map.entry("property_manager", "物业经理提现")
+            Map.entry("property_manager", "物业经理提现"),
+            Map.entry("resident_wallet", "住户钱包提现")
     );
 
     private static final Map<String, String> OWNER_TYPES = Map.ofEntries(

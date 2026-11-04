@@ -36,10 +36,22 @@ class PaymentNotifyAuthTest extends ControllerTestBase {
     @Test
     @DisplayName("POST /payment/notify/wechatpay 无令牌 → 200（不再 401）")
     void wechatPayNotify_noToken_reachesController() throws Exception {
-        when(paymentCompletionService.handleWechatNotify(anyString(), any(HttpHeaders.class)))
+        when(paymentCompletionService.handleWechatNotify(anyString(), any(HttpHeaders.class), any()))
                 .thenReturn(Map.of("code", "SUCCESS", "message", "ok"));
 
         mockMvc.perform(post("/payment/notify/wechatpay")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("POST /payment/notify/wechatpay-direct 无令牌 → 200（直连商户回调白名单）")
+    void wechatPayDirectNotify_noToken_reachesController() throws Exception {
+        when(paymentCompletionService.handleWechatNotify(anyString(), any(HttpHeaders.class), any()))
+                .thenReturn(Map.of("code", "SUCCESS", "message", "ok"));
+
+        mockMvc.perform(post("/payment/notify/wechatpay-direct")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isOk());

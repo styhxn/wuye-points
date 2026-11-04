@@ -5,6 +5,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -56,10 +58,22 @@ class GlobalExceptionHandlerTest {
     void handleDataIntegrityViolation_maps409WithoutLeakingRootCause() {
         // 唯一约束冲突统一 409，且不把表名/索引名/重复值回显给前端
         ResponseEntity<?> resp = handler.handleDataIntegrityViolation(
-                new DataIntegrityViolationException("Duplicate entry 'test' for key 'uk_name'"));
+                new DataIntegrityViolationException("Duplicate entry 'test' for key 'uk_name'"),
+                new MockHttpServletRequest("POST", "/api/v1/admin/role-accounts"));
         assertEquals(HttpStatus.CONFLICT, resp.getStatusCode());
         assertEquals(70003, ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getCode());
         assertEquals("数据冲突，请刷新后重试",
+                ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getMessage());
+    }
+
+    @Test
+    void handleMaxUploadSize_maps413WithReadableMessage() {
+        // 回归：应用层挡下的超大文件必须回 413 JSON，而不是 500「内部服务异常」让前端解析不出原因
+        ResponseEntity<?> resp = handler.handleMaxUploadSize(
+                new MaxUploadSizeExceededException(50L * 1024 * 1024));
+        assertEquals(HttpStatus.PAYLOAD_TOO_LARGE, resp.getStatusCode());
+        assertEquals(95002, ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getCode());
+        assertEquals("上传文件超过服务端限制 50MB",
                 ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getMessage());
     }
 

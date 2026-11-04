@@ -9,6 +9,7 @@ import com.wuye.points.dto.directedmessage.DirectedMessageDetailResponse;
 import com.wuye.points.dto.directedmessage.DirectedMessageListItemResponse;
 import com.wuye.points.dto.directedmessage.DirectedMessageRecipientItemResponse;
 import com.wuye.points.dto.directedmessage.UpdateAgeBracketsRequest;
+import com.wuye.points.dto.message.DirectedMessageStatsResponse;
 import com.wuye.points.service.DirectedMessageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -50,6 +51,15 @@ public class AdminDirectedMessageController {
             @Parameter(description = "物业公司ID") @RequestParam(required = false) String propertyCompanyId) {
         return ApiResponse.success(directedMessageService.listTasks(
                 page, pageSize, startDate, endDate, officialSenderType, propertyCompanyId));
+    }
+
+    @Operation(summary = "定向消息统计",
+            description = "任务数、触达人数、已读人数、已读率与今日/近 7 天发送量。权限: directed_message:stats")
+    @GetMapping("/directed-messages/stats")
+    public ApiResponse<DirectedMessageStatsResponse> getDirectedMessageStats(
+            @Parameter(description = "物业公司ID（平台端可选，物业端固定本物业）")
+            @RequestParam(required = false) String propertyCompanyId) {
+        return ApiResponse.success(directedMessageService.getStats(propertyCompanyId));
     }
 
     @Operation(summary = "定向推送任务详情", description = "角色: property_admin, platform_admin, coordinator")

@@ -92,6 +92,22 @@ public class DistributionRecord extends BaseEntity {
     @Column(name = "manager_share", precision = 10, scale = 2)
     private BigDecimal managerShare;
 
+    /** 用户积分预算比例快照（占抽佣基础额；V36 新增，历史数据为 null） */
+    @Column(name = "user_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal userPointShareRate;
+
+    /** 用户奖励金预算比例快照（占抽佣基础额；V36 新增，历史数据为 null） */
+    @Column(name = "user_reward_share_rate", precision = 5, scale = 4)
+    private BigDecimal userRewardShareRate;
+
+    /** 本次从平台盘切出的用户积分预算（元；V36 新增，历史数据为 null） */
+    @Column(name = "user_point_budget", precision = 10, scale = 2)
+    private BigDecimal userPointBudget;
+
+    /** 本次从平台盘切出的用户奖励金预算（元；V36 新增，历史数据为 null） */
+    @Column(name = "user_reward_budget", precision = 10, scale = 2)
+    private BigDecimal userRewardBudget;
+
     /** 平台分成（金额） */
     @Column(name = "platform_share", precision = 10, scale = 2)
     private BigDecimal platformShare;

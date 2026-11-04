@@ -34,6 +34,10 @@ public class MerchantWithdrawal extends BaseEntity {
     @Column(name = "amount", precision = 10, scale = 2, nullable = false)
     private BigDecimal amount;
 
+    /** 资金来源：legacy 历史内部收益 / coin_receivable 物业币应收 */
+    @Column(name = "source", length = 30, nullable = false)
+    private String source;
+
     @Column(name = "fee_rate", precision = 5, scale = 4, nullable = false)
     private BigDecimal feeRate;
 

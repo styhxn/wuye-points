@@ -61,6 +61,18 @@ public interface DeliveryRepository extends JpaRepository<Delivery, String>, Jpa
     long countByCourierIdAndStatusAndDeliveredAtBetween(
             String courierId, String status, LocalDateTime start, LocalDateTime end);
 
+    /** 今日完成单数：兼容历史 delivered 状态，统一按 completed 口径统计。 */
+    @Query("""
+            SELECT COUNT(d) FROM Delivery d
+            WHERE d.courierId = :courierId
+              AND d.status IN ('completed', 'delivered')
+              AND d.deliveredAt >= :start AND d.deliveredAt < :end
+            """)
+    long countCompletedByCourierIdAndDeliveredAtBetween(
+            @Param("courierId") String courierId,
+            @Param("start") LocalDateTime start,
+            @Param("end") LocalDateTime end);
+
     @Query("SELECT COALESCE(SUM(d.courierEarning), 0) FROM Delivery d WHERE d.courierId = :courierId AND d.status = 'completed' AND d.deliveredAt >= :start AND d.deliveredAt < :end")
     BigDecimal sumCourierEarningByCourierIdAndDeliveredAtBetween(
             @Param("courierId") String courierId,

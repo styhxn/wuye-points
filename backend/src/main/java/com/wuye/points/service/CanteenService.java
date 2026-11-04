@@ -137,7 +137,7 @@ public class CanteenService {
         purchase.setPayAmount(quotaAmount);
         purchase.setRemainingQuota(BigDecimal.ZERO);
 
-        if (wechatPayService.isEnabled()) {
+        if (wechatPayService.isDirectEnabled()) {
             // 防重复提交：该主商家已有 pending 购买时拒绝（按店主 resident 维度）
             if (!paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
                     PaymentBizType.QUOTA_PURCHASE, resolveOperatorId(merchant), "pending").isEmpty()) {

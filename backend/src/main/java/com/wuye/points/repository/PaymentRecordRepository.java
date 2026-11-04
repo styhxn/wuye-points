@@ -17,6 +17,9 @@ public interface PaymentRecordRepository extends JpaRepository<PaymentRecord, St
 
     Optional<PaymentRecord> findByBizId(String bizId);
 
+    /** 取该业务单最近一条指定状态的流水（同一订单可能因关单/重付存在多条流水） */
+    Optional<PaymentRecord> findFirstByBizIdAndStatusOrderByCreatedAtDesc(String bizId, String status);
+
     /** 订单详情展示支付流水状态（取该业务单最近一条流水） */
     Optional<PaymentRecord> findFirstByBizTypeAndBizIdOrderByCreatedAtDesc(String bizType, String bizId);
 

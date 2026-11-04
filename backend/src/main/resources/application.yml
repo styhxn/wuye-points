@@ -76,7 +76,9 @@ wechat:
       # 语义字段 -> 微信模板字段 映射（以实际申请的模板字段名为准）
       arrears-reminder-fields: '{"communityHouse":"thing1","arrearsPeriod":"thing2","arrearsAmount":"amount1","paymentDeadline":"date1","reminderText":"thing3"}'
   pay:
-    # 微信支付（平台微信支付分账）总开关。接入真实商户信息后置 true。
+    # ===== 服务商通道（sp_mchid）：商城订单收款 + 微信官方分账 =====
+    # 与下方 wechat.direct（平台自营直连商户）是两套独立商户主体，凭据不可混用。
+    # 微信支付（服务商）总开关。接入真实商户信息后置 true。
     enabled: ${WECHAT_PAY_ENABLED:true}
     mch-id: ${WECHAT_PAY_MCH_ID:}
     api-v3-key: ${WECHAT_PAY_API_V3_KEY:}
@@ -84,26 +86,67 @@ wechat:
     private-key-base64: ${WECHAT_PAY_PRIVATE_KEY_BASE64:}
     merchant-serial-number: ${WECHAT_PAY_MERCHANT_SERIAL_NUMBER:}
     app-id: ${WECHAT_PAY_APP_ID:wxf7230afd38275659}
+    # 服务商支付/退款回调（微信服务器直接调用，须 HTTPS）：/api/v1/payment/notify/wechatpay
     notify-url: ${WECHAT_PAY_NOTIFY_URL:}
     refund-notify-url: ${WECHAT_PAY_REFUND_NOTIFY_URL:}
+    # 微信支付公钥（2024 年后新开商户默认验签方式）：配置 public-key-id + 公钥文件/文本后，
+    # 回调验签与敏感字段加密均使用该公钥，不再拉取平台证书（新商户无平台证书，拉取会失败）。
+    public-key-id: ${WECHAT_PAY_PUBLIC_KEY_ID:}
+    public-key-path: ${WECHAT_PAY_PUBLIC_KEY_PATH:}
+    public-key-base64: ${WECHAT_PAY_PUBLIC_KEY_BASE64:}
     # 微信 APIv3 HTTP 超时（毫秒）：防止微信侧无响应时连接/线程被无限占用（RestTemplate 默认无超时）
     connect-timeout-ms: ${WECHAT_PAY_CONNECT_TIMEOUT_MS:5000}
     read-timeout-ms: ${WECHAT_PAY_READ_TIMEOUT_MS:20000}
     platform-sub-mch-id: ${WECHAT_PAY_PLATFORM_SUB_MCH_ID:}
     sub-mch-ids: ${WECHAT_PAY_SUB_MCH_IDS:}
-    # 分账标识开关（资金链路，fail-closed）：默认 false，启用须显式置 WECHAT_PAY_PROFIT_SHARING=true
+    # 分账标识开关（资金链路，fail-closed）：服务商通道下单时强制 settle_info.profit_sharing=true，
+    # 本项仅为兼容保留；直连通道不参与分账。
     profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:false}
     # 二级商户余额提现的出款账户类型（电商微信支付分账 withdraw 接口 account_type）：BASIC/FEES/OPERATION
     account-type: ${WECHAT_PAY_ACCOUNT_TYPE:BASIC}
     # 提现结果异步通知地址（提现成功/失败/退票/关单回调，须 HTTPS）
     withdraw-notify-url: ${WECHAT_PAY_WITHDRAW_NOTIFY_URL:}
-    # 普通分账：添加分账接收方时的关系类型（必须与实际业务关系一致），枚举见微信文档。
+    # 普通服务商分账：添加分账接收方时的关系类型（官方枚举：SERVICE_PROVIDER / STORE / STAFF /
+    # STORE_OWNER / PARTNER / HEADQUARTER / BRAND / DISTRIBUTOR / USER / SUPPLIER / CUSTOM）。
     # 平台自身作接收方时固定用 SERVICE_PROVIDER（服务商抽成）；本项作用于物业/协调员/负责人/快递员等
-    # 合作方，缺省 PARTNER（合作伙伴）
+    # 合作方，缺省 PARTNER（合作伙伴）。取 CUSTOM 时必须同时配置 receiver-custom-relation（≤10 字），其余取值不得填写。
     receiver-relation-type: ${WECHAT_PAY_RECEIVER_RELATION_TYPE:PARTNER}
     receiver-custom-relation: ${WECHAT_PAY_RECEIVER_CUSTOM_RELATION:}
     # 平台作为分账接收方的商户全称（MERCHANT_ID 添加分账接收方时 name 必传）
     platform-receiver-name: ${WECHAT_PAY_PLATFORM_RECEIVER_NAME:}
+
+  direct:
+    # ===== 直连商户通道：平台自营业务（物业费/充值/食堂/广告/服务预约/活动组/保证金）=====
+    # 资金直接进平台直连商户号，不做微信分账。与 wechat.pay（服务商）是不同商户主体。
+    # fail-closed：未配置时平台自营在线支付会被明确拒绝，不会误落到服务商号。
+    enabled: ${WECHAT_DIRECT_ENABLED:false}
+    mch-id: ${WECHAT_DIRECT_MCH_ID:}
+    api-v3-key: ${WECHAT_DIRECT_API_V3_KEY:}
+    private-key-path: ${WECHAT_DIRECT_PRIVATE_KEY_PATH:}
+    private-key-base64: ${WECHAT_DIRECT_PRIVATE_KEY_BASE64:}
+    merchant-serial-number: ${WECHAT_DIRECT_MERCHANT_SERIAL_NUMBER:}
+    app-id: ${WECHAT_DIRECT_APP_ID:wxf7230afd38275659}
+    # 直连支付/退款回调：/api/v1/payment/notify/wechatpay-direct（与服务商回调地址不同）
+    notify-url: ${WECHAT_DIRECT_NOTIFY_URL:}
+    refund-notify-url: ${WECHAT_DIRECT_REFUND_NOTIFY_URL:}
+    # 微信支付公钥（若该直连商户为 2024 年后新开主体，按公钥模式配置）
+    public-key-id: ${WECHAT_DIRECT_PUBLIC_KEY_ID:}
+    public-key-path: ${WECHAT_DIRECT_PUBLIC_KEY_PATH:}
+    public-key-base64: ${WECHAT_DIRECT_PUBLIC_KEY_BASE64:}
+
+  applyment:
+    # ===== 商家进件：服务商「特约商户进件」=====
+    # 提交 POST /v3/applyment4sub/applyment/，凭据复用 wechat.pay（服务商 1752012787）。
+    # 商家前端自助填资料 → 后端提交 → 超管扫 sign_url 签约 → 审核完成回填 sub_mchid。
+    enabled: ${WECHAT_APPLYMENT_ENABLED:true}
+    # 资料保存后是否自动提交微信（失败记 lastError，可手动重试）
+    auto-submit: ${WECHAT_APPLYMENT_AUTO_SUBMIT:false}
+    # 入驻结算规则ID（可留空：企业自动 716 / 个体户自动 719，官方公示表固定值）
+    settlement-id: ${WECHAT_APPLYMENT_SETTLEMENT_ID:}
+    # 所属行业名称（可留空，默认「居民生活服务」；可选见 PartnerApplymentRules）
+    qualification-type: ${WECHAT_APPLYMENT_QUALIFICATION_TYPE:居民生活服务}
+    # 是否金融机构主体（默认否）
+    finance-institution: ${WECHAT_APPLYMENT_FINANCE_INSTITUTION:false}
 
 # 微信支付分账（普通分账 / profit sharing）配置，前缀 wechat-split。
 # 资金分账已走微信官方支付分账（WechatSplitApiService），以下为分账业务参数（不含第三方聚合支付配置）。
@@ -118,6 +161,10 @@ wechat-split:
   auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:false}
   # 归集户余额监控阈值(元)，留空=不监控
   collect-balance-alert-threshold: ${WECHAT_SPLIT_COLLECT_ALERT_THRESHOLD:}
+  # 售后窗口天数（超过则自动完结划账）；微信服务商分账最长冻结 30 天，超过 30 按 30 处理
+  after-sale-days: ${WECHAT_SPLIT_AFTER_SALE_DAYS:7}
+  # 单笔订单分账总额上限比例（相对订单实付金额），须与微信商户平台「最大分账比例」一致（默认 30%）
+  max-split-ratio: ${WECHAT_SPLIT_MAX_RATIO:0.30}
   # 灰度白名单(物业公司ID列表)，空=全部启用(受全局 enabled 约束)；非空=仅名单内启用分账
   enabled-property-companies: []
   # 说明：微信「普通分账」(/v3/profitsharing/orders) 请求体不含 notify_url，微信也不推送分账/提现结果异步通知，
@@ -140,10 +187,6 @@ wechat-ecommerce:
   receiver-relation-type: ${WECHAT_ECOMMERCE_RECEIVER_RELATION_TYPE:SERVICE_PROVIDER}
   # 分账结果异步通知地址（对应 /api/v1/payment/ecommerce-split/notify）
   notify-url: ${WECHAT_ECOMMERCE_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-split/notify}
-  # 商家平台审核通过后是否自动提交微信进件（默认 false：运营后台手动提交）
-  applyment-auto-submit: ${WECHAT_ECOMMERCE_APPLYMENT_AUTO_SUBMIT:false}
-  # 进件结果异步通知地址（进件无真实回调，预留占位）
-  applyment-notify-url: ${WECHAT_ECOMMERCE_APPLYMENT_NOTIFY_URL:https://test.yuanxusoftware.top/api/v1/payment/ecommerce-applyment/notify}
   # 内部结算转账默认渠道：zero(微信零钱)/bank(银行卡)
   transfer-channel: ${WECHAT_ECOMMERCE_TRANSFER_CHANNEL:zero}
   # 商家转账结果异步通知地址（对应 /api/v1/payment/ecommerce-transfer/notify）
@@ -155,8 +198,9 @@ app:
     # ⚠️ 当前默认 true 仅为联调；上线前必须设 APP_AUTH_TEST_MODE=false。
     test-mode: ${APP_AUTH_TEST_MODE:true}
   merchant-ad:
-    # 广告微信支付开关：前端未支持 pending_payment 前保持 false（fail-closed）
-    wechat-payment-enabled: ${MERCHANT_AD_WECHAT_PAYMENT_ENABLED:false}
+    # 广告微信支付开关：默认开启；前端需支持 pending_payment/active/cancelled 与“去支付”交互。
+    # 微信支付通道未配置时仍会由 PayChannel 拒绝，不会零成本投放。
+    wechat-payment-enabled: ${MERCHANT_AD_WECHAT_PAYMENT_ENABLED:true}
   payment:
     # 模拟支付开关（保证金/食堂额度等场景直接到账），fail-closed 默认 false。
     # 仅开发/联调环境显式置 true（application-dev.yml 已开）；生产必须保持 false，
@@ -175,6 +219,7 @@ app:
   machine-id: ${MACHINE_ID:1}
   rate-limit:
     max-attempts: ${RATE_LIMIT_MAX_ATTEMPTS:10}
+    wechat-max-attempts: ${RATE_LIMIT_WECHAT_MAX_ATTEMPTS:30}
     window-ms: ${RATE_LIMIT_WINDOW_MS:300000}
   security:
     hsts-enabled: ${HSTS_ENABLED:false}

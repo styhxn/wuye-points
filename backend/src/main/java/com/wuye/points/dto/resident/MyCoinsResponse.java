@@ -14,6 +14,9 @@ public class MyCoinsResponse {
     @Schema(description = "住户ID", example = "res_b7m9x1")
     private String residentId;
 
+    @Schema(description = "本小区是否启用物业币功能", example = "true")
+    private Boolean coinEnabled;
+
     @Schema(description = "个人金币余额", example = "500.00")
     private BigDecimal coinBalance;
 

@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
+import com.wuye.points.util.AdminAuthorizationContext;
 import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import org.junit.jupiter.api.AfterEach;
@@ -19,9 +20,15 @@ class RoleGuardTest {
     private final LeaderIdentityGuard leaderIdentityGuard = mock(LeaderIdentityGuard.class);
     private final RoleGuard roleGuard = new RoleGuard(leaderIdentityGuard);
 
+    @BeforeEach
+    void setUp() {
+        org.mockito.Mockito.reset(leaderIdentityGuard);
+    }
+
     @AfterEach
     void cleanup() {
         UserContext.clear();
+        AdminAuthorizationContext.clear();
     }
 
     private void setUserContext(String role, String propertyCompanyId) {
@@ -138,6 +145,34 @@ class RoleGuardTest {
     }
 
     @Test
+    @DisplayName("管理端工作台身份 - 物业/平台/社区管理员")
+    void adminWorkspace_adminRoles_shouldPass() {
+        setUserContext("property_admin", "pc_001");
+        assertTrue(roleGuard.isAdminWorkspaceUser());
+        setUserContext("platform_admin", "pc_001");
+        assertTrue(roleGuard.isAdminWorkspaceUser());
+        setUserContext("community_admin", "pc_001");
+        assertTrue(roleGuard.isAdminWorkspaceUser());
+    }
+
+    @Test
+    @DisplayName("管理端工作台身份 - 活动组长标签")
+    void adminWorkspace_activityLeaderTag_shouldPass() {
+        setUserContext("resident", "pc_001");
+        org.mockito.Mockito.when(leaderIdentityGuard.isCurrentActivityLeader()).thenReturn(true);
+        assertTrue(roleGuard.isAdminWorkspaceUser());
+    }
+
+    @Test
+    @DisplayName("管理端工作台身份 - 普通住户/商家不通过")
+    void adminWorkspace_normalResidentAndMerchant_shouldFail() {
+        setUserContext("resident", "pc_001");
+        assertFalse(roleGuard.isAdminWorkspaceUser());
+        setUserContext("merchant", "pc_001");
+        assertFalse(roleGuard.isAdminWorkspaceUser());
+    }
+
+    @Test
     @DisplayName("枚举值常量正确性")
     void enumConstants_shouldBeCorrect() {
         assertTrue(RoleGuard.ORDER_STATUS.contains("pending"));
@@ -176,6 +211,38 @@ class RoleGuardTest {
     void requireAnyRole_shouldPass_whenJwtRoleIsActivityLeader() {
         setUserContext("activity_leader", "pc_001");
         assertDoesNotThrow(() -> roleGuard.requireAnyRole("resident"));
+    }
+
+    @Test
+    @DisplayName("管理端拦截器授权后，标签身份可通过物业管理员角色门")
+    void requireAnyRole_tagIdentity_withInterceptedGrant_shouldPass() {
+        setUserContext("resident", "pc_001");
+        org.mockito.Mockito.when(leaderIdentityGuard.isCurrentActivityLeader()).thenReturn(true);
+        AdminAuthorizationContext.markGranted();
+
+        assertDoesNotThrow(() -> roleGuard.requireAnyRole("property_admin", "platform_admin"));
+        assertDoesNotThrow(() -> roleGuard.requireAnyRoleOrLeaderIdentity("property_admin", "platform_admin"));
+        assertDoesNotThrow(() -> roleGuard.assertSelfOrAdmin("res_other"));
+    }
+
+    @Test
+    @DisplayName("没有拦截器授权标记时，标签身份仍被物业管理员角色门拒绝")
+    void requireAnyRole_tagIdentity_withoutInterceptedGrant_shouldThrow() {
+        setUserContext("resident", "pc_001");
+        org.mockito.Mockito.when(leaderIdentityGuard.isCurrentActivityLeader()).thenReturn(true);
+
+        assertThrows(BizException.class,
+                () -> roleGuard.requireAnyRole("property_admin", "platform_admin"));
+    }
+
+    @Test
+    @DisplayName("拦截器授权不会放行平台管理员专属角色门")
+    void requireAnyRole_tagIdentity_withInterceptedGrant_platformOnly_shouldThrow() {
+        setUserContext("resident", "pc_001");
+        org.mockito.Mockito.when(leaderIdentityGuard.isCurrentActivityLeader()).thenReturn(true);
+        AdminAuthorizationContext.markGranted();
+
+        assertThrows(BizException.class, () -> roleGuard.requireAnyRole("platform_admin"));
     }
 
     @Test

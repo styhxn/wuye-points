@@ -68,4 +68,12 @@ public class Message extends BaseEntity {
     /** 官方发送方类型 */
     @Column(name = "official_sender_type", length = 30)
     private String officialSenderType;
+
+    /** 卡片类型：product / order（楼长分享商品等站内卡片消息） */
+    @Column(name = "card_type", length = 20)
+    private String cardType;
+
+    /** 卡片关联ID（商品ID / 订单ID） */
+    @Column(name = "card_id", length = 32)
+    private String cardId;
 }

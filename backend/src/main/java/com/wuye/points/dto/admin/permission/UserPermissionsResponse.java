@@ -16,7 +16,11 @@ public class UserPermissionsResponse {
     @Schema(description = "账户名称", example = "张三")
     private String accountName;
 
-    @Schema(description = "已应用预设")
+    @Schema(description = "有效角色码集合（含标签身份，如 resident/activity_leader）",
+            example = "[\"resident\",\"activity_leader\"]")
+    private List<String> roleCodes;
+
+    @Schema(description = "已应用预设（按有效角色码命中，活动组长返回 rp_003）")
     private AppliedPresetResponse appliedPreset;
 
     @Schema(description = "权限覆盖列表")

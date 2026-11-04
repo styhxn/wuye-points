@@ -48,6 +48,28 @@ public class ProfileResponse {
     @Schema(description = "角色", example = "resident")
     private String role;
 
+    @Schema(description = "是否具备管理端工作台身份（平台/物业/社区管理员，或持组长/负责人标签的住户）", example = "true")
+    private Boolean adminWorkspace;
+
+    @Schema(description = "归一化角色：历史 property_leader/property_operator 归一为 property_admin", example = "property_admin")
+    private String normalizedRole;
+
+    @Schema(description = "物业子角色：property_leader/property_operator（仅物业管理员）", example = "property_operator")
+    private String propertySubRole;
+
+    @Schema(description = "命中的角色预设ID（无预设时为 null）", example = "rp_coordinator")
+    private String rolePresetId;
+
+    @Schema(description = "命中的角色预设名称", example = "统筹")
+    private String rolePresetName;
+
+    @Schema(description = "有效角色码集合（库内角色 + 负责人标签身份）", example = "[\"resident\",\"coordinator\"]")
+    private List<String> effectiveRoleCodes;
+
+    @Schema(description = "有效权限码（冒号格式，已合并角色预设 + 用户授权 − 用户撤销）",
+            example = "[\"merchant:audit\",\"distribution:read\"]")
+    private List<String> effectivePermissions;
+
     @Schema(description = "是否为单元楼长（住户子身份，role 仍为 resident）", example = "false")
     private Boolean isBuildingLeader;
 

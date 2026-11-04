@@ -23,8 +23,11 @@ public class ResidentAuthSummaryResponse {
     @Schema(description = "手机号", example = "138****8888")
     private String phone;
 
-    @Schema(description = "用户角色", example = "resident", allowableValues = {"resident", "property_admin", "platform_admin", "merchant", "courier", "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician"})
+    @Schema(description = "用户角色", example = "resident", allowableValues = {"resident", "property_admin", "platform_admin", "community_admin", "merchant", "courier", "coordinator", "sector_leader", "individual_leader", "activity_leader", "technician"})
     private String role;
+
+    @Schema(description = "是否具备管理端工作台身份（平台/物业/社区管理员，或持组长/负责人标签的住户）", example = "true")
+    private Boolean adminWorkspace;
 
     @Schema(description = "是否为单元楼长（住户子身份，role 仍为 resident）", example = "false")
     private Boolean isBuildingLeader;

@@ -55,6 +55,8 @@ public class AdminMerchantAuditService {
     private final AdminSupport adminSupport;
     private final OperationLogService operationLogService;
     private final WithdrawableService withdrawableService;
+    private final MerchantCoinReceivableService merchantCoinReceivableService;
+    private final PropertyCoinFundService propertyCoinFundService;
 
     @Transactional(readOnly = true)
     public PageResponse<MerchantPointPurchaseListItemResponse> listPointPurchases(
@@ -137,6 +139,7 @@ public class AdminMerchantAuditService {
                             .merchantId(withdrawal.getMerchantId())
                             .merchantName(merchant != null ? merchant.getName() : null)
                             .amount(withdrawal.getAmount())
+                            .source(withdrawal.getSource())
                             .feeRate(withdrawal.getFeeRate())
                             .feeAmount(withdrawal.getFeeAmount())
                             .actualAmount(withdrawal.getActualAmount())
@@ -261,14 +264,27 @@ public class AdminMerchantAuditService {
         if ("approved".equals(request.getAuditResult())) {
             Merchant merchant = merchantRepository.findById(withdrawal.getMerchantId())
                     .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
-            WithdrawableService.MerchantWithdrawable withdrawable =
-                    withdrawableService.calcMerchantWithdrawableExcluding(merchant, withdrawal.getId());
-            if (withdrawable.withdrawalBlocked()) {
-                throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
-            }
-            if (withdrawal.getAmount().compareTo(withdrawable.withdrawableAmount()) > 0) {
-                throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
-                        "可提现余额不足（最多 ¥" + withdrawable.withdrawableAmount().toPlainString() + "）");
+            if ("coin_receivable".equals(withdrawal.getSource())) {
+                MerchantCoinReceivableService.MerchantIncome coinIncome =
+                        merchantCoinReceivableService.calc(merchant, withdrawal.getId());
+                if (Boolean.TRUE.equals(merchant.getWithdrawalBlocked())) {
+                    throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+                }
+                if (withdrawal.getAmount().compareTo(coinIncome.coinAvailableAmount()) > 0) {
+                    throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                            "物业币应收可结算余额不足（最多 ¥"
+                                    + coinIncome.coinAvailableAmount().toPlainString() + "）");
+                }
+            } else {
+                WithdrawableService.MerchantWithdrawable withdrawable =
+                        withdrawableService.calcMerchantWithdrawableExcluding(merchant, withdrawal.getId());
+                if (withdrawable.withdrawalBlocked()) {
+                    throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+                }
+                if (withdrawal.getAmount().compareTo(withdrawable.withdrawableAmount()) > 0) {
+                    throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                            "可提现余额不足（最多 ¥" + withdrawable.withdrawableAmount().toPlainString() + "）");
+                }
             }
         }
 
@@ -289,6 +305,12 @@ public class AdminMerchantAuditService {
         }
 
         merchantWithdrawalRepository.save(withdrawal);
+
+        // 物业币应收结算完成：从该物业公司的物业币代管资金出账（幂等）。
+        if ("completed".equals(request.getAuditResult())
+                && "coin_receivable".equals(withdrawal.getSource())) {
+            propertyCoinFundService.recordMerchantSettlement(withdrawal);
+        }
 
         operationLogService.log("merchant_withdrawal", "audit", "merchant_withdrawal", id,
                 null, request);

@@ -20,4 +20,19 @@ public class ResidentMerchantApplicationListItemResponse {
     private String statusCode;
     private String visibility;
     private String createdAt;
+
+    @Schema(description = "店铺名称", example = "张三的小店")
+    private String shopName;
+
+    @Schema(description = "店铺简介", example = "小区内新鲜水果代购")
+    private String description;
+
+    @Schema(description = "营业时间", example = "08:00-22:00")
+    private String businessHours;
+
+    @Schema(description = "联系电话", example = "13800138000")
+    private String contactPhone;
+
+    @Schema(description = "店铺封面图URL", example = "https://cdn.example.com/shop/cover.jpg")
+    private String coverUrl;
 }

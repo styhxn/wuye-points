@@ -79,6 +79,8 @@ class PropertyCoinServiceTest {
     @Mock
     private PayChannel payChannel;
     @Mock
+    private PropertyCoinFundService propertyCoinFundService;
+    @Mock
     private PaymentRecordRepository paymentRecordRepository;
 
     @InjectMocks
@@ -119,6 +121,7 @@ class PropertyCoinServiceTest {
     @DisplayName("recharge: 微信支付未开通时 fail-closed，不直接加余额")
     void recharge_whenPayDisabled_throws() {
         when(payChannel.isEnabled()).thenReturn(false);
+        when(payChannel.isDirectEnabled()).thenReturn(false);
         RechargeCoinRequest request = new RechargeCoinRequest();
         request.setAmount(new BigDecimal("100"));
 
@@ -133,6 +136,7 @@ class PropertyCoinServiceTest {
     @DisplayName("recharge: 返回 payParams/outTradeNo，预下单阶段不加余额")
     void recharge_returnsPayParamsWithoutCrediting() {
         when(payChannel.isEnabled()).thenReturn(true);
+        when(payChannel.isDirectEnabled()).thenReturn(true);
         PaymentRecord record = paymentRecord("pr_1", "wxo_1", "100");
         when(payChannel.createIntent(eq(PaymentBizType.COIN_RECHARGE), eq("res_1"), eq("res_1"),
                 eq("pc_1"), eq("wechat"), any(), eq(0), any(), any())).thenReturn(record);

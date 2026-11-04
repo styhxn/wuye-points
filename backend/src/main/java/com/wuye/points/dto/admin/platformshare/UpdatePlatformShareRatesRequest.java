@@ -55,4 +55,14 @@ public class UpdatePlatformShareRatesRequest {
     @DecimalMax(value = "1.0000", message = "courierShareRate不能大于1")
     @Schema(description = "快递员分成比例（0~1）", example = "0.1500")
     private BigDecimal courierShareRate;
+
+    @DecimalMin(value = "0.0000", message = "userPointShareRate不能小于0")
+    @DecimalMax(value = "1.0000", message = "userPointShareRate不能大于1")
+    @Schema(description = "用户积分预算比例（占抽佣基础额，分账链先扣档；0~1，默认0.10）", example = "0.1000")
+    private BigDecimal userPointShareRate;
+
+    @DecimalMin(value = "0.0000", message = "userRewardShareRate不能小于0")
+    @DecimalMax(value = "1.0000", message = "userRewardShareRate不能大于1")
+    @Schema(description = "用户奖励金预算比例（占抽佣基础额，分账链先扣档；0~1，默认0.10）", example = "0.1000")
+    private BigDecimal userRewardShareRate;
 }

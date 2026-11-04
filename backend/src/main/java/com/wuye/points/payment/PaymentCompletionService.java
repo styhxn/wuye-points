@@ -8,19 +8,24 @@ import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PaymentSettleOutboxRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Map;
 
 /**
- * 支付回调统一收口（微信支付 APIv3）。
+ * 支付回调统一收口（微信支付 APIv3，双通道）。
+ *
+ * <p>服务商（{@code wechat.pay}）与直连商户（{@code wechat.direct}）各有独立的验签公钥、APIv3 密钥与
+ * 回调地址，入口按 {@link WechatNotifyChannel} 选择对应的 {@link WechatNotifyService}，禁止混用凭据；
+ * 解密后再校验回调商户号与通道配置一致，防止配置串号导致资金错配。</p>
  *
  * <p><b>设计：回调只做“快路径”</b>——验签 + 解密 + 标流水 paid + 落库 outbox + 立即应答 {@code SUCCESS}；
  * 业务 finalize（冻结分账、完成订单、返积分/物业币、建配送单、算分账等）由 {@link PaymentSettleService}
@@ -30,7 +35,6 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PaymentCompletionService {
 
     /** 回调金额与预下单金额不一致时的终态：不入账、不自动关单，留待人工对账（不会被 pending 扫描误收尾） */
@@ -42,18 +46,66 @@ public class PaymentCompletionService {
     private final OrderRepository orderRepository;
     private final SnowflakeIdGenerator snowflake;
     private final ApplicationEventPublisher eventPublisher;
-    private final WechatNotifyService wechatNotifyService;
+    private final WechatNotifyService partnerNotifyService;
+    private final WechatNotifyService directNotifyService;
+    private final WechatPayProperties partnerProps;
+    private final WechatDirectProperties directProps;
     private final ObjectMapper objectMapper;
+
+    public PaymentCompletionService(PayChannel payChannel,
+                                    PaymentRecordRepository paymentRecordRepository,
+                                    PaymentSettleOutboxRepository outboxRepository,
+                                    OrderRepository orderRepository,
+                                    SnowflakeIdGenerator snowflake,
+                                    ApplicationEventPublisher eventPublisher,
+                                    @Qualifier("wechatNotifyService") WechatNotifyService partnerNotifyService,
+                                    @Qualifier("directWechatNotifyService") WechatNotifyService directNotifyService,
+                                    WechatPayProperties partnerProps,
+                                    WechatDirectProperties directProps,
+                                    ObjectMapper objectMapper) {
+        this.payChannel = payChannel;
+        this.paymentRecordRepository = paymentRecordRepository;
+        this.outboxRepository = outboxRepository;
+        this.orderRepository = orderRepository;
+        this.snowflake = snowflake;
+        this.eventPublisher = eventPublisher;
+        this.partnerNotifyService = partnerNotifyService;
+        this.directNotifyService = directNotifyService;
+        this.partnerProps = partnerProps;
+        this.directProps = directProps;
+        this.objectMapper = objectMapper;
+    }
+
+    /** 兼容旧入口：{@code /payment/notify/wechatpay} 固定为服务商通道。 */
+    public Map<String, String> handleWechatNotify(String rawBody, HttpHeaders headers) {
+        return handleWechatNotify(rawBody, headers, WechatNotifyChannel.PARTNER);
+    }
 
     /**
      * 微信支付结果通知（APIv3）：验签 + 解密 resource + 标记已支付 + 触发 finalize。
      *
+     * @param channel 回调所属商户通道；服务商与直连商户使用各自的验签公钥与 APIv3 密钥
      * @return 返给微信的应答体，调用方直接 HTTP 200 返回
      */
     @org.springframework.transaction.annotation.Transactional
-    public Map<String, String> handleWechatNotify(String rawBody, HttpHeaders headers) {
+    public Map<String, String> handleWechatNotify(String rawBody, HttpHeaders headers, WechatNotifyChannel channel) {
         try {
-            Map<String, Object> decoded = wechatNotifyService.decrypt(rawBody, headers);
+            boolean direct = channel == WechatNotifyChannel.DIRECT;
+            WechatNotifyService notifyService = direct ? directNotifyService : partnerNotifyService;
+            String expectedMchId = direct ? directProps.getMchId() : partnerProps.getMchId();
+            Map<String, Object> decoded = notifyService.decrypt(rawBody, headers);
+
+            // 通道归属校验：直连回传 mchid，服务商回传 sp_mchid。跨通道（配置串号）直接拒绝，
+            // 避免「A 商户的回调被 B 通道记账」这类资金错配。
+            String callbackMchId = direct
+                    ? (String) decoded.get("mchid")
+                    : (String) decoded.get("sp_mchid");
+            if (StringUtils.hasText(callbackMchId) && !callbackMchId.equals(expectedMchId)) {
+                String msg = "微信回调商户号与通道配置不一致 channel=" + channel
+                        + " expected=" + expectedMchId + " actual=" + callbackMchId;
+                log.error(msg);
+                return Map.of("code", "FAIL", "message", msg);
+            }
 
             String outTradeNo = (String) decoded.get("out_trade_no");
             String transactionId = (String) decoded.get("transaction_id");

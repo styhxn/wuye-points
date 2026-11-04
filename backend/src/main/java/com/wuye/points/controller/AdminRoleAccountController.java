@@ -41,7 +41,7 @@ public class AdminRoleAccountController {
     }
 
     @Operation(summary = "直接删除业务角色账号",
-            description = "硬删除（物理删除）商家/活动组长/技工/配送员账号，关联店铺链一并彻底删除（无孤儿数据），手机号随之释放。账号存在业务数据（订单/积分/提现等）时返回 90120 拒绝。角色: property_admin, platform_admin")
+            description = "硬删除（物理删除）商家/活动组长/技工/配送员账号，关联店铺链一并彻底删除（无孤儿数据），手机号随之释放。账号存在业务数据（订单/积分/提现等）时返回 97010 拒绝。角色: property_admin, platform_admin")
     @DeleteMapping("/{id}")
     public ApiResponse<DeleteRoleAccountResponse> deleteAccount(
             @Parameter(description = "账号ID（residents.id）") @PathVariable String id) {

@@ -40,13 +40,26 @@ import java.util.Set;
 public class FileService {
 
     private static final int AVATAR_THUMB_SIZE = 200;
+    private static final String CATEGORY_DELIVERY_PROOF = "delivery_proof";
+    private static final String CATEGORY_WITHDRAWAL_PROOF = "withdrawal_proof";
     private static final Map<String, CategoryRule> CATEGORY_RULES = Map.of(
             "avatar", new CategoryRule(2 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), null, true),
             "announcement", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 9, true),
             "merchant", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 12, true),
             "service", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 6, true),
             "activity", new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true),
-            "product", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 20, true)
+            "product", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 20, true),
+            // 配送凭证独立分类：10MB、支持 mp4、不设累计数量上限（每笔最多 5 张由业务 DTO 限制）
+            CATEGORY_DELIVERY_PROOF,
+            new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true),
+            // 提现/转账凭证独立分类：财务审核长期使用，不设累计数量上限，避免与配送凭证混桶
+            CATEGORY_WITHDRAWAL_PROOF,
+            new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), null, true)
+    );
+    private static final Map<String, String> CATEGORY_ALIASES = Map.of(
+            "delivery", CATEGORY_DELIVERY_PROOF,
+            "deliveryProof", CATEGORY_DELIVERY_PROOF,
+            "proof", CATEGORY_DELIVERY_PROOF
     );
 
     private final FileRepository fileRepository;
@@ -63,7 +76,7 @@ public class FileService {
     public UploadFileResponse upload(MultipartFile file, String category) {
         requireAuthenticated();
         requireUploadRole();
-        validateCategory(category);
+        category = normalizeCategory(category);
         validateMultipartFile(file);
 
         String uploaderId = UserContext.currentUserId();
@@ -77,7 +90,7 @@ public class FileService {
     public List<BatchUploadFileItemResponse> uploadBatch(List<MultipartFile> files, String category) {
         requireAuthenticated();
         requireUploadRole();
-        validateCategory(category);
+        category = normalizeCategory(category);
         if (files == null || files.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_MISSING, "files不能为空");
         }
@@ -287,10 +300,19 @@ public class FileService {
         }
     }
 
-    private void validateCategory(String category) {
-        if (!StringUtils.hasText(category) || !RoleGuard.FILE_CATEGORIES.contains(category)) {
+    private String normalizeCategory(String category) {
+        if (!StringUtils.hasText(category)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
         }
+        String normalized = category.trim();
+        String alias = CATEGORY_ALIASES.get(normalized);
+        if (alias != null) {
+            normalized = alias;
+        }
+        if (!RoleGuard.FILE_CATEGORIES.contains(normalized)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
+        }
+        return normalized;
     }
 
     private void validateFileId(String id) {

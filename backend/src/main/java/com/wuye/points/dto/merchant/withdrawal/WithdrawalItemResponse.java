@@ -23,6 +23,9 @@ public class WithdrawalItemResponse {
     @Schema(description = "提现金额", example = "1000.00")
     private BigDecimal amount;
 
+    @Schema(description = "资金来源：legacy内部收益/coin_receivable物业币应收", example = "legacy")
+    private String source;
+
     @Schema(description = "手续费比例", example = "0.01")
     private BigDecimal feeRate;
 

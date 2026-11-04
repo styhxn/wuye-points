@@ -8,6 +8,7 @@ import com.wuye.points.dto.auth.AdminLoginRequest;
 import com.wuye.points.dto.auth.AuthLoginResponse;
 import com.wuye.points.dto.auth.BindPhoneRequest;
 import com.wuye.points.dto.auth.BindPhoneResponse;
+import com.wuye.points.dto.auth.MyPermissionsResponse;
 import com.wuye.points.dto.auth.ProfileResponse;
 import com.wuye.points.dto.auth.RefreshTokenRequest;
 import com.wuye.points.dto.auth.TokenResponse;
@@ -96,5 +97,12 @@ public class AuthController {
     @GetMapping("/profile")
     public ApiResponse<ProfileResponse> profile() {
         return ApiResponse.success(authService.getProfile());
+    }
+
+    @Operation(summary = "获取当前用户有效权限码",
+            description = "统一返回 role/resource:action 权限码（已合并角色预设 + 用户授权 − 用户撤销），供管理端权限配置页和按钮级渲染使用。Auth: Required")
+    @GetMapping("/my-permissions")
+    public ApiResponse<MyPermissionsResponse> myPermissions() {
+        return ApiResponse.success(authService.getMyPermissions());
     }
 }

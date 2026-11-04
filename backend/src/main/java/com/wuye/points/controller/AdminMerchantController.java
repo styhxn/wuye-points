@@ -39,7 +39,9 @@ public class AdminMerchantController {
         return ApiResponse.success(adminMerchantService.kickMerchant(id, request));
     }
 
-    @Operation(summary = "查看商家微信进件详情", description = "进件状态/驳回原因/法人验证链接等。角色: property_admin, platform_admin")
+    @Operation(summary = "查看商家微信进件详情",
+            description = "进件状态/驳回原因/签约链接；lastError 与 retryCount 仅此运营后台出口返回。"
+                    + "角色: property_admin, platform_admin")
     @GetMapping("/{id}/applyment")
     public ApiResponse<ApplymentDetailResponse> getApplyment(
             @Parameter(description = "商家ID") @PathVariable String id) {

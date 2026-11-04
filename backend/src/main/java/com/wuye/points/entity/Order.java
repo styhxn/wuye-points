@@ -193,6 +193,14 @@ public class Order extends BaseEntity {
     @Column(name = "manager_rate", precision = 5, scale = 4)
     private BigDecimal managerRate;
 
+    /** 支付时锁定的用户积分预算比例快照（占抽佣基础额；V36） */
+    @Column(name = "user_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal userPointShareRate;
+
+    /** 支付时锁定的用户奖励金预算比例快照（占抽佣基础额；V36） */
+    @Column(name = "user_reward_share_rate", precision = 5, scale = 4)
+    private BigDecimal userRewardShareRate;
+
     /** 满额减免前基础配送费快照（规范§7.6：结算不得读取最新配置重算） */
     @Column(name = "original_delivery_fee", precision = 10, scale = 2)
     private BigDecimal originalDeliveryFee;

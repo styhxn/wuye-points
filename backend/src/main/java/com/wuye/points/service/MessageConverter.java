@@ -25,6 +25,8 @@ public class MessageConverter {
                 .readStatus(message.getReadStatus())
                 .propertyCompanyId(message.getPropertyCompanyId())
                 .createdAt(DateTimeUtil.toIsoUtc(message.getCreatedAt()))
+                .cardType(message.getCardType())
+                .cardId(message.getCardId())
                 .build();
     }
 
@@ -44,6 +46,8 @@ public class MessageConverter {
                 .readStatus(message.getReadStatus())
                 .propertyCompanyId(message.getPropertyCompanyId())
                 .createdAt(DateTimeUtil.toIsoUtc(message.getCreatedAt()))
+                .cardType(message.getCardType())
+                .cardId(message.getCardId())
                 .build();
     }
 }

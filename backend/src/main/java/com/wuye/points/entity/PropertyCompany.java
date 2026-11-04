@@ -119,6 +119,14 @@ public class PropertyCompany extends BaseEntity {
     @Column(name = "platform_share_rate", precision = 5, scale = 4)
     private BigDecimal platformShareRate;
 
+    /** 用户积分预算占抽佣基础额比例（分账链先扣档，V36） */
+    @Column(name = "user_point_share_rate", precision = 5, scale = 4)
+    private BigDecimal userPointShareRate;
+
+    /** 用户奖励金预算占抽佣基础额比例（分账链先扣档，V36） */
+    @Column(name = "user_reward_share_rate", precision = 5, scale = 4)
+    private BigDecimal userRewardShareRate;
+
     /** 物业币商城是否开启 */
     @Column(name = "coin_mall_enabled")
     private Boolean coinMallEnabled;

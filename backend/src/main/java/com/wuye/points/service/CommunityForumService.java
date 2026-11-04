@@ -17,6 +17,7 @@ import com.wuye.points.repository.CommunityPostLikeRepository;
 import com.wuye.points.repository.CommunityPostRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.CommunityPostSpecifications;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +44,8 @@ public class CommunityForumService {
     private static final int POST_CONTENT_MAX = 2000;
     private static final int COMMENT_CONTENT_MAX = 1000;
     private static final int POST_IMAGE_MAX = 9;
+    private static final String PERM_READ = "community.read";
+    private static final String PERM_MANAGE = "community.manage";
 
     private final CommunityPostRepository postRepository;
     private final CommunityCommentRepository commentRepository;
@@ -52,6 +55,7 @@ public class CommunityForumService {
     private final CommunityConverter converter;
     private final SensitiveWordService sensitiveWordService;
     private final RoleGuard roleGuard;
+    private final PermissionGuard permissionGuard;
     private final ForumBanService forumBanService;
 
     public CommunityPostResponse createPost(CreateCommunityPostRequest req) {
@@ -236,7 +240,7 @@ public class CommunityForumService {
     }
 
     public Page<CommunityPostResponse> adminListPosts(int page, int pageSize, String status, String keyword) {
-        Resident admin = getViewerResident();
+        Resident admin = requireAdminViewer(PERM_READ);
         Specification<CommunityPost> spec = CommunityPostSpecifications.withAdminFilters(
                 admin.getPropertyCompanyId(), status, keyword);
         Pageable pageable = PageRequest.of(Math.max(0, page - 1),
@@ -250,7 +254,7 @@ public class CommunityForumService {
      * 管理员可查看本物业公司范围内的帖子评论。
      */
     public Page<CommunityCommentResponse> adminListComments(String postId, int page, int pageSize, String status) {
-        Resident admin = getViewerResident();
+        Resident admin = requireAdminViewer(PERM_READ);
         CommunityPost post = postRepository.findById(postId)
                 .orElseThrow(() -> new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND));
         if (admin.getPropertyCompanyId() != null
@@ -272,7 +276,7 @@ public class CommunityForumService {
     }
 
     public void adminDeletePost(String id) {
-        Resident admin = getViewerResident();
+        Resident admin = requireAdminViewer(PERM_MANAGE);
         CommunityPost post = postRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND));
         if (admin.getPropertyCompanyId() != null
@@ -284,7 +288,7 @@ public class CommunityForumService {
     }
 
     public void adminDeleteComment(String id) {
-        Resident admin = getViewerResident();
+        Resident admin = requireAdminViewer(PERM_MANAGE);
         CommunityComment comment = commentRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.COMMUNITY_COMMENT_NOT_FOUND));
         CommunityPost post = postRepository.findById(comment.getPostId()).orElse(null);
@@ -305,7 +309,7 @@ public class CommunityForumService {
      * visibilityType=community 表示本小区可见；=family 表示仅 visibleResidentId 指定住户可见。
      */
     public void setPostVisibility(String postId, String visibilityType, String visibleResidentId) {
-        Resident admin = getViewerResident();
+        Resident admin = requireAdminViewer(PERM_MANAGE);
         CommunityPost post = postRepository.findById(postId)
                 .orElseThrow(() -> new BizException(ErrorCode.COMMUNITY_POST_NOT_FOUND));
         if (admin.getPropertyCompanyId() != null
@@ -318,9 +322,21 @@ public class CommunityForumService {
         if ("family".equals(visibilityType) && (visibleResidentId == null || visibleResidentId.isBlank())) {
             throw new BizException(ErrorCode.PARAM_INVALID, "family 可见范围必须指定 visibleResidentId");
         }
+        if ("family".equals(visibilityType)) {
+            Resident visible = residentRepository.findById(visibleResidentId)
+                    .orElseThrow(() -> new BizException(ErrorCode.PARAM_INVALID, "指定住户不存在"));
+            if (!post.getPropertyCompanyId().equals(visible.getPropertyCompanyId())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "指定住户不属于本物业公司");
+            }
+        }
         post.setVisibilityType(visibilityType);
         post.setVisibleResidentId("family".equals(visibilityType) ? visibleResidentId : null);
         postRepository.save(post);
+    }
+
+    private Resident requireAdminViewer(String permissionCode) {
+        permissionGuard.requirePermission(permissionCode);
+        return getViewerResident();
     }
 
     private void decrementPostComment(String postId) {

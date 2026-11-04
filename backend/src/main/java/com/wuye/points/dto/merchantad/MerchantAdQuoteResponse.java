@@ -25,4 +25,7 @@ public class MerchantAdQuoteResponse {
 
     @Schema(description = "免费额度是否启用")
     private Boolean freeQuotaEnabled;
+
+    @Schema(description = "广告微信支付是否可用（false 时前端只展示免费额度）")
+    private Boolean wechatPaymentEnabled;
 }

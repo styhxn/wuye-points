@@ -1,5 +1,6 @@
 package com.wuye.points.controller;
 
+import com.wuye.points.dto.activity.ActivityGroupBuildingLeaderListResponse;
 import com.wuye.points.dto.activity.ActivityGroupDetailResponse;
 import com.wuye.points.dto.activity.ActivityGroupListItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupMemberListResponse;
@@ -99,6 +100,15 @@ public class ActivityGroupController {
     public ApiResponse<ActivityGroupMemberListResponse> listMembers(
             @Parameter(description = "活动组ID") @PathVariable String id) {
         return ApiResponse.success(activityGroupService.listMembers(id));
+    }
+
+    @Operation(summary = "活动组内楼长列表（只读）",
+            description = "返回本组活跃成员中当前启用的单元楼长。楼长身份由物业/平台在 §99.1 指定与撤销，"
+                    + "组长无设置/撤销权限，本模块不提供写接口。")
+    @GetMapping("/{id}/building-leaders")
+    public ApiResponse<ActivityGroupBuildingLeaderListResponse> listGroupBuildingLeaders(
+            @Parameter(description = "活动组ID") @PathVariable String id) {
+        return ApiResponse.success(activityGroupService.listGroupBuildingLeaders(id));
     }
 
     @Operation(summary = "订阅活动组", description = "订阅指定活动组，接收活动更新通知；支持 X-Request-Id 幂等")

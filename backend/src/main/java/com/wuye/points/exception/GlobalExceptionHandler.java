@@ -2,6 +2,7 @@ package com.wuye.points.exception;
 
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.payment.WechatPayException;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -106,12 +108,27 @@ public class GlobalExceptionHandler {
     /**
      * 数据库完整性冲突：统一映射 409，根因只写日志，不把表名/列名/重复值回显给前端。
      * 业务层能识别的重复手机号/状态冲突仍应优先抛 BizException。
+     * <p>日志必须带请求路径：响应端刻意不含根因，没有路径就没人能从 409 反查到是哪个接口哪个字段。
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
-    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException e) {
-        log.error("数据完整性冲突", e);
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(
+            DataIntegrityViolationException e, HttpServletRequest request) {
+        log.error("数据完整性冲突 {} {}", request.getMethod(), request.getRequestURI(), e);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error(ErrorCode.ORDER_CONFLICT.getCode(), "数据冲突，请刷新后重试"));
+    }
+
+    /**
+     * 超过 spring.servlet.multipart 上限：回可解析的 413 JSON，而不是 500「内部服务异常」。
+     * <p>nginx 的 client_max_body_size 在应用之前拦截，那种 413 是 nginx 的 HTML，走不到这里。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        long max = e.getMaxUploadSize();
+        String detail = max > 0 ? "上传文件超过服务端限制 " + (max / 1024 / 1024) + "MB" : "上传文件超过服务端限制";
+        log.warn("上传文件超限: {}", detail);
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiResponse.error(ErrorCode.FILE_TOO_LARGE.getCode(), detail));
     }
 
     /**

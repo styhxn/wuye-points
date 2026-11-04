@@ -3,8 +3,10 @@ package com.wuye.points.controller;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -24,5 +26,15 @@ class AnnouncementControllerTest extends ControllerTestBase {
         mockMvc.perform(get("/announcements")
                         .header("Authorization", bearer("u_admin", "platform_admin", "pc1", null)))
                 .andExpect(status().is(HttpStatus.OK.value()));
+    }
+
+    @Test
+    @DisplayName("POST /announcements 社区管理员未授权 → 403（非 /admin 路径同样受权限拦截）")
+    void createAnnouncement_communityAdminWithoutPermission_forbidden() throws Exception {
+        mockMvc.perform(post("/announcements")
+                        .header("Authorization", bearer("res_ca", "community_admin", "pc1", null))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().is(HttpStatus.FORBIDDEN.value()));
     }
 }

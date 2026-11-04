@@ -2,10 +2,12 @@ package com.wuye.points.util;
 
 import com.wuye.points.context.UserContext;
 import com.wuye.points.entity.ActivityLeaderIdentity;
+import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.IndividualLeader;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.repository.ActivityLeaderIdentityRepository;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
@@ -36,11 +38,13 @@ public class LeaderIdentityGuard {
     public static final String ROLE_SECTOR_LEADER = "sector_leader";
     public static final String ROLE_INDIVIDUAL_LEADER = "individual_leader";
     public static final String ROLE_ACTIVITY_LEADER = "activity_leader";
+    public static final String ROLE_BUILDING_LEADER = "building_leader";
 
     private final CoordinatorRepository coordinatorRepository;
     private final SectorLeaderRepository sectorLeaderRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
     private final ActivityLeaderIdentityRepository activityLeaderIdentityRepository;
+    private final BuildingLeaderRepository buildingLeaderRepository;
 
     // ------------------------------------------------------------------ 按住户解析
 
@@ -77,6 +81,18 @@ public class LeaderIdentityGuard {
         return activityLeaderIdentityRepository
                 .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
                         residentId, propertyCompanyId, "active");
+    }
+
+    /**
+     * 单元楼长身份（V18 起：由 building_leaders 表 active 记录判定，
+     * {@code residents.role} 保持 {@code resident}，且从不写进 JWT，故无需兼容角色值分支）。
+     */
+    public Optional<BuildingLeader> activeBuildingLeader(String residentId, String propertyCompanyId) {
+        if (residentId == null || propertyCompanyId == null) {
+            return Optional.empty();
+        }
+        return buildingLeaderRepository.findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                residentId, propertyCompanyId, "active");
     }
 
     /** 是否持有任意一种启用中的负责人身份（不含活动组组长） */

@@ -79,17 +79,20 @@ public class AnnouncementService {
         String propertyCompanyId = null;
         String residentRole = null;
         String residentBuilding = null;
+        String residentUnit = null;
+        boolean residentView = isResidentLike();
         String residentId = UserContext.currentUserId();
-        if (isResidentLike()) {
+        if (residentView) {
             Resident viewer = getViewerResident();
             propertyCompanyId = viewer.getPropertyCompanyId();
             residentRole = viewer.getRole();
             residentBuilding = viewer.getBuilding();
+            residentUnit = viewer.getUnit();
         } else if (roleGuard.isPropertyAdmin()) {
             propertyCompanyId = UserContext.currentPropertyCompanyId();
         }
 
-        String statusFilter = isResidentLike() ? "published" : null;
+        String statusFilter = residentView ? "published" : null;
 
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<Announcement> announcementPage = announcementRepository.findAll(
@@ -100,7 +103,9 @@ public class AnnouncementService {
                         merchantId,
                         statusFilter,
                         residentRole,
-                        residentBuilding),
+                        residentBuilding,
+                        residentView,
+                        residentUnit),
                 pageable);
 
         return buildListPage(announcementPage, page, pageSize, residentId, false);
@@ -397,10 +402,23 @@ public class AnnouncementService {
                     && !announcement.getPropertyCompanyId().equals(viewer.getPropertyCompanyId())) {
                 throw new BizException(ErrorCode.ANNOUNCEMENT_NOT_FOUND);
             }
+            // 单元定向公告（楼长发布）只能被本单元住户打开，否则按 id 直取即越权
+            if (!matchesTargetUnits(announcement.getTargetUnits(), viewer.getUnit())) {
+                throw new BizException(ErrorCode.ANNOUNCEMENT_NOT_FOUND);
+            }
             return announcement;
         }
 
         return getManageableAnnouncement(id);
+    }
+
+    /** targetUnits 为空表示不限单元；非空时住户的 unit 必须整段命中其中之一 */
+    private boolean matchesTargetUnits(String targetUnitsJson, String viewerUnit) {
+        List<String> units = announcementConverter.parseStringList(targetUnitsJson);
+        if (units.isEmpty()) {
+            return true;
+        }
+        return StringUtils.hasText(viewerUnit) && units.contains(viewerUnit);
     }
 
     private Announcement getManageableAnnouncement(String id) {
@@ -411,11 +429,14 @@ public class AnnouncementService {
             return announcement;
         }
 
-        // 活动组长可管理自己发布的公告（包括草稿等非 published 状态）
-        if (roleGuard.isActivityLeader()
-                && UserContext.currentUserId() != null
-                && UserContext.currentUserId().equals(announcement.getPublisherId())) {
-            return announcement;
+        // 活动组长只能管理自己发布的公告（包括草稿等非 published 状态），
+        // 不能借“同物业”分支修改其他公告。
+        if (roleGuard.isActivityLeader()) {
+            if (UserContext.currentUserId() != null
+                    && UserContext.currentUserId().equals(announcement.getPublisherId())) {
+                return announcement;
+            }
+            throw new BizException(ErrorCode.ANNOUNCEMENT_NOT_FOUND);
         }
 
         String propertyCompanyId = UserContext.currentPropertyCompanyId();

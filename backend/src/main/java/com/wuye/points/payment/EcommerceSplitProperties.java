@@ -34,12 +34,6 @@ public class EcommerceSplitProperties {
     /** 分账结果异步通知地址（对应电商收付通分账回调，占位）。 */
     private String notifyUrl;
 
-    /** 商家平台审核通过后是否自动提交微信进件（默认 false：运营后台手动提交）。 */
-    private boolean applymentAutoSubmit = false;
-
-    /** 进件结果异步通知地址（进件无真实回调，预留占位）。 */
-    private String applymentNotifyUrl;
-
     /** 内部结算转账默认渠道：zero(微信零钱)/bank(银行卡)。 */
     private String transferChannel = "zero";
 

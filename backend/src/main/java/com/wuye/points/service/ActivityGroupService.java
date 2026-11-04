@@ -1,6 +1,8 @@
 package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
+import com.wuye.points.dto.activity.ActivityGroupBuildingLeaderItemResponse;
+import com.wuye.points.dto.activity.ActivityGroupBuildingLeaderListResponse;
 import com.wuye.points.dto.activity.ActivityGroupDetailResponse;
 import com.wuye.points.dto.activity.ActivityGroupListItemResponse;
 import com.wuye.points.dto.activity.ActivityGroupMemberListResponse;
@@ -21,6 +23,7 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.entity.ActivityGroup;
 import com.wuye.points.entity.ActivityGroupMember;
 import com.wuye.points.entity.ActivityGroupSubscription;
+import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Community;
 import com.wuye.points.entity.PaymentRecord;
 import com.wuye.points.entity.PropertyCompany;
@@ -35,6 +38,7 @@ import com.wuye.points.repository.ActivityGroupMemberRepository;
 import com.wuye.points.repository.ActivityGroupPricingTierRepository;
 import com.wuye.points.repository.ActivityGroupRepository;
 import com.wuye.points.repository.ActivityGroupSubscriptionRepository;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.PaymentRecordRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
@@ -80,6 +84,7 @@ public class ActivityGroupService {
     private final ActivityGroupMemberRepository activityGroupMemberRepository;
     private final ActivityGroupSubscriptionRepository activityGroupSubscriptionRepository;
     private final ActivityGroupPricingTierRepository activityGroupPricingTierRepository;
+    private final BuildingLeaderRepository buildingLeaderRepository;
     private final ResidentRepository residentRepository;
     private final CommunityRepository communityRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
@@ -180,6 +185,60 @@ public class ActivityGroupService {
                 .list(members.stream()
                         .map(member -> activityGroupConverter.toMemberItem(
                                 member, residentMap.get(member.getResidentId())))
+                        .toList())
+                .build();
+    }
+
+    /**
+     * 活动组内单元楼长列表（只读）。
+     *
+     * <p>楼长是「小区 + 单元」维度的物业侧身份，由物业/平台管理员指定（§99.1），与活动组无关，
+     * 因此组长在本模块只有读权限，不提供设置/撤销；这里只是把组内成员与该身份做交集展示。
+     */
+    @Transactional(readOnly = true)
+    public ActivityGroupBuildingLeaderListResponse listGroupBuildingLeaders(String id) {
+        roleGuard.requireAnyRole("resident", "activity_leader", "property_admin", "platform_admin",
+                "coordinator", "sector_leader", "individual_leader");
+        validateActivityGroupId(id);
+
+        Resident resident = getActiveResident(UserContext.currentUserId());
+        ActivityGroup group = getReadableGroup(id, resident);
+
+        List<ActivityGroupMember> members = activityGroupMemberRepository.findByGroupIdAndStatus(id, "active");
+        List<String> memberResidentIds = members.stream()
+                .map(ActivityGroupMember::getResidentId)
+                .distinct()
+                .toList();
+
+        Set<String> leaderResidentIds = memberResidentIds.isEmpty()
+                ? Set.of()
+                : buildingLeaderRepository.findByResidentIdInAndPropertyCompanyIdAndStatus(
+                        memberResidentIds, group.getPropertyCompanyId(), "active").stream()
+                        .map(BuildingLeader::getResidentId)
+                        .collect(Collectors.toSet());
+
+        List<ActivityGroupMember> leaders = members.stream()
+                .filter(member -> leaderResidentIds.contains(member.getResidentId()))
+                .toList();
+        Map<String, Resident> leaderMap = loadResidents(leaders.stream()
+                .map(ActivityGroupMember::getResidentId)
+                .toList());
+
+        return ActivityGroupBuildingLeaderListResponse.builder()
+                .groupId(group.getId())
+                .groupName(group.getName())
+                .buildingLeaderCount(leaders.size())
+                .list(leaders.stream()
+                        .map(member -> {
+                            Resident leader = leaderMap.get(member.getResidentId());
+                            return ActivityGroupBuildingLeaderItemResponse.builder()
+                                    .memberId(member.getId())
+                                    .residentId(member.getResidentId())
+                                    .name(leader != null ? leader.getName() : null)
+                                    .avatarUrl(leader != null ? leader.getAvatarUrl() : null)
+                                    .leaderRole("building_leader")
+                                    .build();
+                        })
                         .toList())
                 .build();
     }
@@ -677,7 +736,7 @@ public class ActivityGroupService {
     private SubscribeActivityGroupResponse initiateChannelSubscription(Resident resident, ActivityGroup group,
                                                                       BigDecimal amount,
                                                                       SubscribeActivityGroupRequest request) {
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
         }
         // 作废超时未支付的旧 pending 订阅，允许用户立即重新发起

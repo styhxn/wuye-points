@@ -72,7 +72,10 @@ public class SplitWindowScheduler {
         if (base == null) {
             return true;
         }
-        return base.plusDays(wechatSplitProperties.getAfterSaleDays()).isBefore(LocalDateTime.now());
+        // 微信服务商分账最长冻结 30 天：超期未主动解冻会被微信自动解冻（资金回商家），
+        // 本地完结将返回 NOT_ENOUGH（按幂等成功处理）。故窗口天数硬性封顶 30，配置更大值也不会生效。
+        int days = Math.min(Math.max(wechatSplitProperties.getAfterSaleDays(), 1), 30);
+        return base.plusDays(days).isBefore(LocalDateTime.now());
     }
 
     /** 重试提现失败的分账（Path B 兜底）：对 withdraw_status=withdraw_failed 且已完结的记录重提 */

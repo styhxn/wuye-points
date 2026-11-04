@@ -5,6 +5,7 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.distribution.DistributionCalculateResponse;
 import com.wuye.points.dto.distribution.DistributionRecordItemResponse;
 import com.wuye.points.dto.distribution.DistributionStatsResponse;
+import com.wuye.points.dto.distribution.MyDistributionRecordItemResponse;
 import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.Delivery;
@@ -36,6 +37,10 @@ import com.wuye.points.repository.PropertyManagerRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
 import com.wuye.points.repository.spec.DistributionSpecifications;
+import com.wuye.points.support.RateDefaults;
+import com.wuye.points.util.AdminAuthorizationContext;
+import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.MerchantSupport;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -73,8 +78,8 @@ public class DistributionService {
     private static final BigDecimal DEFAULT_INDIVIDUAL_LEADER_RATE = new BigDecimal("0.0000");
     private static final BigDecimal DEFAULT_POINT_EXCHANGE_RATE = new BigDecimal("100.0000");
     private static final int MONEY_SCALE = 2;
-    /** 计算版本标识（规范§8.5 distribution_b_v1） */
-    private static final String CALCULATION_VERSION = "distribution_b_v1";
+    /** 计算版本标识（规范§8.5；distribution_b_v2 = V36 起抽佣基础额先扣用户积分/奖励金两档） */
+    private static final String CALCULATION_VERSION = "distribution_b_v2";
     /** 成本击穿差额默认承担方（不扣商家） */
     private static final String DEFAULT_DEFICIT_SPONSOR = "property";
     private static final String MERCHANT_SPONSOR = "merchant";
@@ -98,6 +103,7 @@ public class DistributionService {
     private final PropertyManagerRepository propertyManagerRepository;
     private final WalletFlowWriter walletFlowWriter;
     private final WalletFlowService walletFlowService;
+    private final MerchantSupport merchantSupport;
 
     /** 物业经理抽成流水的钱包类型（ownerType=property_manager，ownerId=经理 residentId） */
     private static final String ENTRY_PROPERTY_MANAGER_SHARE = "property_manager_share";
@@ -117,8 +123,9 @@ public class DistributionService {
         // 物业经理抽成入账（从楼长分成中抽取，楼长落库净额；幂等键按订单+角色唯一）
         recordManagerShareFlow(record, breakdown);
 
-        if (breakdown.distributableAmount().compareTo(BigDecimal.ZERO) < 0) {
-            absorbPoolDiff(resident.getPropertyCompanyId(), breakdown.distributableAmount(), order.getId());
+        // 只有积分成本可能击穿（物业免费发放的积分）；物业币由充值现金兑付，不计入 deficitAmount。
+        if (breakdown.deficitAmount().compareTo(BigDecimal.ZERO) > 0) {
+            absorbPoolDiff(resident.getPropertyCompanyId(), breakdown.deficitAmount(), order.getId());
         } else if (breakdown.propertyShare().compareTo(BigDecimal.ZERO) > 0) {
             addToPoolFromDistribution(resident.getPropertyCompanyId(), breakdown.propertyShare(), order.getId());
         }
@@ -180,6 +187,10 @@ public class DistributionService {
         reversal.setBuildingLeaderRate(original.getBuildingLeaderRate());
         reversal.setManagerId(original.getManagerId());
         reversal.setManagerRate(original.getManagerRate());
+        reversal.setUserPointShareRate(original.getUserPointShareRate());
+        reversal.setUserRewardShareRate(original.getUserRewardShareRate());
+        reversal.setUserPointBudget(negate(original.getUserPointBudget()));
+        reversal.setUserRewardBudget(negate(original.getUserRewardBudget()));
         distributionRecordRepository.save(reversal);
 
         // 钱包流水全主体冲正（P0-2 修复）：对原分账记录下的全部正向流水逐条取负冲回，
@@ -266,6 +277,109 @@ public class DistributionService {
         Page<DistributionRecord> recordPage = distributionRecordRepository
                 .findByBuildingLeaderIdOrderByCreatedAtDesc(leader.getId(), pageable);
         return buildRecordPage(recordPage, page, pageSize);
+    }
+
+    /**
+     * 我的分成记录：按当前身份自动收敛数据范围，只返回本人份额。
+     * 商家/组长/技工看店铺；统筹/板块/个体/楼长看本人挂接记录；不返回其他主体份额。
+     */
+    @Transactional(readOnly = true)
+    public PageResponse<MyDistributionRecordItemResponse> listMyRecords(int page, int pageSize) {
+        if (pageSize > 100) {
+            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+        }
+        Pageable pageable = PageRequest.of(Math.max(page, 1) - 1, Math.max(pageSize, 1),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        String role = RoleGuard.normalizeRole(UserContext.currentRole());
+        Page<DistributionRecord> recordPage;
+        String shareType;
+        if ("merchant".equals(role) || "activity_leader".equals(role) || "technician".equals(role)
+                || roleGuard.isActivityLeader()) {
+            Merchant merchant = merchantSupport.requireCurrentWithdrawableMerchant();
+            recordPage = distributionRecordRepository
+                    .findByMerchantIdOrderByCreatedAtDesc(merchant.getId(), pageable);
+            shareType = "merchant";
+        } else if (roleGuard.isCoordinator()) {
+            Coordinator coordinator = resolveCurrentCoordinator();
+            recordPage = distributionRecordRepository
+                    .findByCoordinatorIdOrderByCreatedAtDesc(coordinator.getId(), pageable);
+            shareType = "coordinator";
+        } else if (roleGuard.isSectorLeader()) {
+            SectorLeader leader = sectorLeaderRepository
+                    .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                            UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
+                    .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
+            recordPage = distributionRecordRepository
+                    .findBySectorLeaderIdOrderByCreatedAtDesc(leader.getId(), pageable);
+            shareType = "sector_leader";
+        } else if (roleGuard.isIndividualLeader()) {
+            IndividualLeader leader = individualLeaderRepository
+                    .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                            UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
+                    .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
+            recordPage = distributionRecordRepository
+                    .findByIndividualLeaderIdOrderByCreatedAtDesc(leader.getId(), pageable);
+            shareType = "individual_leader";
+        } else if (roleGuard.isResident()) {
+            BuildingLeader leader = buildingLeaderRepository
+                    .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                            UserContext.currentUserId(), UserContext.currentPropertyCompanyId(), "active")
+                    .orElseThrow(() -> new BizException(ErrorCode.PERMISSION_DENIED));
+            recordPage = distributionRecordRepository
+                    .findByBuildingLeaderIdOrderByCreatedAtDesc(leader.getId(), pageable);
+            shareType = "building_leader";
+        } else {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+
+        List<DistributionRecord> records = recordPage.getContent();
+        Set<String> orderIds = records.stream().map(DistributionRecord::getOrderId).collect(Collectors.toSet());
+        Map<String, Order> orderMap = orderRepository.findAllById(orderIds).stream()
+                .collect(Collectors.toMap(Order::getId, Function.identity()));
+        Set<String> merchantIds = records.stream().map(DistributionRecord::getMerchantId).collect(Collectors.toSet());
+        Map<String, Merchant> merchantMap = merchantRepository.findAllById(merchantIds).stream()
+                .collect(Collectors.toMap(Merchant::getId, Function.identity()));
+
+        List<MyDistributionRecordItemResponse> list = records.stream().map(record -> {
+            Order order = orderMap.get(record.getOrderId());
+            BigDecimal share = resolveMyShare(record, order, shareType);
+            Merchant merchant = merchantMap.get(record.getMerchantId());
+            return MyDistributionRecordItemResponse.builder()
+                    .id(record.getId())
+                    .orderId(record.getOrderId())
+                    .orderNo(order != null ? order.getOrderNo() : null)
+                    .merchantName(merchant != null ? merchant.getName() : null)
+                    .totalAmount(defaultDecimal(record.getTotalAmount()))
+                    .commissionRate(record.getCommissionRate())
+                    .shareType(shareType)
+                    .myShareAmount(share)
+                    .createdAt(DateTimeUtil.toIsoUtc(record.getCreatedAt()))
+                    .build();
+        }).toList();
+
+        return PageResponse.of(list, page, pageSize, recordPage.getTotalElements());
+    }
+
+    private BigDecimal resolveMyShare(DistributionRecord record, Order order, String shareType) {
+        return switch (shareType) {
+            case "merchant" -> {
+                if (order == null) {
+                    yield defaultDecimal(record.getTotalAmount());
+                }
+                BigDecimal goodsBase = defaultDecimal(order.getTotalAmount())
+                        .subtract(defaultDecimal(order.getCouponAmount())).max(BigDecimal.ZERO);
+                BigDecimal commission = goodsBase.multiply(defaultDecimal(record.getCommissionRate()));
+                BigDecimal subsidy = "merchant".equals(order.getDeliverySubsidySponsor())
+                        ? defaultDecimal(order.getDeliverySubsidyAmount()) : BigDecimal.ZERO;
+                yield goodsBase.subtract(commission).subtract(subsidy).max(BigDecimal.ZERO)
+                        .setScale(2, RoundingMode.HALF_UP);
+            }
+            case "coordinator" -> defaultDecimal(record.getCoordinatorShare());
+            case "sector_leader" -> defaultDecimal(record.getSectorLeaderShare());
+            case "individual_leader" -> defaultDecimal(record.getIndividualLeaderShare());
+            case "building_leader" -> defaultDecimal(record.getBuildingLeaderShare());
+            default -> BigDecimal.ZERO;
+        };
     }
 
     @Transactional(readOnly = true)
@@ -383,7 +497,12 @@ public class DistributionService {
                 .coinCost(breakdown.coinCost())
                 .commissionBaseAmount(breakdown.commissionBaseAmount())
                 .productCommission(breakdown.commissionBaseAmount())
-                .productBase(money(productBase.subtract(breakdown.pointCost()).subtract(breakdown.coinCost())))
+                // 物业币是已收现金的支付工具，不是成本；商品实付只扣积分成本（积分由物业免费发放）
+                .productBase(money(productBase.subtract(breakdown.pointCost())))
+                .userPointShareRate(breakdown.userPointRate())
+                .userRewardShareRate(breakdown.userRewardRate())
+                .userPointBudget(breakdown.userPointBudget())
+                .userRewardBudget(breakdown.userRewardBudget())
                 .distributableAmount(breakdown.distributableAmount())
                 .deficitAmount(breakdown.deficitAmount())
                 .deficitSponsor(DEFAULT_DEFICIT_SPONSOR)
@@ -469,7 +588,29 @@ public class DistributionService {
 
         // 抽佣基础额（一级三档分账基数 = 商品实付 × 抽佣率）
         BigDecimal commissionBaseAmount = money(totalAmount.multiply(commissionRate));
-        BigDecimal rawDistributableAmount = money(commissionBaseAmount.subtract(pointCost).subtract(coinCost));
+
+        // 用户侧先扣档（V36 / 老板分账逻辑图）：抽佣基础额先切「用户积分 + 用户奖励金」两档，
+        // 剩下才进「平台 / 物业 / 管理盘」一级三档。比例以支付时锁定的订单快照为准，
+        // 快照缺失（历史订单或未走新支付路径）时回落到物业公司当前配置。
+        BigDecimal userPointRate = defaultRate(order.getUserPointShareRate(),
+                defaultRate(propertyCompany.getUserPointShareRate(), RateDefaults.USER_POINT_SHARE_RATE));
+        BigDecimal userRewardRate = defaultRate(order.getUserRewardShareRate(),
+                defaultRate(propertyCompany.getUserRewardShareRate(), RateDefaults.USER_REWARD_SHARE_RATE));
+        // 积分预算必须与 OrderService 实际发放的积分数一分不差：先按向下取整算出积分数再折算回元。
+        // 若直接对元取整（HALF_UP），会出现「扣了 0.34 元、只发了 33 积分（0.33 元）」，
+        // 那 1 分既没进用户口袋也没留给物业/统筹，账目凭空不平。
+        BigDecimal userPointBudget = money(BigDecimal.valueOf(
+                        commissionBaseAmount.multiply(userPointRate).multiply(exchangeRate)
+                                .setScale(0, RoundingMode.DOWN).intValue())
+                .divide(exchangeRate, MONEY_SCALE, RoundingMode.HALF_UP));
+        BigDecimal userRewardBudget = money(commissionBaseAmount.multiply(userRewardRate));
+
+        // 物业币是充值时就已收到现金的支付工具，不是平台/物业的成本：
+        // 只把积分成本（物业免费发放）从可分配佣金中扣除，物业币不再击穿物业积分池。
+        BigDecimal rawDistributableAmount = money(commissionBaseAmount
+                .subtract(pointCost)
+                .subtract(userPointBudget)
+                .subtract(userRewardBudget));
         BigDecimal distributableAmount = rawDistributableAmount.max(BigDecimal.ZERO);
         BigDecimal deficitAmount = rawDistributableAmount.negate().max(BigDecimal.ZERO);
 
@@ -480,7 +621,8 @@ public class DistributionService {
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                     BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                     null, null, null, null, null,
-                    BigDecimal.ZERO, null, null);
+                    BigDecimal.ZERO, null, null,
+                    userPointRate, userRewardRate, userPointBudget, userRewardBudget);
         }
 
         BigDecimal platformRate = defaultRate(propertyCompany.getPlatformShareRate(), DEFAULT_PLATFORM_SHARE);
@@ -489,7 +631,7 @@ public class DistributionService {
         BigDecimal individualLeaderRate = defaultRate(propertyCompany.getIndividualLeaderRate(), DEFAULT_INDIVIDUAL_LEADER_RATE);
 
         // 一级三档（规范§4.2）：平台独立取整，管理盘用减法吸收分币误差，
-        // 保证 平台 + 物业毛 + 管理盘 = 平台盘（抽佣基础额 − 积分/物业币成本），账目守恒。
+        // 保证 平台 + 物业毛 + 管理盘 = 可分配额（抽佣基础额 − 积分兑付成本 − 用户两档预算），账目守恒。
         BigDecimal platformShare = money(distributableAmount.multiply(platformRate));
         BigDecimal propertyGrossShare = money(distributableAmount.multiply(propertyRate));
         BigDecimal managementPoolAmount = money(distributableAmount.subtract(platformShare).subtract(propertyGrossShare));
@@ -522,7 +664,8 @@ public class DistributionService {
                     buildingLeaderShare,
                     null, null, null,
                     buildingLeader.id(), buildingLeader.rate(),
-                    managerShare, order.getManagerId(), order.getManagerRate());
+                    managerShare, order.getManagerId(), order.getManagerRate(),
+                    userPointRate, userRewardRate, userPointBudget, userRewardBudget);
         }
 
         // 物业分成（毛）= 平台盘 × 物业比例；楼长分成从物业毛额中定向扣除（净额落库）
@@ -571,7 +714,8 @@ public class DistributionService {
                 individualLeader != null ? individualLeader.getId() : null,
                 buildingLeader.id(),
                 buildingLeader.rate(),
-                managerShare, order.getManagerId(), order.getManagerRate());
+                managerShare, order.getManagerId(), order.getManagerRate(),
+                userPointRate, userRewardRate, userPointBudget, userRewardBudget);
     }
 
     /**
@@ -659,6 +803,10 @@ public class DistributionService {
         record.setManagerId(breakdown.managerId());
         record.setManagerRate(breakdown.managerRate());
         record.setManagerShare(breakdown.managerShare());
+        record.setUserPointShareRate(breakdown.userPointRate());
+        record.setUserRewardShareRate(breakdown.userRewardRate());
+        record.setUserPointBudget(breakdown.userPointBudget());
+        record.setUserRewardBudget(breakdown.userRewardBudget());
         return record;
     }
 
@@ -764,15 +912,15 @@ public class DistributionService {
                             .add(sign.multiply(defaultDecimal(order.getDeliverySubsidyAmount())));
                 }
             } else {
+                // 可分配佣金 = 抽佣基础额 − 积分成本；物业币不是成本，不再加回。
                 commissionBaseAmount = defaultDecimal(record.getDistributableAmount())
-                        .add(defaultDecimal(record.getPointCost()))
-                        .add(defaultDecimal(record.getCoinCost()));
+                        .add(defaultDecimal(record.getPointCost()));
                 merchantGoodsAmount = merchantGoodsAmount.add(recordTotal.subtract(commissionBaseAmount));
                 totalOrderAmount = totalOrderAmount.add(recordTotal);
             }
 
-            // 成本击穿差额：仅正向记录可产生（冲正记录对应的原单必然 distributable>0）
-            BigDecimal costs = defaultDecimal(record.getPointCost()).add(defaultDecimal(record.getCoinCost()));
+            // 成本击穿差额：仅积分成本击穿物业池；物业币由充值现金兑付，不计入击穿。
+            BigDecimal costs = defaultDecimal(record.getPointCost());
             deficitAmount = deficitAmount.add(costs.subtract(sign.multiply(commissionBaseAmount))
                     .max(BigDecimal.ZERO));
 
@@ -1014,6 +1162,10 @@ public class DistributionService {
         if (roleGuard.isPropertyAdmin()) {
             return UserContext.currentPropertyCompanyId();
         }
+        // 管理端已按权限码授权的标签身份（板块/个体/活动组长等）按本物业范围查询。
+        if (AdminAuthorizationContext.isGranted() && roleGuard.isAdminWorkspaceUser()) {
+            return UserContext.currentPropertyCompanyId();
+        }
         Coordinator coordinator = resolveCurrentCoordinator();
         return coordinator.getPropertyCompanyId();
     }
@@ -1111,7 +1263,11 @@ public class DistributionService {
             BigDecimal buildingLeaderRate,
             BigDecimal managerShare,
             String managerId,
-            BigDecimal managerRate) {
+            BigDecimal managerRate,
+            BigDecimal userPointRate,
+            BigDecimal userRewardRate,
+            BigDecimal userPointBudget,
+            BigDecimal userRewardBudget) {
     }
 
     /** 订单楼长绑定快照（id + 分成比例） */

@@ -56,6 +56,36 @@ public interface MerchantWithdrawalRepository extends JpaRepository<MerchantWith
     @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m WHERE m.merchantId = :merchantId")
     BigDecimal sumAmountByMerchantId(@Param("merchantId") String merchantId);
 
+    /** 按资金来源汇总占用金额（coin_receivable / legacy） */
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses AND m.source = :source")
+    BigDecimal sumAmountByMerchantIdAndStatusesAndSource(@Param("merchantId") String merchantId,
+                                                         @Param("statuses") Collection<String> statuses,
+                                                         @Param("source") String source);
+
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses AND m.source = :source " +
+           "AND m.id <> :excludeId")
+    BigDecimal sumAmountByMerchantIdAndStatusesAndSourceExcluding(
+            @Param("merchantId") String merchantId,
+            @Param("statuses") Collection<String> statuses,
+            @Param("source") String source,
+            @Param("excludeId") String excludeId);
+
+    /** 历史内部收益占用：source 为空（V35 前数据）或显式 legacy */
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses " +
+           "AND (m.source IS NULL OR m.source <> 'coin_receivable')")
+    BigDecimal sumLegacyAmountByMerchantIdAndStatuses(@Param("merchantId") String merchantId,
+                                                      @Param("statuses") Collection<String> statuses);
+
+    @Query("SELECT COALESCE(SUM(m.amount), 0) FROM MerchantWithdrawal m " +
+           "WHERE m.merchantId = :merchantId AND m.auditStatus IN :statuses " +
+           "AND (m.source IS NULL OR m.source <> 'coin_receivable') AND m.id <> :excludeId")
+    BigDecimal sumLegacyAmountByMerchantIdAndStatusesExcluding(@Param("merchantId") String merchantId,
+                                                               @Param("statuses") Collection<String> statuses,
+                                                               @Param("excludeId") String excludeId);
+
     @Query("SELECT COALESCE(SUM(m.platformFeeShare), 0) FROM MerchantWithdrawal m " +
            "WHERE m.propertyCompanyId = :propertyCompanyId AND m.completedAt >= :start AND m.completedAt < :end")
     BigDecimal sumPlatformFeeShare(@Param("propertyCompanyId") String propertyCompanyId,

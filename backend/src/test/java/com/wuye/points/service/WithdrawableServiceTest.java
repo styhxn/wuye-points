@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -56,6 +57,8 @@ class WithdrawableServiceTest {
     private WalletFlowRepository walletFlowRepository;
     @Mock
     private WechatSplitRecordRepository splitRecordRepository;
+    @Mock
+    private MerchantCoinReceivableService merchantCoinReceivableService;
 
     @InjectMocks
     private WithdrawableService withdrawableService;
@@ -86,6 +89,19 @@ class WithdrawableServiceTest {
         // 钱包流水（已结算入账）默认为空，各用例按需覆盖
         when(walletFlowRepository.sumAmountByOwnerIdAndEntryType(anyString(), anyString()))
                 .thenReturn(BigDecimal.ZERO);
+        // 标准商家：物业币应收独立核算，现金走内部现金口径
+        when(merchantCoinReceivableService.isInternalEarningsMerchant(merchant)).thenReturn(false);
+        when(merchantCoinReceivableService.calc(any(com.wuye.points.entity.Merchant.class), any()))
+                .thenReturn(merchantIncome(new BigDecimal("500"), BigDecimal.ZERO));
+        when(merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatuses(anyString(), anyList()))
+                .thenReturn(new BigDecimal("200"));
+    }
+
+    private MerchantCoinReceivableService.MerchantIncome merchantIncome(
+            BigDecimal internalCash, BigDecimal coinAvailable) {
+        return new MerchantCoinReceivableService.MerchantIncome(
+                internalCash, BigDecimal.ZERO, internalCash, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, coinAvailable, List.of());
     }
 
     private void assertAmount(BigDecimal expected, BigDecimal actual) {
@@ -138,6 +154,10 @@ class WithdrawableServiceTest {
         // B 方案：商家收入取分账记录 merchantShare（已扣抽佣）
         when(distributionRecordRepository.sumMerchantIncomeForCompletedOrders("m1"))
                 .thenReturn(new BigDecimal("80"));
+        when(merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatuses(anyString(), anyList()))
+                .thenReturn(BigDecimal.ZERO);
+        when(merchantCoinReceivableService.calc(any(com.wuye.points.entity.Merchant.class), any()))
+                .thenReturn(merchantIncome(new BigDecimal("80"), BigDecimal.ZERO));
 
         WithdrawableService.MerchantWithdrawable r = withdrawableService.calcMerchantWithdrawable(merchant);
         assertAmount(new BigDecimal("80"), r.withdrawableAmount());
@@ -156,6 +176,10 @@ class WithdrawableServiceTest {
                 .thenReturn(new BigDecimal("20"));
         when(distributionRecordRepository.sumMerchantIncomeForCompletedOrders("m1"))
                 .thenReturn(new BigDecimal("80"));
+        when(merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatuses(anyString(), anyList()))
+                .thenReturn(new BigDecimal("90"));
+        when(merchantCoinReceivableService.calc(any(com.wuye.points.entity.Merchant.class), any()))
+                .thenReturn(merchantIncome(new BigDecimal("80"), BigDecimal.ZERO));
 
         WithdrawableService.MerchantWithdrawable r = withdrawableService.calcMerchantWithdrawable(merchant);
         assertAmount(BigDecimal.ZERO, r.withdrawableAmount());
@@ -167,6 +191,10 @@ class WithdrawableServiceTest {
         when(orderRepository.sumCompletedRevenueByMerchantId("m1")).thenReturn(new BigDecimal("100"));
         when(merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(anyString(), anyList()))
                 .thenReturn(new BigDecimal("200"));
+        when(merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatuses(anyString(), anyList()))
+                .thenReturn(new BigDecimal("200"));
+        when(merchantCoinReceivableService.calc(any(com.wuye.points.entity.Merchant.class), any()))
+                .thenReturn(merchantIncome(new BigDecimal("100"), BigDecimal.ZERO));
 
         WithdrawableService.MerchantWithdrawable r = withdrawableService.calcMerchantWithdrawable(merchant);
         assertAmount(BigDecimal.ZERO, r.withdrawableAmount());

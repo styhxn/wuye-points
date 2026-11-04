@@ -30,6 +30,15 @@ class PermissionGuardTest {
     }
 
     @Test
+    @DisplayName("历史物业角色归一 - property_leader/property_operator 视为 property_admin")
+    void normalizeBaseRole_legacyPropertyRoles() {
+        assertEquals("property_admin", PermissionGuard.normalizeBaseRole("property_leader"));
+        assertEquals("property_admin", PermissionGuard.normalizeBaseRole("property_operator"));
+        assertEquals("platform_admin", PermissionGuard.normalizeBaseRole("platform_admin"));
+        assertEquals("resident", PermissionGuard.normalizeBaseRole("resident"));
+    }
+
+    @Test
     @DisplayName("领导专属权限码（冒号/点号）")
     void leaderOnlyCodes_normalized() {
         PermissionGuard guard = new PermissionGuard(null, null, null, null, null, null, null);
@@ -37,6 +46,7 @@ class PermissionGuardTest {
         assertTrue(guard.isPropertyLeaderOnlyPermission("permission:manage"));
         assertTrue(guard.isPropertyLeaderOnlyPermission("permission.read"));
         assertTrue(guard.isPropertyLeaderOnlyPermission("property_operator.manage"));
+        assertTrue(guard.isPropertyLeaderOnlyPermission("coin:display_control"));
         assertFalse(guard.isPropertyLeaderOnlyPermission("announcement.publish"));
         assertFalse(guard.isPlatformOnlyPermission("config.set"));
     }

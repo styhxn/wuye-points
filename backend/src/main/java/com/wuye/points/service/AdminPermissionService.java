@@ -72,7 +72,7 @@ public class AdminPermissionService {
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
-    public AccountListResponse listAccounts(String keyword) {
+    public AccountListResponse listAccounts(String keyword, boolean adminOnly) {
         permissionGuard.requirePermissionOrAdmin("permission.read");
 
         String propertyCompanyId = roleGuard.isPlatformAdmin()
@@ -96,6 +96,7 @@ public class AdminPermissionService {
 
         List<AccountListItemResponse> accounts = residents.stream()
                 .filter(r -> r.getRole() != null)
+                .filter(r -> !adminOnly || roleGuard.isAdminWorkspaceUser(r))
                 .map(r -> {
                     int permCount = permissionGuard.listEffectivePermissionCodes(
                             r.getId(), r.getPropertyCompanyId()).size();
@@ -104,6 +105,10 @@ public class AdminPermissionService {
                             .name(r.getName())
                             .phone(maskPhone(r.getPhone()))
                             .role(r.getRole())
+                            .normalizedRole(PermissionGuard.normalizeBaseRole(r.getRole()))
+                            .roleCodes(permissionGuard.listEffectiveRoleCodes(
+                                            r.getId(), r.getPropertyCompanyId()).stream().sorted().toList())
+                            .adminWorkspace(roleGuard.isAdminWorkspaceUser(r))
                             .propertyCompanyId(r.getPropertyCompanyId())
                             .status(r.getStatus())
                             .effectivePermissionCount(permCount)
@@ -225,17 +230,15 @@ public class AdminPermissionService {
 
         Resident resident = getAccessibleResident(userId);
         String propertyCompanyId = resident.getPropertyCompanyId();
+        Set<String> roleCodes = permissionGuard.listEffectiveRoleCodes(userId, propertyCompanyId);
 
-        AppliedPresetResponse appliedPreset = null;
-        if (StringUtils.hasText(resident.getRole())) {
-            appliedPreset = rolePresetRepository.findByCode(resident.getRole())
-                    .map(preset -> AppliedPresetResponse.builder()
-                            .id(preset.getId())
-                            .name(preset.getName())
-                            .code(preset.getCode())
-                            .build())
-                    .orElse(null);
-        }
+        AppliedPresetResponse appliedPreset = permissionGuard.findPrimaryPreset(roleCodes)
+                .map(preset -> AppliedPresetResponse.builder()
+                        .id(preset.getId())
+                        .name(preset.getName())
+                        .code(preset.getCode())
+                        .build())
+                .orElse(null);
 
         List<PermissionOverrideItemResponse> overrides = userPermissionRepository
                 .findByResidentIdAndPropertyCompanyId(userId, propertyCompanyId).stream()
@@ -265,6 +268,7 @@ public class AdminPermissionService {
         return UserPermissionsResponse.builder()
                 .accountId(resident.getId())
                 .accountName(resident.getName())
+                .roleCodes(roleCodes.stream().sorted().toList())
                 .appliedPreset(appliedPreset)
                 .overrides(overrides)
                 .effectivePermissions(new ArrayList<>(effective))
@@ -279,12 +283,14 @@ public class AdminPermissionService {
         adminSupport.validateIdPrefix(userId, "res_");
 
         Resident resident = getAccessibleResident(userId);
+        assertAdminWorkspaceTarget(resident);
         String propertyCompanyId = resident.getPropertyCompanyId();
         String operatorId = UserContext.currentUserId();
 
         List<String> grantedCodes = new ArrayList<>();
         for (String rawCode : request.getPermissionCodes()) {
             Permission permission = resolveGrantablePermission(rawCode);
+            assertGrantableForTarget(resident, permission);
             String apiCode = toApiPermissionCode(permission.getCode());
 
             String beforeValue = "false";
@@ -450,6 +456,33 @@ public class AdminPermissionService {
         return resident;
     }
 
+    private void assertAdminWorkspaceTarget(Resident resident) {
+        if (!roleGuard.isAdminWorkspaceUser(resident)) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "该账号不具备管理端工作台身份（需为物业/平台/社区管理员或持组长/负责人标签），不能配置管理端权限");
+        }
+    }
+
+    private void assertGrantableForTarget(Resident resident, Permission permission) {
+        String targetRole = PermissionGuard.normalizeBaseRole(resident.getRole());
+        if ("platform_admin".equals(targetRole)) {
+            return;
+        }
+        if (permissionGuard.isPlatformOnlyPermission(permission.getCode())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "平台专属权限只能授予平台管理员");
+        }
+        if (!"property_admin".equals(targetRole)
+                && permissionGuard.isPropertyLeaderOnlyPermission(permission.getCode())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "该权限为物业领导专属，不能授予活动组长/负责人/社区管理员等标签身份");
+        }
+        if (!"property_admin".equals(targetRole)
+                && !permissionGuard.isTagIdentityGrantablePermission(permission.getCode())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "该权限暂不支持授予活动组长/负责人/社区管理员等标签身份，请改用物业管理员账号");
+        }
+    }
+
     private String resolvePresetPropertyCompanyId(String requestedPropertyCompanyId) {
         if (roleGuard.isPropertyAdmin()) {
             return UserContext.currentPropertyCompanyId();
@@ -539,6 +572,8 @@ public class AdminPermissionService {
                 .module(permission.getModule())
                 .description(permission.getDescription())
                 .isPlatformOnly(permissionGuard.isPlatformOnlyPermission(permission.getCode()))
+                .grantableToTagIdentities(
+                        permissionGuard.isTagIdentityGrantablePermission(permission.getCode()))
                 .status(permission.getStatus())
                 .build();
     }

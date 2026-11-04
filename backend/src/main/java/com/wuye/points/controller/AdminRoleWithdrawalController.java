@@ -36,12 +36,12 @@ public class AdminRoleWithdrawalController {
     }
 
     @Operation(summary = "配送员/多角色提现审核列表",
-            description = "查询配送员/个体负责人/统筹/板块负责人提现记录，可按提现类型/审核状态/关键词/时间筛选。角色: property_admin, platform_admin")
+            description = "查询配送员/个体负责人/统筹/板块负责人/住户钱包提现记录，可按提现类型/审核状态/关键词/时间筛选。角色: property_admin, platform_admin")
     @GetMapping("/admin/role-withdrawals")
     public ApiResponse<PageResponse<AdminRoleWithdrawalListItemResponse>> listWithdrawals(
             @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
-            @Parameter(description = "提现类型: individual_leader/courier/coordinator/sector_leader")
+            @Parameter(description = "提现类型: individual_leader/courier/coordinator/sector_leader/building_leader/resident_seller/property_manager/resident_wallet")
             @RequestParam(required = false) String withdrawalType,
             @Parameter(description = "审核状态: pending/approved/rejected/completed")
             @RequestParam(required = false) String auditStatus,

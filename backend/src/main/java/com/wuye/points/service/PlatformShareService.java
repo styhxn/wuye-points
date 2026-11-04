@@ -22,6 +22,7 @@ import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.repository.spec.DistributionSpecifications;
 import com.wuye.points.repository.spec.MerchantWithdrawalSpecifications;
 import com.wuye.points.repository.spec.WithdrawalRecordSpecifications;
+import com.wuye.points.support.RateDefaults;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.config.DistributionProperties;
 import com.wuye.points.util.RoleGuard;
@@ -110,6 +111,12 @@ public class PlatformShareService {
         if (request.getCourierShareRate() != null) {
             company.setCourierShareRate(request.getCourierShareRate());
         }
+        if (request.getUserPointShareRate() != null) {
+            company.setUserPointShareRate(request.getUserPointShareRate());
+        }
+        if (request.getUserRewardShareRate() != null) {
+            company.setUserRewardShareRate(request.getUserRewardShareRate());
+        }
         validateShareRates(company);
         propertyCompanyRepository.save(company);
         return toRatesResponse(company);
@@ -158,9 +165,27 @@ public class PlatformShareService {
         requireRatio(company.getSectorLeaderRate(), "区块负责人分成比例");
         requireRatio(company.getIndividualLeaderRate(), "个体负责人分成比例");
 
+        // 用户侧先扣档（V36）：两档从抽佣基础额中先切走，不进一级三档，故不参与 100% 合计校验；
+        // 但合计不得超过 100%——超过则平台盘被清零并记为击穿差额由物业承担，等于把全部佣金给用户，属配置错误。
+        BigDecimal userPoint = userRateOrDefault(company.getUserPointShareRate(), RateDefaults.USER_POINT_SHARE_RATE);
+        BigDecimal userReward = userRateOrDefault(company.getUserRewardShareRate(), RateDefaults.USER_REWARD_SHARE_RATE);
+        requireRatio(userPoint, "用户积分预算比例");
+        requireRatio(userReward, "用户奖励金预算比例");
+        BigDecimal userTierTotal = userPoint.add(userReward);
+        if (userTierTotal.compareTo(BigDecimal.ONE) > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "用户积分与用户奖励金预算比例合计不得超过100%（当前为"
+                            + userTierTotal.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%）");
+        }
+
         // 平台在配送费、提现手续费中的分成同样只能落在 0~100%
         requireRatio(company.getPlatformDeliveryShareRate(), "平台配送费分成比例");
         requireRatio(company.getPlatformWithdrawalFeeShareRate(), "平台提现手续费分成比例");
+    }
+
+    /** 用户侧预算比例取值：未配置时回落到 {@link RateDefaults}，0 是合法配置（表示不发）。 */
+    private BigDecimal userRateOrDefault(BigDecimal configured, BigDecimal fallback) {
+        return configured != null ? configured : fallback;
     }
 
     private BigDecimal requireRatio(BigDecimal value, String label) {
@@ -435,6 +460,8 @@ public class PlatformShareService {
                 .sectorLeaderRate(company.getSectorLeaderRate())
                 .individualLeaderRate(company.getIndividualLeaderRate())
                 .courierShareRate(company.getCourierShareRate())
+                .userPointShareRate(company.getUserPointShareRate())
+                .userRewardShareRate(company.getUserRewardShareRate())
                 .build();
     }
 

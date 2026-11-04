@@ -53,6 +53,41 @@ public class WalletFlowWriter {
         if (walletFlowRepository.existsByIdempotencyKey(idempotencyKey)) {
             return false;
         }
+        try {
+            walletFlowRepository.saveAndFlush(buildFlow(distributionRecordId, orderId, deliveryId,
+                    ownerType, ownerId, entryType, amount, balanceType, idempotencyKey, refRecordId));
+            return true;
+        } catch (DataIntegrityViolationException e) {
+            // 并发下另一事务已写入同一幂等键，属预期内的幂等命中
+            log.info("[钱包流水] 并发幂等命中，跳过重复入账 key={}", idempotencyKey);
+            return false;
+        }
+    }
+
+    /**
+     * 写入单条流水（加入调用方事务）。
+     * 用于「提现完成」这类必须与业务状态变更同生共死的冲减流水。
+     * 唯一键冲突直接抛出并回滚调用方事务，避免吞掉异常导致事务被标记 rollback-only。
+     *
+     * @return true=本次实际写入；false=幂等跳过（已存在）
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    public boolean writeInCurrentTransaction(String distributionRecordId, String orderId, String deliveryId,
+                                             String ownerType, String ownerId, String entryType,
+                                             BigDecimal amount, String balanceType,
+                                             String idempotencyKey, String refRecordId) {
+        if (walletFlowRepository.existsByIdempotencyKey(idempotencyKey)) {
+            return false;
+        }
+        walletFlowRepository.saveAndFlush(buildFlow(distributionRecordId, orderId, deliveryId,
+                ownerType, ownerId, entryType, amount, balanceType, idempotencyKey, refRecordId));
+        return true;
+    }
+
+    private WalletFlow buildFlow(String distributionRecordId, String orderId, String deliveryId,
+                                 String ownerType, String ownerId, String entryType,
+                                 BigDecimal amount, String balanceType,
+                                 String idempotencyKey, String refRecordId) {
         WalletFlow flow = new WalletFlow();
         flow.setId(idGenerator.generateId("wf"));
         flow.setOwnerType(ownerType);
@@ -65,13 +100,6 @@ public class WalletFlowWriter {
         flow.setBalanceType(balanceType);
         flow.setIdempotencyKey(idempotencyKey);
         flow.setRefRecordId(refRecordId);
-        try {
-            walletFlowRepository.saveAndFlush(flow);
-            return true;
-        } catch (DataIntegrityViolationException e) {
-            // 并发下另一事务已写入同一幂等键，属预期内的幂等命中
-            log.info("[钱包流水] 并发幂等命中，跳过重复入账 key={}", idempotencyKey);
-            return false;
-        }
+        return flow;
     }
 }

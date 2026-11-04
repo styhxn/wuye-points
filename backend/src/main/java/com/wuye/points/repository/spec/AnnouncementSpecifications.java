@@ -19,7 +19,9 @@ public final class AnnouncementSpecifications {
             String merchantId,
             String status,
             String residentRole,
-            String residentBuilding) {
+            String residentBuilding,
+            boolean residentView,
+            String residentUnit) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
 
@@ -51,6 +53,19 @@ public final class AnnouncementSpecifications {
                 predicates.add(cb.or(
                         cb.isNull(root.get("targetBuildings")),
                         cb.like(root.get("targetBuildings"), "%" + residentBuilding + "%")));
+            }
+            // 单元必须按 JSON 数组元素整段匹配（带引号）：'5单元' 是 '15单元' 的子串，
+            // 沿用楼栋那种裸 LIKE 会把通知漏给别的单元。
+            // 住户视角一律参与判定：本人没有 unit 时只能看不限单元的公告，
+            // 否则列表会列出单元通知、点进详情又被 getReadableAnnouncement 挡成 90001。
+            if (residentView) {
+                if (StringUtils.hasText(residentUnit)) {
+                    predicates.add(cb.or(
+                            cb.isNull(root.get("targetUnits")),
+                            cb.like(root.get("targetUnits"), "%\"" + residentUnit + "\"%")));
+                } else {
+                    predicates.add(cb.isNull(root.get("targetUnits")));
+                }
             }
 
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));

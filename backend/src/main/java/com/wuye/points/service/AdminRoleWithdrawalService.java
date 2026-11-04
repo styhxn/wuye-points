@@ -49,7 +49,7 @@ public class AdminRoleWithdrawalService {
 
     private static final Set<String> WITHDRAWAL_TYPES = Set.of(
             "individual_leader", "courier", "coordinator", "sector_leader",
-            "building_leader", "resident_seller", "property_manager");
+            "building_leader", "resident_seller", "property_manager", "resident_wallet");
     private static final Set<String> AUDIT_RESULTS = Set.of("approved", "rejected", "completed");
     private static final Set<String> AUDIT_STATUS = Set.of(
             "pending", "pending_audit", "approved", "rejected", "completed");
@@ -59,6 +59,7 @@ public class AdminRoleWithdrawalService {
     private final PermissionGuard permissionGuard;
     private final AdminSupport adminSupport;
     private final OperationLogService operationLogService;
+    private final WalletFlowWriter walletFlowWriter;
 
     /**
      * 管理端提现审批列表（含配送员/个体负责人/统筹/板块负责人，可按类型/状态/关键词/时间筛选）。
@@ -172,6 +173,14 @@ public class AdminRoleWithdrawalService {
             withdrawal.setDisburseChannel("manual");
             withdrawal.setDisburseStatus("success");
             withdrawal.setTransferProof(request.getTransferProof());
+            // 住户钱包提现完成时冲减钱包余额；与审核状态同一事务，避免余额与状态不一致。
+            if ("resident_wallet".equals(withdrawal.getWithdrawalType())
+                    && StringUtils.hasText(withdrawal.getResidentId())) {
+                walletFlowWriter.writeInCurrentTransaction(null, null, null,
+                        "resident", withdrawal.getResidentId(), "resident_wallet_withdrawal",
+                        withdrawal.getAmount().negate(), "withdrawable",
+                        "withdrawal:" + withdrawal.getId(), withdrawal.getId());
+            }
         }
         withdrawalRecordRepository.save(withdrawal);
 

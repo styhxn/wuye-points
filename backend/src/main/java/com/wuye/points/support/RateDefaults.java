@@ -43,6 +43,18 @@ public final class RateDefaults {
     /** 配送员分成比例默认值（A 方案四档时使用） */
     public static final BigDecimal COURIER_RATE = new BigDecimal("0.6000");
 
+    /**
+     * 用户积分预算比例默认值（占抽佣基础额，分账链先扣档）。
+     *
+     * <p>2026-11-03 老板分账逻辑图口径：抽佣 5 元先切 10% 作用户积分、10% 作用户奖励金，
+     * 剩下 4 元才进「平台 / 物业 / 管理盘」一级三档。发放公式随之从「按用户实付金额」
+     * 改为「按平台盘 × 本比例」。
+     */
+    public static final BigDecimal USER_POINT_SHARE_RATE = new BigDecimal("0.1000");
+
+    /** 用户奖励金预算比例默认值（占抽佣基础额，分账链先扣档） */
+    public static final BigDecimal USER_REWARD_SHARE_RATE = new BigDecimal("0.1000");
+
     /** 提现手续费率默认值 */
     public static final BigDecimal WITHDRAWAL_FEE_RATE = new BigDecimal("0.0060");
 

@@ -28,14 +28,20 @@ public class CalculationResult {
 
     // ===== 商品分账链（§4） =====
     private BigDecimal pointCost;            // 积分成本 = pointUsed / pointExchangeRate
-    private BigDecimal coinCost;             // 物业币成本（1 物业币 = 1 元）
+    private BigDecimal coinCost;             // 物业币支付金额（快照，不作为成本）
     private BigDecimal commissionBaseAmount; // 抽佣基础额 = productAmount × commissionRate
     private BigDecimal productCommission;    // 兼容旧字段，等价于 commissionBaseAmount
-    private BigDecimal productBase;          // 兼容旧字段：商品实付 = productAmount − pointCost − coinCost
-    private BigDecimal distributableAmount;  // 平台盘 = max(commissionBaseAmount − pointCost − coinCost, 0)
+    private BigDecimal productBase;          // 兼容旧字段：商品实付 = productAmount − pointCost
+    private BigDecimal distributableAmount;  // 平台盘 = max(commissionBaseAmount − pointCost − 用户两档预算, 0)
     private BigDecimal merchantGoodsShare;   // 商家商品实得 = productAmount − commissionBaseAmount
     private BigDecimal deficitAmount;        // 成本击穿差额 = max(−raw, 0)
     private String deficitSponsor;           // 击穿承担方（默认 property）
+
+    // ===== 用户侧先扣档（V36，从抽佣基础额中先切，不进一级三档） =====
+    private BigDecimal userPointShareRate;
+    private BigDecimal userRewardShareRate;
+    private BigDecimal userPointBudget;      // = commissionBaseAmount × userPointShareRate
+    private BigDecimal userRewardBudget;     // = commissionBaseAmount × userRewardShareRate
 
     // ===== 商品平台盘一级分配（§4.2） =====
     private BigDecimal platformShareRate;

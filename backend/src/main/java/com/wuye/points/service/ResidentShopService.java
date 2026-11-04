@@ -187,7 +187,7 @@ public class ResidentShopService {
 
         // 微信真实支付：微信小程序预下单（事务外 HTTP，与订单支付同构），保证金保持待缴，支付成功后由回调确认
         if ("wechat".equals(request.getPaymentMethod())) {
-            if (!wechatPayService.isEnabled()) {
+            if (!wechatPayService.isDirectEnabled()) {
                 throw new BizException(ErrorCode.PARAM_INVALID,
                         "在线支付未开通，请联系物业线下缴纳保证金后由管理端确认");
             }

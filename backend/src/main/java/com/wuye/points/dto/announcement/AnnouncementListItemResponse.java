@@ -55,4 +55,11 @@ public class AnnouncementListItemResponse {
 
     @Schema(description = "关联活动组ID（活动公告专用）", example = "act_001")
     private String activityGroupId;
+
+    @Schema(description = "内容类型：notification/product/activity。product 为产品推荐（楼长分享商品即此类）",
+            example = "notification")
+    private String contentType;
+
+    @Schema(description = "关联商品ID（仅 contentType=product 时有值，前端据此渲染商品卡片）", example = "prd_001")
+    private String productId;
 }

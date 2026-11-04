@@ -46,10 +46,17 @@ public class DistributionConverter {
         BigDecimal productAmount = order != null
                 ? money(defaultDecimal(order.getTotalAmount()).subtract(defaultDecimal(order.getCouponAmount()))
                         .max(BigDecimal.ZERO))
-                : money(distributableAmount.add(pointCost).add(coinCost));
+                : money(distributableAmount.add(pointCost));
         BigDecimal commissionBaseAmount = money(productAmount.multiply(defaultDecimal(record.getCommissionRate())));
-        BigDecimal productBase = money(productAmount.subtract(pointCost).subtract(coinCost));
-        BigDecimal deficitAmount = pointCost.add(coinCost).subtract(commissionBaseAmount).max(BigDecimal.ZERO);
+        // 物业币是已收现金的支付工具，不是成本；商品实付只扣积分成本。
+        BigDecimal productBase = money(productAmount.subtract(pointCost));
+        // 缺口口径与试算 DistributionService#buildShareBreakdown 对齐：抽佣基础额先扣积分成本，
+        // 再扣用户积分/奖励金两档留成，扣穿才算缺口。读侧此前漏算两档，同一笔单列表页缺口小于试算页。
+        // V36 前的历史单两档为 null，defaultDecimal 后按 0 计，自动退化为旧口径。
+        BigDecimal userPointBudget = defaultDecimal(record.getUserPointBudget());
+        BigDecimal userRewardBudget = defaultDecimal(record.getUserRewardBudget());
+        BigDecimal deficitAmount = money(pointCost.add(userPointBudget).add(userRewardBudget)
+                .subtract(commissionBaseAmount).max(BigDecimal.ZERO));
         BigDecimal managementPoolAmount = money(distributableAmount.subtract(platformShare).subtract(propertyShare));
 
         // 配送链：金额以订单快照为准，平台/配送员收入以 deliveries 落库事实源为准
@@ -91,6 +98,10 @@ public class DistributionConverter {
                 .coordinatorShare(defaultDecimal(record.getCoordinatorShare()))
                 .sectorLeaderShare(defaultDecimal(record.getSectorLeaderShare()))
                 .individualLeaderShare(defaultDecimal(record.getIndividualLeaderShare()))
+                .userPointShareRate(record.getUserPointShareRate())
+                .userRewardShareRate(record.getUserRewardShareRate())
+                .userPointBudget(record.getUserPointBudget())
+                .userRewardBudget(record.getUserRewardBudget())
                 .buildingLeaderShare(defaultDecimal(record.getBuildingLeaderShare()))
                 .coordinatorId(record.getCoordinatorId())
                 .coordinatorName(resolveResidentName(record.getCoordinatorId(), residentNameMap))

@@ -4,6 +4,7 @@ import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.rolewithdrawal.ApplyRoleWithdrawalRequest;
 import com.wuye.points.dto.rolewithdrawal.RoleWithdrawalItemResponse;
+import com.wuye.points.dto.wallet.ResidentWalletResponse;
 import com.wuye.points.entity.BuildingLeader;
 import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.CourierManager;
@@ -63,6 +64,7 @@ public class RoleWithdrawalService {
     private static final String WITHDRAWAL_TYPE_BUILDING_LEADER = "building_leader";
     private static final String WITHDRAWAL_TYPE_RESIDENT_SELLER = "resident_seller";
     private static final String WITHDRAWAL_TYPE_PROPERTY_MANAGER = "property_manager";
+    private static final String WITHDRAWAL_TYPE_RESIDENT_WALLET = "resident_wallet";
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
@@ -331,6 +333,70 @@ public class RoleWithdrawalService {
         Resident resident = residentRepository.findById(residentId)
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
         return listByType(WITHDRAWAL_TYPE_RESIDENT_SELLER, residentId,
+                resident.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
+    }
+
+    // ============== 住户钱包提现（奖励金转钱包后的余额） ==============
+
+    /**
+     * 住户钱包余额：钱包累计余额 = wallet_flows(withdrawable) 汇总；
+     * 可提现 = 累计余额 − 在途提现（pending/approved）。
+     * completed 提现会在完成时写入负向流水，因此不再作为占用重复扣减。
+     */
+    @Transactional(readOnly = true)
+    public ResidentWalletResponse getMyWallet() {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        BigDecimal walletBalance = defaultDecimal(walletFlowRepository
+                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType("resident", resident.getId(), "withdrawable"));
+        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
+                .sumOccupiedAmountByApplicantAndType(resident.getId(), WITHDRAWAL_TYPE_RESIDENT_WALLET));
+        BigDecimal withdrawable = walletBalance.subtract(occupied).max(BigDecimal.ZERO);
+        return ResidentWalletResponse.builder()
+                .coinBalance(defaultDecimal(resident.getCoinBalance()))
+                .walletBalance(walletBalance)
+                .occupiedWithdrawalAmount(occupied)
+                .withdrawableAmount(withdrawable)
+                .withdrawalBlocked(Boolean.TRUE.equals(resident.getWithdrawalBlocked()))
+                .build();
+    }
+
+    @Transactional
+    public RoleWithdrawalItemResponse applyForResidentWallet(ApplyRoleWithdrawalRequest request) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!StringUtils.hasText(resident.getPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND);
+        }
+        assertNotBlocked(resident.getId());
+
+        BigDecimal walletBalance = defaultDecimal(walletFlowRepository
+                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType("resident", resident.getId(), "withdrawable"));
+        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
+                .sumOccupiedAmountByApplicantAndType(resident.getId(), WITHDRAWAL_TYPE_RESIDENT_WALLET));
+        BigDecimal withdrawable = walletBalance.subtract(occupied).max(BigDecimal.ZERO);
+        if (request.getAmount().compareTo(withdrawable) > 0) {
+            throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
+                    "钱包可提现余额不足（最多 ¥" + withdrawable.toPlainString() + "）");
+        }
+
+        return buildAndSave(resident.getId(), resident.getId(), resident.getPropertyCompanyId(),
+                WITHDRAWAL_TYPE_RESIDENT_WALLET, request.getAmount());
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<RoleWithdrawalItemResponse> listForResidentWallet(
+            int page,
+            int pageSize,
+            String auditStatus,
+            String startDate,
+            String endDate) {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        return listByType(WITHDRAWAL_TYPE_RESIDENT_WALLET, resident.getId(),
                 resident.getPropertyCompanyId(), page, pageSize, auditStatus, startDate, endDate);
     }
 

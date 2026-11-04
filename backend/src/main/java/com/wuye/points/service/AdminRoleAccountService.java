@@ -6,6 +6,7 @@ import com.wuye.points.dto.admin.roleaccount.CreateRoleAccountResponse;
 import com.wuye.points.dto.admin.roleaccount.DeleteRoleAccountResponse;
 import com.wuye.points.dto.admin.roleaccount.DisableRoleAccountResponse;
 import com.wuye.points.entity.ActivityLeaderIdentity;
+import com.wuye.points.entity.Community;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantPropertyConfig;
 import com.wuye.points.entity.PlatformMerchant;
@@ -14,6 +15,7 @@ import com.wuye.points.enums.ResidentStatus;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.ActivityLeaderIdentityRepository;
+import com.wuye.points.repository.CommunityRepository;
 import com.wuye.points.repository.MerchantPropertyConfigRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.PlatformMerchantRepository;
@@ -24,8 +26,10 @@ import com.wuye.points.util.PasswordUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -33,6 +37,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 管理端直接创建 / 删除业务角色账号。
@@ -40,6 +46,7 @@ import java.util.Set;
  * <p>用于数据被误删后的快速恢复：一键创建「账号 + 密码 + 关联店铺/绑定」，避免手改 SQL。
  * <p>权限：物业管理员（property_admin，含物业领导/物业操作员）、平台管理员。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminRoleAccountService {
@@ -50,13 +57,27 @@ public class AdminRoleAccountService {
     private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("0.1000");
     private static final BigDecimal DEFAULT_POINT_EXCHANGE_RATE = new BigDecimal("100.0000");
 
+    /** 落库列精度上限：超出会被 MySQL 判为 out-of-range，冒出来是一个无法定位的 409。 */
+    private static final BigDecimal MAX_COMMISSION_RATE = BigDecimal.ONE;
+    private static final BigDecimal MAX_POINT_EXCHANGE_RATE = new BigDecimal("999999.9999");
+    private static final BigDecimal MAX_DELIVERY_FEE = new BigDecimal("99999999.99");
+
+    private static final Pattern DUPLICATE_PATTERN =
+            Pattern.compile("Duplicate entry '([^']*)' for key '([^']+)'");
+    private static final Pattern NOT_NULL_PATTERN =
+            Pattern.compile("Column '([^']+)' cannot be null");
+    private static final Pattern FOREIGN_KEY_PATTERN =
+            Pattern.compile("CONSTRAINT `([^`]+)` FOREIGN KEY");
+
     private final ResidentRepository residentRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
+    private final CommunityRepository communityRepository;
     private final MerchantRepository merchantRepository;
     private final PlatformMerchantRepository platformMerchantRepository;
     private final MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     private final MerchantBindingService merchantBindingService;
     private final MerchantConverter merchantConverter;
+    private final MerchantCategoryService merchantCategoryService;
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
@@ -86,6 +107,13 @@ public class AdminRoleAccountService {
         propertyCompanyRepository.findById(propertyCompanyId)
                 .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
 
+        // 小区外键与金额列精度都在库里硬约束：不前置校验的话，会以「数据冲突，请刷新后重试」的 409 冒出来，
+        // 运营看不到是哪个字段错。这里一律转成带字段名的 400。
+        validateCommunity(request.getCommunityId(), propertyCompanyId);
+        if ("merchant".equals(role)) {
+            validateMerchantParams(request);
+        }
+
         if (residentRepository.existsByPhoneAndPropertyCompanyId(request.getPhone(), propertyCompanyId)) {
             throw new BizException(ErrorCode.RESIDENT_DUPLICATE_PHONE);
         }
@@ -112,7 +140,7 @@ public class AdminRoleAccountService {
         resident.setCoinHidden(false);
         resident.setWechatBound(false);
         resident.setStatus(ResidentStatus.active.name());
-        residentRepository.save(resident);
+        persist("residents（账号）", residentRepository, resident);
 
         // 2. 按角色创建关联店铺/绑定/身份
         String merchantId = null;
@@ -135,6 +163,74 @@ public class AdminRoleAccountService {
                 .merchantId(merchantId)
                 .status(resident.getStatus())
                 .build();
+    }
+
+    /** 小区必须存在且属于该物业公司，否则 residents 外键会以 409「数据冲突」冒出来。 */
+    private void validateCommunity(String communityId, String propertyCompanyId) {
+        if (!StringUtils.hasText(communityId)) {
+            return;
+        }
+        adminSupport.validateIdPrefix(communityId, "com_");
+        Community community = communityRepository.findById(communityId)
+                .orElseThrow(() -> new BizException(ErrorCode.PARAM_INVALID, "小区不存在"));
+        if (!propertyCompanyId.equals(community.getPropertyCompanyId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "小区不属于该物业公司");
+        }
+    }
+
+    /** 商家数值参数按落库列精度校验：抽佣比例是小数不是百分数，填成 10 会撞 decimal(5,4) 上限。 */
+    private void validateMerchantParams(CreateRoleAccountRequest request) {
+        requireInRange(request.getCommissionRate(), MAX_COMMISSION_RATE,
+                "commissionRate", "抽佣比例须为 0~1 的小数（0.10 表示 10%）");
+        requireInRange(request.getPointExchangeRate(), MAX_POINT_EXCHANGE_RATE,
+                "pointExchangeRate", "积分兑换比须为 0~999999.9999");
+        requireInRange(request.getDeliveryFee(), MAX_DELIVERY_FEE,
+                "deliveryFee", "配送费须为 0~99999999.99");
+    }
+
+    private static void requireInRange(BigDecimal value, BigDecimal max, String field, String hint) {
+        if (value == null) {
+            return;
+        }
+        if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(max) > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, field + " 超出可保存范围：" + hint);
+        }
+    }
+
+    /**
+     * 逐表落库，并把数据库约束冲突翻译成「哪张表、哪个约束」。
+     *
+     * <p>全局兜底处理器刻意不把表名/索引名回显（防泄露），代价是运营只看到「数据冲突，请刷新后重试」，
+     * 谁都定位不了根因。建号是管理端专用接口，把约束名给出去没有泄露风险，
+     * 且同文件的 {@code deleteAccount} 早就是这个口径。用 {@code saveAndFlush} 是为了让异常能归到具体某张表
+     * ——批量 INSERT 会推迟到事务末尾统一 flush，那时抛出来的异常分不出是谁。</p>
+     */
+    private <T> void persist(String table, JpaRepository<T, ?> repository, T entity) {
+        try {
+            repository.saveAndFlush(entity);
+        } catch (DataIntegrityViolationException e) {
+            Throwable root = e.getMostSpecificCause();
+            String detail = root != null && root.getMessage() != null ? root.getMessage() : String.valueOf(e.getMessage());
+            log.error("[业务角色建号] 写入 {} 失败: {}", table, detail, e);
+            throw new BizException(ErrorCode.ROLE_ACCOUNT_PERSIST_FAILED,
+                    "写入「" + table + "」失败：" + describeDbFailure(detail));
+        }
+    }
+
+    private static String describeDbFailure(String detail) {
+        Matcher duplicate = DUPLICATE_PATTERN.matcher(detail);
+        if (duplicate.find()) {
+            return "唯一键 " + duplicate.group(2) + " 冲突，重复值 " + duplicate.group(1);
+        }
+        Matcher notNull = NOT_NULL_PATTERN.matcher(detail);
+        if (notNull.find()) {
+            return "字段 " + notNull.group(1) + " 不能为空";
+        }
+        Matcher foreignKey = FOREIGN_KEY_PATTERN.matcher(detail);
+        if (foreignKey.find()) {
+            return "外键 " + foreignKey.group(1) + " 指向的记录不存在";
+        }
+        return "数据库约束冲突（详见服务端日志）";
     }
 
     /**
@@ -189,8 +285,9 @@ public class AdminRoleAccountService {
         if (!StringUtils.hasText(category)) {
             throw new BizException(ErrorCode.PARAM_MISSING, "商家品类 category 不能为空");
         }
-        if (!RoleGuard.MERCHANT_CATEGORIES.contains(category)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
+        if (!merchantCategoryService.activeCategoryNames().contains(category)) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "category值无效，可选品类见 GET /merchant-categories");
         }
 
         PlatformMerchant platformMerchant = new PlatformMerchant();
@@ -201,7 +298,7 @@ public class AdminRoleAccountService {
         platformMerchant.setAddress(request.getAddress());
         platformMerchant.setBusinessHours(request.getBusinessHours());
         platformMerchant.setStatus("active");
-        platformMerchantRepository.save(platformMerchant);
+        persist("platform_merchants（平台商家库）", platformMerchantRepository, platformMerchant);
 
         Merchant merchant = new Merchant();
         merchant.setId(idGenerator.generateId("mch"));
@@ -225,7 +322,7 @@ public class AdminRoleAccountService {
         merchant.setStatus("active");
         merchant.setServeAllCommunities(true);
         merchant.setMerchantSource("platform");
-        merchantRepository.save(merchant);
+        persist("merchants（物业商家）", merchantRepository, merchant);
 
         MerchantPropertyConfig config = new MerchantPropertyConfig();
         config.setId(idGenerator.generateId("mpc"));
@@ -238,7 +335,7 @@ public class AdminRoleAccountService {
         config.setCoinRebateRate(BigDecimal.ZERO);
         config.setCoinRebateEnabled(false);
         config.setStatus("active");
-        merchantPropertyConfigRepository.save(config);
+        persist("merchant_property_configs（抽佣配置）", merchantPropertyConfigRepository, config);
 
         return merchant.getId();
     }

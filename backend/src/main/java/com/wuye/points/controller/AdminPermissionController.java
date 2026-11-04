@@ -40,11 +40,13 @@ public class AdminPermissionController {
 
     private final AdminPermissionService adminPermissionService;
 
-    @Operation(summary = "账号列表", description = "获取管理端账号列表。角色: property_admin, platform_admin")
+    @Operation(summary = "账号列表", description = "获取管理端账号列表。默认仅返回具备管理端工作台身份的账号；adminOnly=false 可查看全部。角色: property_admin, platform_admin")
     @GetMapping("/users")
     public ApiResponse<AccountListResponse> listAccounts(
-            @Parameter(description = "搜索关键词") @RequestParam(required = false) String keyword) {
-        return ApiResponse.success(adminPermissionService.listAccounts(keyword));
+            @Parameter(description = "搜索关键词") @RequestParam(required = false) String keyword,
+            @Parameter(description = "是否仅返回管理端工作台账号，默认 true")
+            @RequestParam(defaultValue = "true") boolean adminOnly) {
+        return ApiResponse.success(adminPermissionService.listAccounts(keyword, adminOnly));
     }
 
     @Operation(summary = "权限列表", description = "获取权限列表。角色: property_admin, platform_admin")

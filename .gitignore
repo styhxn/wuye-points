@@ -25,16 +25,29 @@ desktop.ini
 # === Environment & Secrets ===
 .env
 .env.*
+!.env.example
 *.key
 *.pem
 *.p12
+# 微信商户凭据（APIv3 密钥 / 商户证书 zip / 微信支付公钥），严禁入库
+# 目录名随商户号或平台命名，改名也要拦住；兜底再按文件名匹配一次
+*合作伙伴平台信息*/
+1665249236/
+APIv3*.txt
 # 开发配置含真实商户/数据库凭据，禁止入库
 application-dev.yml
 # application-prod.yml 仅含环境变量占位与 fail-closed 默认值（无密钥），必须入库以保证生产部署可复现
+# 测试账号口令清单，禁止入库
+*账号清单*.xlsx
 
 # === Agent / Tooling ===
 .agnes/
 .trae/
+.workbuddy/
+
+# === 前端独立仓库（归前端同学，不并入后端仓库历史） ===
+panjinhuadi-wuyejifenxitong-WangYichen/
+logo素材*/
 
 # === Logs ===
 *.log

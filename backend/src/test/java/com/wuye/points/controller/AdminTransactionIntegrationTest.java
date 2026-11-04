@@ -13,7 +13,9 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -254,10 +256,101 @@ class AdminTransactionIntegrationTest extends ControllerTestBase {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    @DisplayName("流水详情：返回流水行 + 来源表 + 关联单号 + 可调用接口")
+    void detail_payment_returnsRowSourceAndLinks() throws Exception {
+        JsonNode data = readData(mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "payment")
+                        .param("id", PAYMENT_ID))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        JsonNode row = data.path("transaction");
+        assertEquals(PAYMENT_ID, row.path("id").asText());
+        assertEquals("payment", row.path("category").asText());
+        assertEquals("收入", row.path("directionLabel").asText());
+        assertEquals("payment_records", data.path("sourceTable").asText());
+        assertEquals("ord_tx_test", data.path("relatedKeyword").asText());
+
+        List<String> paths = new ArrayList<>();
+        data.path("links").forEach(node -> paths.add(node.path("path").asText()));
+        assertTrue(paths.contains("/admin/transactions?keyword=ord_tx_test&pageSize=100"), paths.toString());
+        assertTrue(paths.contains("/orders/ord_tx_test"), paths.toString());
+        assertTrue(paths.contains("/admin/orders/refunds?keyword=ord_tx_test"), paths.toString());
+    }
+
+    @Test
+    @DisplayName("流水详情：payment/refund 共用同一记录ID，分类传错查不到（97075）")
+    void detail_wrongCategoryReturnsNotFound() throws Exception {
+        // pr_tx_test 状态 paid，只在 payment 分类成行；按 refund 查必须未命中
+        MvcResult result = mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "refund")
+                        .param("id", PAYMENT_ID))
+                .andExpect(status().isNotFound())
+                .andReturn();
+        assertEquals(97075, readCode(result));
+
+        JsonNode refund = readData(mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "refund")
+                        .param("id", REFUND_ID))
+                .andExpect(status().isOk())
+                .andReturn());
+        assertEquals("支出", refund.path("transaction").path("directionLabel").asText());
+    }
+
+    @Test
+    @DisplayName("流水详情：物业币/积分行按单位返回，并给出住户详情接口")
+    void detail_pointValueRowLinksResident() throws Exception {
+        JsonNode data = readData(mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "point")
+                        .param("id", POINT_ID))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        assertEquals("point_records", data.path("sourceTable").asText());
+        assertEquals("POINT", data.path("transaction").path("unit").asText());
+        List<String> paths = new ArrayList<>();
+        data.path("links").forEach(node -> paths.add(node.path("path").asText()));
+        assertTrue(paths.contains("/residents/" + RESIDENT_ID), paths.toString());
+    }
+
+    @Test
+    @DisplayName("流水详情：ID 未命中、分类缺失、物业管理员访问分别报错")
+    void detail_notFoundMissingCategoryAndForbidden() throws Exception {
+        assertEquals(97075, readCode(mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "payment")
+                        .param("id", "pr_not_exists"))
+                .andExpect(status().isNotFound())
+                .andReturn()));
+
+        assertEquals(10001, readCode(mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_admin", "platform_admin", PC_ID, null))
+                        .param("category", "")
+                        .param("id", PAYMENT_ID))
+                .andExpect(status().isBadRequest())
+                .andReturn()));
+
+        mockMvc.perform(get("/admin/transactions/detail")
+                        .header("Authorization", bearer("u_tx_property", "property_admin", PC_ID, null))
+                        .param("category", "payment")
+                        .param("id", PAYMENT_ID))
+                .andExpect(status().is(HttpStatus.FORBIDDEN.value()));
+    }
+
     private JsonNode readData(MvcResult result) throws Exception {
         String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
         JsonNode root = objectMapper.readTree(body);
         assertNotNull(root.path("data"));
         return root.path("data");
+    }
+
+    private int readCode(MvcResult result) throws Exception {
+        String body = result.getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return objectMapper.readTree(body).path("code").asInt();
     }
 }

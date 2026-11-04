@@ -71,7 +71,7 @@ public class AdminCommunityForumController {
         return ApiResponse.success(null);
     }
 
-    @Operation(summary = "设置帖子可见范围", description = "visibilityType=community 本小区可见；=family 仅指定住户可见。角色: property_admin")
+    @Operation(summary = "设置帖子可见范围", description = "visibilityType=community 本小区可见；=family 仅指定住户可见。权限: community:manage")
     @PostMapping("/posts/{id}/visibility")
     public ApiResponse<Void> setPostVisibility(
             @PathVariable String id, @Valid @RequestBody SetPostVisibilityRequest req) {
@@ -99,7 +99,7 @@ public class AdminCommunityForumController {
 
     @Operation(summary = "禁言用户（影子封禁）",
             description = "禁止某住户发帖/评论。被禁用户无感知：发帖/评论照常成功且本人可见，其他住户不可见。"
-                    + "expiresAt 不传=永久禁言。角色: property_admin, platform_admin（限本物业公司）")
+                    + "expiresAt 不传=永久禁言。权限: community:manage（限本物业公司）")
     @PostMapping("/users/{residentId}/forum-ban")
     public ApiResponse<ResidentForumBanItemResponse> banUser(
             @Parameter(description = "被禁住户ID") @PathVariable String residentId,
@@ -108,7 +108,7 @@ public class AdminCommunityForumController {
     }
 
     @Operation(summary = "解除用户禁言",
-            description = "解除禁言并恢复该用户历史内容可见、回补评论计数。角色: property_admin, platform_admin（限本物业公司）")
+            description = "解除禁言并恢复该用户历史内容可见、回补评论计数。权限: community:manage（限本物业公司）")
     @DeleteMapping("/users/{residentId}/forum-ban")
     public ApiResponse<ResidentForumBanItemResponse> unbanUser(
             @Parameter(description = "被禁住户ID") @PathVariable String residentId) {
@@ -116,7 +116,7 @@ public class AdminCommunityForumController {
     }
 
     @Operation(summary = "禁言列表",
-            description = "禁言记录列表（可按状态过滤 active/lifted/expired）。角色: property_admin, platform_admin（限本物业公司）")
+            description = "禁言记录列表（可按状态过滤 active/lifted/expired）。权限: community:read（限本物业公司）")
     @GetMapping("/forum-bans")
     public ApiResponse<PageResponse<ResidentForumBanItemResponse>> listForumBans(
             @RequestParam(defaultValue = "1") int page,

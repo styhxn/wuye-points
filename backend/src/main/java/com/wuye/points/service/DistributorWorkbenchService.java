@@ -64,6 +64,7 @@ public class DistributorWorkbenchService {
     private final WithdrawableService withdrawableService;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final MerchantCoinReceivableService merchantCoinReceivableService;
 
     /**
      * 解析当前登录用户的一级代理身份：以名下商家 is_distributor=1 判定（后台开通）。
@@ -111,6 +112,7 @@ public class DistributorWorkbenchService {
                 .auditStatus(merchant.getAuditStatus())
                 .withdrawableAmount(w.withdrawableAmount())
                 .withdrawalBlocked(w.withdrawalBlocked())
+                .coinAvailableAmount(merchantCoinReceivableService.calc(merchant).coinAvailableAmount())
                 .totalRevenue(w.totalRevenue())
                 .totalOrders(w.totalOrders())
                 .build();

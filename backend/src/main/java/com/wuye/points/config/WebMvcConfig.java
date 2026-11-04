@@ -30,6 +30,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         // 微信支付/分账/转账回调：由微信服务器直接调用，不带业务 Bearer。
                         // 控制器内部完成验签、解密与金额校验，不能在这里跳过这些校验。
                         "/payment/notify/wechatpay",
+                        "/payment/notify/wechatpay-direct",
                         "/payment/ecommerce-split/notify",
                         "/payment/ecommerce-transfer/notify",
                         "/error",
@@ -41,8 +42,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 )
                 .order(1);
 
+        // 除 /admin/** 外，管理端还会调用公告/商家/报表的既有接口；
+        // PermissionInterceptor 内部只对管理端工作台身份和显式映射的方法+路径校验，
+        // 不会影响住户/商家移动端的同名接口。
         registry.addInterceptor(permissionInterceptor)
-                .addPathPatterns("/admin/**")
+                .addPathPatterns("/admin/**", "/announcements/**", "/reports/**")
                 .order(2);
     }
 

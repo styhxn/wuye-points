@@ -12,6 +12,9 @@ public class MyPointsResponse {
     @Schema(description = "住户ID", example = "res_b7m9x1")
     private String residentId;
 
+    @Schema(description = "本小区是否启用积分功能", example = "true")
+    private Boolean pointEnabled;
+
     @Schema(description = "个人积分余额", example = "1000")
     private Integer pointBalance;
 

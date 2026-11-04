@@ -323,7 +323,7 @@ public class PropertyFeeService {
                                                           PayPropertyFeeRequest request,
                                                           FeePaymentBreakdown breakdown,
                                                           boolean useFamilyPool) {
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "在线支付未开通，请联系物业线下缴纳后由管理端确认到账");
         }

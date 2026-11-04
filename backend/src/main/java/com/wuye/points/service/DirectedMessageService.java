@@ -13,6 +13,7 @@ import com.wuye.points.dto.directedmessage.DirectedMessageDetailResponse;
 import com.wuye.points.dto.directedmessage.DirectedMessageListItemResponse;
 import com.wuye.points.dto.directedmessage.DirectedMessageRecipientItemResponse;
 import com.wuye.points.dto.directedmessage.UpdateAgeBracketsRequest;
+import com.wuye.points.dto.message.DirectedMessageStatsResponse;
 import com.wuye.points.entity.AgeBracketConfig;
 import com.wuye.points.entity.DirectedMessageRecipient;
 import com.wuye.points.entity.DirectedMessageTask;
@@ -197,6 +198,46 @@ public class DirectedMessageService {
                 .map(this::toListItem)
                 .toList();
         return PageResponse.of(list, page, pageSize, taskPage.getTotalElements());
+    }
+
+    /** 定向消息统计：任务数、触达人数、已读人数与近 7 天发送量。 */
+    @Transactional(readOnly = true)
+    public DirectedMessageStatsResponse getStats(String propertyCompanyId) {
+        permissionGuard.requirePermission("directed_message.stats");
+        String scopedPropertyCompanyId = adminSupport.resolvePropertyCompanyId(propertyCompanyId);
+
+        DirectedMessageTaskRepository.TaskSummary summary = scopedPropertyCompanyId == null
+                ? taskRepository.summarizeAll()
+                : taskRepository.summarizeByPropertyCompanyId(scopedPropertyCompanyId);
+        long taskCount = summary.getTaskCount() == null ? 0L : summary.getTaskCount();
+        long recipientCount = summary.getRecipientCount() == null ? 0L : summary.getRecipientCount();
+        long readCount = summary.getReadCount() == null ? 0L : summary.getReadCount();
+
+        LocalDateTime todayStart = LocalDate.now(ZONE_SHANGHAI).atStartOfDay();
+        LocalDateTime weekStart = todayStart.minusDays(6);
+        long todayTaskCount = scopedPropertyCompanyId == null
+                ? taskRepository.countByCreatedAtGreaterThanEqual(todayStart)
+                : taskRepository.countByPropertyCompanyIdAndCreatedAtGreaterThanEqual(
+                        scopedPropertyCompanyId, todayStart);
+        long last7DaysTaskCount = scopedPropertyCompanyId == null
+                ? taskRepository.countByCreatedAtGreaterThanEqual(weekStart)
+                : taskRepository.countByPropertyCompanyIdAndCreatedAtGreaterThanEqual(
+                        scopedPropertyCompanyId, weekStart);
+
+        double readRate = recipientCount == 0
+                ? 0d
+                : Math.round(readCount * 10000.0 / recipientCount) / 10000.0;
+
+        return DirectedMessageStatsResponse.builder()
+                .propertyCompanyId(scopedPropertyCompanyId)
+                .taskCount(taskCount)
+                .recipientCount(recipientCount)
+                .readCount(readCount)
+                .unreadCount(Math.max(recipientCount - readCount, 0L))
+                .readRate(readRate)
+                .todayTaskCount(todayTaskCount)
+                .last7DaysTaskCount(last7DaysTaskCount)
+                .build();
     }
 
     @Transactional(readOnly = true)

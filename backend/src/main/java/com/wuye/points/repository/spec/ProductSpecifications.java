@@ -1,13 +1,17 @@
 package com.wuye.points.repository.spec;
 
 import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.MerchantServiceCommunity;
 import com.wuye.points.entity.Product;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public final class ProductSpecifications {
@@ -93,5 +97,65 @@ public final class ProductSpecifications {
 
             return cb.and(predicates.toArray(new Predicate[0]));
         };
+    }
+
+    /**
+     * 楼长「分享商品给本单元」的可选范围：本物业下、服务本小区、商家审核通过且在营、商品在售未删除。
+     *
+     * <p>「服务本小区」有两种登记方式，任一命中即算：商家声明全小区通用
+     * （{@code merchants.serve_all_communities=1}，历史行为 NULL 时按默认值 1 处理），
+     * 或在 {@code merchant_service_communities} 里显式绑定了该小区。</p>
+     */
+    public static Specification<Product> shareableInCommunity(
+            String propertyCompanyId, String communityId, String keyword) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.isNull(root.get("deletedAt")));
+            predicates.add(cb.equal(root.get("status"), "active"));
+
+            predicates.add(cb.or(
+                    root.get("merchantId").in(serveAllMerchantIds(query, cb, propertyCompanyId, communityId)),
+                    root.get("merchantId").in(boundMerchantIds(query, cb, propertyCompanyId, communityId))));
+
+            if (StringUtils.hasText(keyword)) {
+                String like = "%" + keyword.trim() + "%";
+                predicates.add(cb.like(root.get("name"), like));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    private static Subquery<String> serveAllMerchantIds(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            String propertyCompanyId,
+            String communityId) {
+        Subquery<String> sub = query.subquery(String.class);
+        var merchant = sub.from(Merchant.class);
+        sub.select(merchant.get("id"));
+        sub.where(
+                cb.equal(merchant.get("propertyCompanyId"), propertyCompanyId),
+                cb.equal(merchant.get("auditStatus"), "approved"),
+                cb.equal(merchant.get("status"), "active"),
+                cb.or(cb.isTrue(merchant.get("serveAllCommunities")), cb.isNull(merchant.get("serveAllCommunities"))));
+        return sub;
+    }
+
+    private static Subquery<String> boundMerchantIds(
+            CriteriaQuery<?> query,
+            CriteriaBuilder cb,
+            String propertyCompanyId,
+            String communityId) {
+        Subquery<String> sub = query.subquery(String.class);
+        var merchant = sub.from(Merchant.class);
+        var binding = sub.from(MerchantServiceCommunity.class);
+        sub.select(merchant.get("id"));
+        sub.where(
+                cb.equal(merchant.get("propertyCompanyId"), propertyCompanyId),
+                cb.equal(merchant.get("auditStatus"), "approved"),
+                cb.equal(merchant.get("status"), "active"),
+                cb.equal(binding.get("merchantId"), merchant.get("id")),
+                cb.equal(binding.get("communityId"), communityId));
+        return sub;
     }
 }

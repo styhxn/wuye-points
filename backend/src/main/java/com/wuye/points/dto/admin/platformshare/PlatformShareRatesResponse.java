@@ -37,4 +37,10 @@ public class PlatformShareRatesResponse {
 
     @Schema(description = "个体负责人比例", example = "0.0000")
     private BigDecimal individualLeaderRate;
+
+    @Schema(description = "用户积分预算比例（占抽佣基础额，分账链先扣档）", example = "0.1000")
+    private BigDecimal userPointShareRate;
+
+    @Schema(description = "用户奖励金预算比例（占抽佣基础额，分账链先扣档）", example = "0.1000")
+    private BigDecimal userRewardShareRate;
 }

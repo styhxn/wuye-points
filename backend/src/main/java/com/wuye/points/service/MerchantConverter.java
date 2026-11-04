@@ -119,6 +119,7 @@ public class MerchantConverter {
                 .isDistributor(base.getIsDistributor())
                 .createdAt(base.getCreatedAt())
                 .updatedAt(DateTimeUtil.toIsoUtc(merchant.getUpdatedAt()))
+                .pointExchangeRate(resolvePointExchangeRate(config))
                 .products(productItems)
                 .build();
     }
@@ -194,5 +195,13 @@ public class MerchantConverter {
 
     private BigDecimal defaultDecimal(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private BigDecimal resolvePointExchangeRate(MerchantPropertyConfig config) {
+        if (config == null || config.getPointExchangeRate() == null
+                || config.getPointExchangeRate().compareTo(BigDecimal.ZERO) <= 0) {
+            return new BigDecimal("100.0000");
+        }
+        return config.getPointExchangeRate();
     }
 }

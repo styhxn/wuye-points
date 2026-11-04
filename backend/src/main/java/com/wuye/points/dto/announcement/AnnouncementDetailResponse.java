@@ -71,6 +71,18 @@ public class AnnouncementDetailResponse {
     @Schema(description = "目标楼栋列表", example = "{\"1栋\", \"2栋\"}")
     private List<String> targetBuildings;
 
+    @Schema(description = "目标单元列表（楼长单元通知为本单元；空=不限单元）", example = "{\"5单元\"}")
+    private List<String> targetUnits;
+
+    @Schema(description = "内容类型：notification/product/activity", example = "notification")
+    private String contentType;
+
+    @Schema(description = "关联商品ID（仅 contentType=product 时有值）", example = "prd_001")
+    private String productId;
+
+    @Schema(description = "投放渠道：announcement_board/chat/both", example = "announcement_board")
+    private String deliveryChannel;
+
     @Schema(description = "收集字段配置列表")
     private List<CollectFieldResponse> collectFields;
 

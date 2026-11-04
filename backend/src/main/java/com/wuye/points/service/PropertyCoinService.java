@@ -97,6 +97,7 @@ public class PropertyCoinService {
     private final PaymentRecordRepository paymentRecordRepository;
     private final WalletFlowWriter walletFlowWriter;
     private final WalletFlowRepository walletFlowRepository;
+    private final PropertyCoinFundService propertyCoinFundService;
 
     @Transactional(readOnly = true)
     public CoinBalanceResponse getBalance() {
@@ -266,7 +267,7 @@ public class PropertyCoinService {
         assertCoinNotFrozen(resident);
         assertCoinDisplayEnabled(resident);
 
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "在线支付未开通，暂时无法充值物业币");
         }
@@ -355,6 +356,8 @@ public class PropertyCoinService {
         // 充值到账不受 coin_frozen 限制：用户已付款，冻结只限制消费，不能阻止入账。
         creditCoins(resident, amount, CoinType.recharge.name(), "manual",
                 record.getId(), "物业币充值", null);
+        // 充值现金进入平台直连商户号，按物业公司登记代管资金，供商家物业币应收结算出账。
+        propertyCoinFundService.recordRecharge(record);
     }
 
     @Transactional
@@ -792,7 +795,8 @@ public class PropertyCoinService {
                 current, null, CoinType.spend.name(), amount.negate(), newBalance,
                 SOURCE_TRANSFER_TO_WALLET, current.getId(), "奖励金转钱包", current.getId());
 
-        walletFlowWriter.write(null, null, null,
+        // 与奖励金扣减同事务：避免扣减回滚后钱包流水已独立提交，形成无对应扣款的余额。
+        walletFlowWriter.writeInCurrentTransaction(null, null, null,
                 "resident", current.getId(), ENTRY_COIN_TRANSFER_TO_WALLET,
                 amount, "withdrawable",
                 "coin:transfer_to_wallet:" + record.getId(), null);

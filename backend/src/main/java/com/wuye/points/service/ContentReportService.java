@@ -14,6 +14,7 @@ import com.wuye.points.repository.CommunityCommentRepository;
 import com.wuye.points.repository.CommunityPostRepository;
 import com.wuye.points.repository.ContentReportRepository;
 import com.wuye.points.repository.ResidentRepository;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import jakarta.persistence.criteria.Predicate;
@@ -43,6 +44,7 @@ public class ContentReportService {
     private final SnowflakeIdGenerator idGenerator;
     private final CommunityConverter converter;
     private final RoleGuard roleGuard;
+    private final PermissionGuard permissionGuard;
 
     private static final Set<String> REPORT_REASONS = Set.of("spam", "abuse", "politics", "porn", "other");
 
@@ -75,6 +77,7 @@ public class ContentReportService {
     }
 
     public Page<ContentReportResponse> listReports(int page, int pageSize, String status) {
+        permissionGuard.requirePermission("community.read");
         Resident admin = getViewerResident();
         String company = admin.getPropertyCompanyId();
         Specification<ContentReport> spec = (root, query, cb) -> {
@@ -94,6 +97,7 @@ public class ContentReportService {
     }
 
     public ContentReportResponse handleReport(String id, HandleContentReportRequest req) {
+        permissionGuard.requirePermission("community.manage");
         Resident admin = getViewerResident();
         ContentReport report = reportRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.COMMUNITY_REPORT_NOT_FOUND));

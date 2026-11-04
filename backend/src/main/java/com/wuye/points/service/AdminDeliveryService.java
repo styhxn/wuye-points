@@ -131,8 +131,8 @@ public class AdminDeliveryService {
     private List<CourierItem> buildCourierItems(List<Resident> couriers, LocalDateTime todayStart, LocalDateTime todayEnd) {
         List<CourierItem> items = new ArrayList<>();
         for (Resident courier : couriers) {
-            long todayCompleted = deliveryRepository.countByCourierIdAndStatusAndDeliveredAtBetween(
-                    courier.getId(), "delivered", todayStart, todayEnd);
+            long todayCompleted = deliveryRepository.countCompletedByCourierIdAndDeliveredAtBetween(
+                    courier.getId(), todayStart, todayEnd);
 
             BigDecimal monthIncome = deliveryRepository.sumCourierEarningByCourierIdAndDeliveredAtBetween(
                     courier.getId(),

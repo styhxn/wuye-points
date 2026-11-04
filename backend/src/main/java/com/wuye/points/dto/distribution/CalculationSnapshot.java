@@ -66,6 +66,12 @@ public class CalculationSnapshot {
     /** 个体负责人费率（板块毛额内抽取比例，默认 0.50） */
     private BigDecimal individualLeaderRate;
 
+    /** 用户积分预算比例（占抽佣基础额，分账链先扣档，默认 0.10；V36） */
+    private BigDecimal userPointShareRate;
+
+    /** 用户奖励金预算比例（占抽佣基础额，分账链先扣档，默认 0.10；V36） */
+    private BigDecimal userRewardShareRate;
+
     /** 商家调整额（退款/补差/冲账等明确调整，默认 0） */
     private BigDecimal merchantAdjustmentAmount;
 

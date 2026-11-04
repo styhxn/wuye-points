@@ -33,6 +33,9 @@ public class DistributorIdentityResponse {
     @Schema(description = "是否被禁止提现（已开通时非空）")
     private Boolean withdrawalBlocked;
 
+    @Schema(description = "物业币应收可结算余额（已开通时非空）")
+    private BigDecimal coinAvailableAmount;
+
     @Schema(description = "累计营收（已开通时非空）")
     private BigDecimal totalRevenue;
 

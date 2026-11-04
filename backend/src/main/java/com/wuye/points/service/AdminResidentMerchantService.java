@@ -86,9 +86,10 @@ public class AdminResidentMerchantService {
             status = "pending_audit";
         }
 
+        String keywordText = StringUtils.hasText(keyword) ? keyword.trim() : null;
         List<String> residentIdsByKeyword = null;
-        if (StringUtils.hasText(keyword)) {
-            String like = "%" + keyword.trim() + "%";
+        if (keywordText != null) {
+            String like = "%" + keywordText + "%";
             residentIdsByKeyword = residentRepository.findAll((root, query, cb) -> cb.or(
                     cb.like(root.get("name"), like),
                     cb.like(root.get("phone"), like)))
@@ -98,7 +99,7 @@ public class AdminResidentMerchantService {
         }
 
         Specification<ResidentMerchantApplication> spec = ResidentMerchantApplicationSpecifications.withFilters(
-                resolvedPropertyCompanyId, status, residentIdsByKeyword);
+                resolvedPropertyCompanyId, status, residentIdsByKeyword, keywordText);
         Page<ResidentMerchantApplication> result = applicationRepository.findAll(spec, pageable);
 
         Map<String, String> residentNames = residentRepository.findAllById(
@@ -236,6 +237,11 @@ public class AdminResidentMerchantService {
                 .statusCode(application.getStatus())
                 .visibility(application.getVisibility())
                 .createdAt(DateTimeUtil.toLocalDateTimeString(application.getCreatedAt()))
+                .shopName(application.getShopName())
+                .description(application.getDescription())
+                .businessHours(application.getBusinessHours())
+                .contactPhone(application.getContactPhone())
+                .coverUrl(application.getCoverUrl())
                 .build();
     }
 

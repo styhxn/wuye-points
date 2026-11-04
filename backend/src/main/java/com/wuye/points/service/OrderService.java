@@ -67,6 +67,7 @@ import com.wuye.points.repository.ResidentMerchantApplicationRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.OrderSpecifications;
+import com.wuye.points.support.RateDefaults;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.DisplayLabelUtil;
 import com.wuye.points.util.RoleGuard;
@@ -101,7 +102,6 @@ import java.util.stream.Collectors;
 public class OrderService {
 
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt", "totalAmount", "paidAt");
-    private static final BigDecimal COMMISSION_REBATE_THRESHOLD = new BigDecimal("0.2000");
     private static final int LIST_ITEM_PREVIEW_LIMIT = 5;
 
     private final OrderRepository orderRepository;
@@ -458,8 +458,9 @@ public class OrderService {
         deductStock(order, items);
         executePayment(resident, order, breakdown, useFamilyPool);
 
-        int pointEarned = calculatePointEarned(breakdown, config);
-        BigDecimal coinEarned = calculateCoinEarned(breakdown, config);
+        UserIncentives incentives = calculateUserIncentives(order, config);
+        int pointEarned = incentives.pointEarned();
+        BigDecimal coinEarned = incentives.coinEarned();
 
         if (pointEarned > 0) {
             pointService.earnPoints(resident, pointEarned, "order", order.getId(),
@@ -467,7 +468,7 @@ public class OrderService {
         }
         if (coinEarned.compareTo(BigDecimal.ZERO) > 0) {
             propertyCoinService.earnCoins(resident, coinEarned, CoinType.earn.name(), "order",
-                    order.getId(), "订单物业币返现", null);
+                    order.getId(), "订单消费返奖励金", null);
         }
 
         order.setPaymentMethod(request.getPaymentMethod());
@@ -476,6 +477,8 @@ public class OrderService {
         order.setCashAmount(breakdown.cashAmount());
         order.setPointEarned(pointEarned);
         order.setCoinEarned(coinEarned);
+        order.setUserPointShareRate(incentives.userPointShareRate());
+        order.setUserRewardShareRate(incentives.userRewardShareRate());
         order.setOrderStatus("paid");
         order.setPaidAt(LocalDateTime.now());
         if (StringUtils.hasText(request.getFamilyId())) {
@@ -535,19 +538,30 @@ public class OrderService {
                 PaymentBizType.ORDER, order.getId(), resident.getId(),
                 order.getPropertyCompanyId(), request.getPaymentMethod(), payable,
                 breakdown.pointUsed(), breakdown.coinUsed(), breakdown.cashAmount());
-        // 电商收付通模式：按订单商家二级商户号路由，用户付款直进商家账户（资金不经平台）
-        if (ecommerceSplitProperties.isEnabled()) {
+        // 商城订单：分账启用时走服务商通道，用户付款直进商家特约商户号（资金不经平台）；
+        // 分账未启用时走平台直连商户代收（无微信分账）。
+        boolean partnerChannel = ecommerceSplitProperties.isEnabled()
+                || wechatSplitService.isEnabledForProperty(order.getPropertyCompanyId());
+        if (partnerChannel) {
+            if (!wechatPayService.isPartnerEnabled()) {
+                throw new BizException(ErrorCode.ORDER_PAY_UNAVAILABLE,
+                        "服务商支付通道未配置，商城订单暂不可在线支付");
+            }
             String subMchid = resolveMerchantSubMchid(merchant);
             WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "物业积分商城订单", subMchid);
             return buildChannelPayResponse(order, request, payable, breakdown, record, payParams);
+        }
+        if (!wechatPayService.isDirectEnabled()) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "直连商户支付通道未配置，商城订单暂不可在线支付");
         }
         WechatJsPayParams payParams = wechatPayService.miniPay(record, openId, "物业积分商城订单");
         return buildChannelPayResponse(order, request, payable, breakdown, record, payParams);
     }
 
     /**
-     * 解析订单商家的微信二级商户号（电商收付通）。未进件/未激活 → 拒绝在线支付（fail-closed），
-     * 仅积分/物业币可付。留空配置回退服务商号（灰度过渡）。
+     * 解析订单商家的微信特约商户号（服务商模式入账主体）。未进件/未激活 → 拒绝在线支付（fail-closed），
+     * 仅积分/物业币可付。仅在平台无商家主体（平台自营）时使用配置的平台二级商户号兜底。
      */
     private String resolveMerchantSubMchid(Merchant merchant) {
         if (merchant != null) {
@@ -634,10 +648,31 @@ public class OrderService {
                 .filter(c -> "active".equals(c.getStatus()))
                 .orElse(null);
 
+        // 用户侧两档发放（V36 修复）：含现金订单此前只在此处扣减用户使用的积分/物业币，
+        // 从未调用 earnPoints/earnCoins，导致真实付费订单 point_earned 恒为 0。
+        // 挂接配置缺失时按不发放处理（回调内抛异常会造成「钱已收、订单永久 pending」）。
+        if (channelConfig == null) {
+            log.warn("订单挂接配置缺失，跳过用户侧积分/奖励金发放 orderId={} merchantId={}",
+                    order.getId(), merchant.getId());
+        }
+        UserIncentives incentives = calculateUserIncentives(order, channelConfig);
+        if (incentives.pointEarned() > 0) {
+            pointService.earnPoints(resident, incentives.pointEarned(), "order", order.getId(),
+                    "订单消费返积分", null);
+        }
+        if (incentives.coinEarned().compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.earnCoins(resident, incentives.coinEarned(), CoinType.earn.name(), "order",
+                    order.getId(), "订单消费返奖励金", null);
+        }
+
         order.setPaymentMethod(record.getPaymentMethod());
         order.setPointUsed(pointUsed);
         order.setCoinUsed(coinUsed);
         order.setCashAmount(record.getCashAmount());
+        order.setPointEarned(incentives.pointEarned());
+        order.setCoinEarned(incentives.coinEarned());
+        order.setUserPointShareRate(incentives.userPointShareRate());
+        order.setUserRewardShareRate(incentives.userRewardShareRate());
         order.setOrderStatus("paid");
         order.setPaidAt(LocalDateTime.now());
         // 支付成功：核销优惠券（券在 payOrder 预定时已锁定并记录在订单上）
@@ -740,7 +775,7 @@ public class OrderService {
 
         Merchant merchant = merchantRepository.findById(order.getMerchantId()).orElse(null);
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        boolean maskPhone = !isOrderOwner(order) && !roleGuard.isPlatformAdmin() && !roleGuard.isPropertyAdmin();
+        boolean maskPhone = !isOrderOwner(order) && !roleGuard.isPlatformAdmin() && !roleGuard.isAdminScopeUser();
         Delivery delivery = deliveryRepository.findByOrderId(order.getId()).orElse(null);
 
         OrderDetailResponse detail = orderConverter.toDetail(order, merchant, items, maskPhone, delivery);
@@ -2063,33 +2098,51 @@ public class OrderService {
         }
     }
 
-    private int calculatePointEarned(PaymentBreakdown breakdown, MerchantPropertyConfig config) {
-        BigDecimal exchangeRate = config.getPointExchangeRate() != null
-                ? config.getPointExchangeRate()
-                : new BigDecimal("100.0000");
-        BigDecimal rewardBase = breakdown.coinUsed().add(breakdown.cashAmount());
-        if (rewardBase.compareTo(BigDecimal.ZERO) <= 0) {
-            return 0;
+    /**
+     * 计算本单的用户侧两档发放额（V36 · 分账链先扣档）。
+     *
+     * <p>口径变更：发放基数从「用户实付金额」改为「抽佣基础额 ×（物业公司预算比例）」。
+     * 抽佣基础额 = (商品金额 − 优惠券) × 抽佣率，与 {@code DistributionService.buildShareBreakdown}
+     * 完全一致，保证「发出去的钱」和「从平台盘里扣掉的钱」是同一个数。
+     *
+     * <p>两档比例同时快照到 orders 上：支付与订单完成之间物业改配置，不会让已发生的发放额
+     * 和结算扣档额对不平。
+     *
+     * <p>注意：{@code merchant_property_configs.coin_rebate_rate / coin_rebate_enabled}
+     * 自本版本起不再参与订单返现（由物业公司级 user_reward_share_rate 统一取代），
+     * 列保留不删，处理方式同 V19 对 {@code courier_per_order}。
+     */
+    private UserIncentives calculateUserIncentives(Order order, MerchantPropertyConfig config) {
+        BigDecimal commissionRate = config != null ? config.getCommissionRate() : null;
+        if (commissionRate == null) {
+            return new UserIncentives(0, BigDecimal.ZERO,
+                    RateDefaults.USER_POINT_SHARE_RATE, RateDefaults.USER_REWARD_SHARE_RATE);
         }
-        return rewardBase.multiply(exchangeRate).setScale(0, RoundingMode.DOWN).intValue();
+        BigDecimal goodsBase = defaultDecimal(order.getTotalAmount())
+                .subtract(defaultDecimal(order.getCouponAmount()))
+                .max(BigDecimal.ZERO);
+        BigDecimal commissionBase = goodsBase.multiply(commissionRate).setScale(2, RoundingMode.HALF_UP);
+
+        PropertyCompany company = order.getPropertyCompanyId() != null
+                ? propertyCompanyRepository.findById(order.getPropertyCompanyId()).orElse(null)
+                : null;
+        BigDecimal pointRate = company != null && company.getUserPointShareRate() != null
+                ? company.getUserPointShareRate() : RateDefaults.USER_POINT_SHARE_RATE;
+        BigDecimal rewardRate = company != null && company.getUserRewardShareRate() != null
+                ? company.getUserRewardShareRate() : RateDefaults.USER_REWARD_SHARE_RATE;
+        BigDecimal exchangeRate = config.getPointExchangeRate() != null
+                ? config.getPointExchangeRate() : new BigDecimal("100.0000");
+
+        // 积分是整数：预算金额 × 兑换比（积分/元），向下取整，不四舍五入进钱
+        int pointEarned = commissionBase.multiply(pointRate).multiply(exchangeRate)
+                .setScale(0, RoundingMode.DOWN).intValue();
+        BigDecimal coinEarned = commissionBase.multiply(rewardRate).setScale(2, RoundingMode.HALF_UP);
+        return new UserIncentives(pointEarned, coinEarned, pointRate, rewardRate);
     }
 
-    private BigDecimal calculateCoinEarned(PaymentBreakdown breakdown, MerchantPropertyConfig config) {
-        if (!Boolean.TRUE.equals(config.getCoinRebateEnabled())) {
-            return BigDecimal.ZERO;
-        }
-        if (config.getCommissionRate() == null
-                || config.getCommissionRate().compareTo(COMMISSION_REBATE_THRESHOLD) < 0) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal rebateRate = config.getCoinRebateRate() != null
-                ? config.getCoinRebateRate()
-                : BigDecimal.ZERO;
-        BigDecimal rewardBase = breakdown.coinUsed().add(breakdown.cashAmount());
-        if (rewardBase.compareTo(BigDecimal.ZERO) <= 0 || rebateRate.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
-        }
-        return rewardBase.multiply(rebateRate).setScale(2, RoundingMode.HALF_UP);
+    /** 用户侧两档发放结果：积分数 + 奖励金（物业币）金额 + 两档比例快照 */
+    private record UserIncentives(int pointEarned, BigDecimal coinEarned,
+                                  BigDecimal userPointShareRate, BigDecimal userRewardShareRate) {
     }
 
     private MerchantPropertyConfig loadMerchantConfig(String merchantId, String propertyCompanyId) {

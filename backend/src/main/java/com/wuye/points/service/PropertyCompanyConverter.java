@@ -87,6 +87,8 @@ public class PropertyCompanyConverter {
                 .coordinatorShareRate(company.getCoordinatorShareRate())
                 .sectorLeaderRate(company.getSectorLeaderRate())
                 .individualLeaderRate(company.getIndividualLeaderRate())
+                .pointEnabled(defaultTrue(company.getPointEnabled()))
+                .coinEnabled(defaultTrue(company.getCoinEnabled()))
                 .coinDisplayEnabled(company.getCoinDisplayEnabled())
                 .coinIssueMode(company.getCoinIssueMode())
                 .coinExpiryDays(company.getCoinExpiryDays())
@@ -133,5 +135,10 @@ public class PropertyCompanyConverter {
                 .email(email)
                 .initialPassword(initialPassword)
                 .build();
+    }
+
+    /** 功能开关未落库时按开启处理，与 FeatureSwitchGuard 的默认口径一致。 */
+    private boolean defaultTrue(Boolean value) {
+        return !Boolean.FALSE.equals(value);
     }
 }

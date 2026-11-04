@@ -4,6 +4,8 @@ import com.wuye.points.entity.NeighborBlock;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -17,4 +19,7 @@ public interface NeighborBlockRepository extends JpaRepository<NeighborBlock, St
     boolean existsByBlockerIdAndBlockedId(String blockerId, String blockedId);
 
     boolean existsByBlockedIdAndBlockerId(String blockedId, String blockerId);
+
+    /** 批量筛出「已屏蔽 blockedId 的住户」（楼长站内分享前的收件人过滤） */
+    List<NeighborBlock> findByBlockerIdInAndBlockedId(Collection<String> blockerIds, String blockedId);
 }

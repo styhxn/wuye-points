@@ -2,9 +2,12 @@ package com.wuye.points.controller;
 
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.propertycompany.AdminAccountResponse;
 import com.wuye.points.dto.propertycompany.ApplySettlementWithdrawalRequest;
+import com.wuye.points.dto.propertycompany.CoinDisplaySettingResponse;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyResponse;
+import com.wuye.points.dto.propertycompany.UpdateCoinDisplayRequest;
 import com.wuye.points.dto.propertycompany.UpdateCoinUseConditionRequest;
 import com.wuye.points.dto.propertycompany.PropertyCompanyDetailResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyListItemResponse;
@@ -88,12 +91,30 @@ public class AdminPropertyCompanyController {
         return ApiResponse.success(propertyCompanyService.updatePropertyCompany(id, request));
     }
 
+    @Operation(summary = "重置物业管理员密码",
+            description = "平台管理员为指定物业管理员重置密码，重置后旧登录态立即失效；新随机密码仅本次响应返回一次。角色: platform_admin")
+    @PostMapping("/{id}/admin-accounts/{accountId}/reset-password")
+    public ApiResponse<AdminAccountResponse> resetPropertyAdminPassword(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Parameter(description = "管理员账号ID(res_)") @PathVariable String accountId) {
+        return ApiResponse.success(propertyCompanyService.resetPropertyAdminPassword(id, accountId));
+    }
+
     @Operation(summary = "删除物业公司", description = "真实删除物业公司（仅平台管理员；存在关联商家/住户/订单/社区时拒绝）。角色: platform_admin")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> deletePropertyCompany(
             @Parameter(description = "资源ID(pc_)") @PathVariable String id) {
         propertyCompanyService.deletePropertyCompany(id);
         return ApiResponse.success(null);
+    }
+
+    @Operation(summary = "物业币显示开关",
+            description = "开启/关闭本物业对住户展示物业币。权限: coin:display_control；物业管理员/标签身份仅可操作本物业")
+    @PutMapping("/{id}/coin-display")
+    public ApiResponse<CoinDisplaySettingResponse> updateCoinDisplay(
+            @Parameter(description = "资源ID(pc_)") @PathVariable String id,
+            @Valid @RequestBody UpdateCoinDisplayRequest request) {
+        return ApiResponse.success(propertyCompanyService.updateCoinDisplay(id, request));
     }
 
     @Operation(summary = "设置物业币使用条件",

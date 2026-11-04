@@ -18,7 +18,10 @@ import java.util.Set;
  *
  * <p>公式严格对齐《商品分账与满额配送费减免-移动端对齐规范》§4 / §5 / §11：</p>
  * <ul>
- *   <li>商品链：抽佣基础额 = 商品金额 × 抽佣比例；平台盘 = 抽佣基础额 − 积分成本 − 物业币成本（最低为0，击穿记缺口）；</li>
+ *   <li>商品链：抽佣基础额 = 商品金额 × 抽佣比例；</li>
+ *   <li>用户侧先扣档（V36）：用户积分预算 = 抽佣基础额 × userPointShareRate，
+ *       用户奖励金预算 = 抽佣基础额 × userRewardShareRate；
+ *       平台盘 = 抽佣基础额 − 积分兑付成本 − 两档预算（最低为0，击穿记缺口）；</li>
  *   <li>一级分配：平台/物业/管理盘 = 平台盘 × 各自比例，管理盘用减法吸收分币误差；</li>
  *   <li>管理盘级联：板块毛额 = 管理盘 × sectorLeaderRate；个体负责人 = 板块毛额 × individualLeaderRate；
  *       板块负责人 = 板块毛额 − 个体负责人；统筹 = 管理盘 − 板块毛额；</li>
@@ -31,8 +34,8 @@ import java.util.Set;
 @Service
 public class DistributionCalculationService {
 
-    /** 当前计算版本（规范§17.1 新旧订单边界，B 方案） */
-    public static final String CALCULATION_VERSION = "distribution_b_v1";
+    /** 当前计算版本（规范§17.1 新旧订单边界，B 方案；v2 = V36 起抽佣基础额先扣用户两档） */
+    public static final String CALCULATION_VERSION = "distribution_b_v2";
 
     /** 规范§2.4 / §6.3：满额减免默认由商家承担 */
     public static final String DEFAULT_SUBSIDY_SPONSOR = "merchant";
@@ -66,18 +69,32 @@ public class DistributionCalculationService {
         BigDecimal coordinatorRate = rate(s.getCoordinatorRate(), "0.3000");
         BigDecimal sectorLeaderRate = rate(s.getSectorLeaderRate(), "0.6000");
         BigDecimal individualLeaderRate = rate(s.getIndividualLeaderRate(), "0.5000");
+        BigDecimal userPointShareRate = rate(s.getUserPointShareRate(), "0.1000");
+        BigDecimal userRewardShareRate = rate(s.getUserRewardShareRate(), "0.1000");
         BigDecimal platformDeliveryShareRate = rate(s.getPlatformDeliveryShareRate(), "0.1000");
         BigDecimal merchantAdjustmentAmount = nz(s.getMerchantAdjustmentAmount());
 
         validateRates(platformShareRate, propertyRate, coordinatorRate,
                 sectorLeaderRate, individualLeaderRate, platformDeliveryShareRate);
+        validateUserTierRates(userPointShareRate, userRewardShareRate);
 
         // ===== 商品分账链（§4） =====
         BigDecimal pointCost = pointUsed.divide(pointExchangeRate, SCALE, RM);
         BigDecimal coinCost = coinUsed;
         BigDecimal commissionBaseAmount = money(productAmount.multiply(commissionRate));
         BigDecimal merchantGoodsShare = money(productAmount.subtract(commissionBaseAmount));
-        BigDecimal rawDistributableAmount = money(commissionBaseAmount.subtract(pointCost).subtract(coinCost));
+        // 用户侧先扣档（V36）：抽佣基础额先切「用户积分 + 奖励金」，剩下才进一级三档。
+        // 积分预算与实发积分数一分不差：先向下取整算积分数，再折算回元（同 DistributionService）。
+        BigDecimal userPointBudget = money(BigDecimal.valueOf(
+                        commissionBaseAmount.multiply(userPointShareRate).multiply(pointExchangeRate)
+                                .setScale(0, RoundingMode.DOWN).intValue())
+                .divide(pointExchangeRate, SCALE, RM));
+        BigDecimal userRewardBudget = money(commissionBaseAmount.multiply(userRewardShareRate));
+        // 物业币是已收现金的支付工具，不是成本；只扣积分兑付成本与用户两档预算。
+        BigDecimal rawDistributableAmount = money(commissionBaseAmount
+                .subtract(pointCost)
+                .subtract(userPointBudget)
+                .subtract(userRewardBudget));
         BigDecimal distributableAmount = rawDistributableAmount.max(ZERO);
         BigDecimal deficitAmount = rawDistributableAmount.negate().max(ZERO);
 
@@ -139,7 +156,7 @@ public class DistributionCalculationService {
                 .commissionBaseAmount(commissionBaseAmount)
                 // 兼容旧字段：productCommission 与 commissionBaseAmount 同义
                 .productCommission(commissionBaseAmount)
-                .productBase(money(productAmount.subtract(pointCost).subtract(coinCost)))
+                .productBase(money(productAmount.subtract(pointCost)))
                 .distributableAmount(distributableAmount)
                 .merchantGoodsShare(merchantGoodsShare)
                 .platformShareRate(platformShareRate)
@@ -169,6 +186,10 @@ public class DistributionCalculationService {
                 .merchantShare(merchantShare)
                 .deficitAmount(deficitAmount)
                 .deficitSponsor(deficitSponsor)
+                .userPointShareRate(userPointShareRate)
+                .userRewardShareRate(userRewardShareRate)
+                .userPointBudget(userPointBudget)
+                .userRewardBudget(userRewardBudget)
                 .coordinatorId(s.getCoordinatorId())
                 .sectorLeaderId(s.getSectorLeaderId())
                 .individualLeaderId(s.getIndividualLeaderId())
@@ -211,6 +232,18 @@ public class DistributionCalculationService {
                     "分账金额不守恒：platform=" + platformShare + " property=" + propertyShare
                             + " managementPool=" + managementPoolAmount + " deliveryBase=" + deliverySettlementBase
                             + " merchantShare=" + merchantShare);
+        }
+    }
+
+    /**
+     * 用户侧先扣档比例校验：各自须在 [0,1]。
+     *
+     * <p>两档是从抽佣基础额中先切走的，不参与一级三档的 100% 合计校验；
+     * 二者之和超过 100% 时平台盘会被清零并记为击穿差额，由物业承担，不报错。
+     */
+    private void validateUserTierRates(BigDecimal userPointShareRate, BigDecimal userRewardShareRate) {
+        if (isInvalidRate(userPointShareRate) || isInvalidRate(userRewardShareRate)) {
+            throw new BizException(ErrorCode.DISTRIBUTION_RATE_INVALID, "用户侧预算比例需在0~1之间");
         }
     }
 

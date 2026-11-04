@@ -29,4 +29,12 @@ public interface AnnouncementRepository extends JpaRepository<Announcement, Stri
             """)
     long countRecentMerchantAnnouncements(@Param("merchantId") String merchantId,
                                           @Param("since") LocalDateTime since);
+
+    /** 楼长当日已发条数（单元通知 / 商品分享分 contentType 限频） */
+    long countByPublisherIdAndContentTypeAndCreatedAtGreaterThanEqual(
+            String publisherId, String contentType, LocalDateTime since);
+
+    /** 楼长「我的运营记录」列表：按发布者 + 内容类型取 */
+    Page<Announcement> findByPublisherIdAndContentType(
+            String publisherId, String contentType, Pageable pageable);
 }

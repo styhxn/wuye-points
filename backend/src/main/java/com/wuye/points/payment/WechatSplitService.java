@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -34,15 +35,21 @@ import java.util.Map;
 /**
  * 微信分账业务服务（两级式分账状态机编排）。
  *
- * <p>支持两套资金模型，由 {@code wechat-ecommerce.enabled} 切换：</p>
+ * <p>只处理<b>服务商通道</b>的商城订单（{@code pay_mode=partner}）与电商收付通订单
+ * （{@code pay_mode=ecommerce}）。平台直连商户收款的业务（物业费/充值等）<b>不参与微信分账</b>：
+ * 那类资金直接进平台直连商户号，没有商家特约商户号可分。</p>
+ *
  * <ul>
- *   <li><b>服务商分账</b>（/{@code v3/profitsharing/*}，默认）：用户付款资金冻结在<b>商家子商户号</b>，
+ *   <li><b>服务商分账</b>（/{@code v3/profitsharing/*}，默认）：用户付款资金冻结在<b>商家特约商户号</b>，
  *       服务商以 sub_mchid 指定分账出资方，按订单分成（DistributionRecord）逐收款方请求分账
  *       （平台佣金 + 配送链 + 物业/协调员/负责人），售后窗口到期解冻剩余资金给商家；
  *       资金不经平台归集，满足「不走内部钱包、全链路真实划转」的业务约束；</li>
  *   <li><b>电商收付通</b>（/{@code v3/ecommerce/profitsharing/*}）：需 ICP/EDI 资质，
  *       作为二期备选（切换开关即用，业务侧无感）。</li>
  * </ul>
+ *
+ * <p>分账接口的选择按<b>支付流水固化的 pay_mode</b> 决定，而不是当前全局开关——
+ * 运营切换模式不会把历史订单发到错误的分账接口。</p>
  *
  * <p>① 用户确认收货（或超期自动确认）后 {@link #freezeOnOrderCompleted} 按订单分成发起分账；
  * ② 售后窗口到期 {@link #finishAfterWindow} 解冻剩余资金划账；退款 / 取消走 {@link #retryReverse} 退回。</p>
@@ -128,24 +135,32 @@ public class WechatSplitService {
             log.info("[分账] 订单 {} 所属物业未启用分账（总开关/灰度白名单），跳过", orderId);
             return;
         }
-        PaymentRecord record = paymentRecordRepository.findByBizId(orderId)
-                .filter(r -> "paid".equals(r.getStatus()))
+        // 同一订单可能因关单/重付存在多条流水：取最近一条 paid，避免 findByBizId 多结果异常
+        PaymentRecord record = paymentRecordRepository
+                .findFirstByBizIdAndStatusOrderByCreatedAtDesc(orderId, "paid")
                 .orElse(null);
         if (record == null) {
             log.warn("[分账] 订单 {} 无 paid 支付流水，跳过分账（待对账补分）", orderId);
             return;
         }
-        if (ecommerceProps.isEnabled()) {
+        String payMode = WechatPayModes.resolve(record.getPayMode(), record.getSubMchid(), ecommerceProps.isEnabled());
+        if (WechatPayModes.ECOMMERCE.equals(payMode)) {
             ecommerceFreeze(record, dist);
             return;
         }
-        // ===== 服务商分账（资金冻结在商家子商户号，平台按订单分成逐收款方分出） =====
-        // 服务商模式下 sub_mchid = 收款商家子商户号（分账出资方，资金冻结其中）；
-        // 直连收款模式无子商户号（subMchid=null），分账方即平台商户号自身
-        String subMchid = StringUtils.hasText(record.getSubMchid()) ? record.getSubMchid() : null;
-        String payer = subMchid != null ? subMchid
-                : (StringUtils.hasText(wechatPayProperties.getPlatformSubMchId())
-                    ? wechatPayProperties.getPlatformSubMchId() : wechatPayProperties.getMchId());
+        if (!WechatPayModes.PARTNER.equals(payMode)) {
+            // 直连商户收款（平台自营代收）没有商家特约商户号，微信侧无从发起分账；
+            // 修复调度会批量扫到这类订单，用 debug 避免日志噪声。
+            log.debug("[分账] 订单 {} 支付通道为 {}（非服务商分账），跳过微信分账", orderId, payMode);
+            return;
+        }
+        // ===== 服务商分账（资金冻结在商家特约商户号内，平台按订单分成逐收款方分出） =====
+        // sub_mchid 既是商家入账主体也是分账出资方；缺失即分账不可执行（fail-closed，禁止回退服务商号）
+        String subMchid = record.getSubMchid();
+        if (!StringUtils.hasText(subMchid)) {
+            log.error("[分账] 订单 {} 为服务商支付但流水缺 sub_mchid，无法分账（recordId={}）", orderId, record.getId());
+            return;
+        }
         // 微信分账 transaction_id 必须是「微信支付订单号」；回调丢失、主动查单确认支付时未落库，先补全
         String transactionId = record.getChannelTradeNo();
         if (!StringUtils.hasText(transactionId)) {
@@ -164,6 +179,36 @@ public class WechatSplitService {
         if (plans.isEmpty()) {
             log.info("[分账] 订单 {} 无可分金额，跳过", orderId);
             return;
+        }
+        // 微信服务商分账默认上限：分出总额不得超过订单金额的 maxSplitRatio（默认 30%，须与商户平台
+        // 「最大分账比例」一致）。超限时微信会逐笔拒绝并把部分接收方留在未分状态，故先整体拦截。
+        BigDecimal totalPlan = plans.stream().map(p -> p.amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal ratio = wechatSplitProperties.getMaxSplitRatio() == null
+                ? new BigDecimal("0.30") : wechatSplitProperties.getMaxSplitRatio();
+        BigDecimal maxSplit = nz(record.getCashAmount())
+                .multiply(ratio)
+                .setScale(2, java.math.RoundingMode.DOWN);
+        if (totalPlan.compareTo(maxSplit) > 0) {
+            log.error("[分账] 订单 {} 分账总额 {} 元超过订单金额 {} 元的 {}%（上限 {} 元），本次全部分账拦截。"
+                            + "请下调分成比例，或在微信商户平台申请更高的最大分账比例后调整 wechat-split.max-split-ratio",
+                    orderId, totalPlan, record.getCashAmount(),
+                    ratio.multiply(new BigDecimal("100")).stripTrailingZeros().toPlainString(),
+                    maxSplit);
+            return;
+        }
+        // 官方文档：分账总额不能超过「订单金额减去手续费的净额」，请求分账前应先查剩余待分金额。
+        // 30% 比例以订单金额为基数，实际可用资金以 net 为上限，二者取小才是安全上限。
+        Long unsplitFen = wechatSplitApiService.queryUnsplitAmount(transactionId);
+        if (unsplitFen != null) {
+            long planFen = Long.parseLong(WechatSplitApiService.fen(totalPlan));
+            long effectiveFen = Math.min(Long.parseLong(WechatSplitApiService.fen(maxSplit)), unsplitFen);
+            if (planFen > effectiveFen) {
+                log.error("[分账] 订单 {} 分账总额 {} 分超过可用上限 {} 分（比例上限 {} 分 / 微信剩余待分 {} 分），"
+                                + "本次全部分账拦截", orderId, planFen, effectiveFen,
+                        Long.parseLong(WechatSplitApiService.fen(maxSplit)), unsplitFen);
+                return;
+            }
         }
         // 同一订单的所有接收方共享一个 groupNo（修复补跑时复用已有分组，完结按组一次解冻）
         String groupNo = splitRecordRepository.findFirstByOrderId(orderId)
@@ -186,7 +231,7 @@ public class WechatSplitService {
             sr.setBizType(record.getBizType());
             sr.setOrderId(orderId);
             sr.setSplitNo(splitNo);
-            sr.setPayerAccount(payer);
+            sr.setPayerAccount(subMchid);
             sr.setOwnerType(plan.ownerType);
             sr.setOwnerId(plan.ownerId);
             sr.setFreezeAmount(plan.amount);
@@ -199,11 +244,17 @@ public class WechatSplitService {
                 continue;
             }
             sr.setPayeeAccount(receiver.accountNo());
+            if (WechatSplitOwnerTypes.PLATFORM.name().equals(plan.ownerType)
+                    && !StringUtils.hasText(receiver.accountName())) {
+                log.warn("[分账] 平台收款商户名称未配置（wechat.pay.platform-receiver-name），"
+                        + "添加 MERCHANT_ID 接收方可能被微信拒绝 orderId={}", orderId);
+            }
             try {
                 // 分账前置：把接收方加入该子商户的分账接收方列表（幂等；缺失时随后的冻结会以
                 // 「关系不存在」失败并落 freeze_failed，由补偿调度带着本步骤一起重试）
+                String relationType = relationTypeOf(plan.ownerType);
                 wechatSplitApiService.ensureReceiverAdded(subMchid, receiver.accountNo(),
-                        receiver.accountName(), relationTypeOf(plan.ownerType));
+                        receiver.accountName(), relationType, customRelationOf(relationType));
                 String wxOrderId = wechatSplitApiService.freezeAllocate(splitNo, transactionId,
                         subMchid, receiver.accountNo(), plan.amount, "物业积分分账-" + plan.ownerType,
                         receiver.accountName());
@@ -356,7 +407,7 @@ public class WechatSplitService {
         if (!"frozen".equals(split.getStatus())) {
             return;
         }
-        if (ecommerceProps.isEnabled()) {
+        if (isEcommerceSplit(split)) {
             ecommerceFinish(split);
             return;
         }
@@ -458,7 +509,13 @@ public class WechatSplitService {
     public void retrySkippedSplitRecords() {
         List<WechatSplitRecord> skipped = splitRecordRepository.findByStatus("skipped");
         for (WechatSplitRecord split : skipped) {
-            if (ecommerceProps.isEnabled()) {
+            if (noLongerSplittable(split)) {
+                split.setStatus("expired");
+                split.setRemark("售后窗口已完结/订单已退款，剩余资金已解冻给商家，不再补分");
+                splitRecordRepository.save(split);
+                continue;
+            }
+            if (isEcommerceSplit(split)) {
                 retrySkippedEcommerce(split);
             } else {
                 String account = resolveAccountNoAny(split.getOwnerType(), split.getOwnerId());
@@ -514,12 +571,17 @@ public class WechatSplitService {
     /** 失败态补偿重试（freeze_failed / finish_failed / cancel_failed）。 */
     @Transactional
     public void retryFailed(WechatSplitRecord split) {
-        if (ecommerceProps.isEnabled()) {
+        if (isEcommerceSplit(split)) {
             ecommerceRetryFailed(split);
             return;
         }
         switch (split.getStatus()) {
             case "freeze_failed" -> {
+                if (noLongerSplittable(split)) {
+                    split.setStatus("expired");
+                    split.setRemark("售后窗口已完结/订单已退款，剩余资金已解冻给商家，不再补分");
+                    break;
+                }
                 String account = resolveAccountNoAny(split.getOwnerType(), split.getOwnerId());
                 retryFreeze(split, account);
             }
@@ -620,7 +682,7 @@ public class WechatSplitService {
     }
 
     private void doReverse(WechatSplitRecord split) {
-        if (ecommerceProps.isEnabled()) {
+        if (isEcommerceSplit(split)) {
             // 电商收付通：仅 MERCHANT_ID 接收方可在微信侧回退；个人 openid 不支持回退，
             // 平台先行垫付并登记待追回台账（线下追回后核销）
             String payeeType = resolveReceiverType(split.getPayeeAccount());
@@ -675,13 +737,20 @@ public class WechatSplitService {
             split.setRemark("收款账户未注册/未校验");
             return;
         }
+        String subMchid = resolveSubMchid(split);
+        if (!StringUtils.hasText(subMchid)) {
+            split.setStatus("freeze_failed");
+            split.setRemark("支付流水缺 sub_mchid（非服务商通道），无法分账");
+            return;
+        }
         Receiver receiver = resolveReceiver(split.getOwnerType(), split.getOwnerId());
         split.setPayeeAccount(account);
         try {
-            wechatSplitApiService.ensureReceiverAdded(resolveSubMchid(split), account,
-                    receiver == null ? null : receiver.accountName(), relationTypeOf(split.getOwnerType()));
+            String relationType = relationTypeOf(split.getOwnerType());
+            wechatSplitApiService.ensureReceiverAdded(subMchid, account,
+                    receiver == null ? null : receiver.accountName(), relationType, customRelationOf(relationType));
             String wxOrderId = wechatSplitApiService.freezeAllocate(split.getSplitNo(), split.getWechatOutTradeNo(),
-                    resolveSubMchid(split), account, split.getFreezeAmount(), "物业积分分账-" + split.getOwnerType(),
+                    subMchid, account, split.getFreezeAmount(), "物业积分分账-" + split.getOwnerType(),
                     receiver == null ? null : receiver.accountName());
             split.setWechatSubTradeNo(wxOrderId);
             split.setStatus("frozen");
@@ -693,6 +762,21 @@ public class WechatSplitService {
     }
 
     /**
+     * 判断该分账记录所属支付是否为电商收付通通道：以<b>支付流水固化的 pay_mode</b> 为准，
+     * 避免切换全局收付通开关后把老的服务商分账记录发到电商接口（或反之）。
+     * 历史记录无 pay_mode 时回退全局开关。
+     */
+    private boolean isEcommerceSplit(WechatSplitRecord split) {
+        if (split == null || !StringUtils.hasText(split.getPaymentRecordId())) {
+            return ecommerceProps.isEnabled();
+        }
+        return paymentRecordRepository.findById(split.getPaymentRecordId())
+                .map(pr -> WechatPayModes.ECOMMERCE.equals(
+                        WechatPayModes.resolve(pr.getPayMode(), pr.getSubMchid(), ecommerceProps.isEnabled())))
+                .orElse(ecommerceProps.isEnabled());
+    }
+
+    /**
      * 解析收款方账号（平台特判：平台佣金/配送分成落平台自身商户号，无需运营录入账户）。
      */
     private String resolveAccountNoAny(String ownerType, String ownerId) {
@@ -701,12 +785,15 @@ public class WechatSplitService {
     }
 
     /**
-     * 解析收款方完整信息（账号 + 名称）。平台主体特判落平台收款商户号；
+     * 解析收款方完整信息（账号 + 名称）。平台主体特判落<b>服务商自身商户号</b>（sp_mchid）；
      * 其余主体走 {@code wechat_split_receiver_accounts}（仅 verified 账户可用）。
+     *
+     * <p>服务商分账模式下，未分出到平台的佣金会随「解冻剩余资金」退回商家特约商户号，
+     * 因此平台抽成必须作为 MERCHANT_ID 接收方显式分出（relation_type=SERVICE_PROVIDER）。</p>
      */
     private Receiver resolveReceiver(String ownerType, String ownerId) {
         if (WechatSplitOwnerTypes.PLATFORM.name().equals(ownerType)) {
-            String platformMchId = ecommerceProps.resolvePlatformReceiverMchId(wechatPayProperties);
+            String platformMchId = wechatPayProperties.getMchId();
             if (!StringUtils.hasText(platformMchId)) {
                 return null;
             }
@@ -722,6 +809,8 @@ public class WechatSplitService {
     /**
      * 添加分账接收方的关系类型：平台自身为 SERVICE_PROVIDER（服务商抽成），
      * 其余主体（物业/协调员/负责人/快递员等）取配置值，缺省 PARTNER（合作伙伴）。
+     * 官方可选取值：SERVICE_PROVIDER / STORE / STAFF / STORE_OWNER / PARTNER /
+     * HEADQUARTER / BRAND / DISTRIBUTOR / USER / SUPPLIER / CUSTOM。
      */
     private String relationTypeOf(String ownerType) {
         if (WechatSplitOwnerTypes.PLATFORM.name().equals(ownerType)) {
@@ -731,9 +820,14 @@ public class WechatSplitService {
         return StringUtils.hasText(configured) ? configured : "PARTNER";
     }
 
+    /** 官方约束：relation_type=CUSTOM 时 custom_relation 必填（≤10 字），其余取值不得填写。 */
+    private String customRelationOf(String relationType) {
+        return "CUSTOM".equals(relationType) ? wechatPayProperties.getReceiverCustomRelation() : null;
+    }
+
     /**
-     * 解析分账记录对应支付的服务商子商户号（分账出资方）。
-     * 直连收款的支付流水无 sub_mchid，返回 null（分账方即平台商户号）。
+     * 解析分账记录对应支付的服务商子商户号（商家特约商户号 = 分账出资方）。
+     * 服务商分账必须携带 sub_mchid；直连/历史流水无该字段时返回 null，由调用方 fail-closed。
      */
     private String resolveSubMchid(WechatSplitRecord split) {
         if (split == null || !StringUtils.hasText(split.getPaymentRecordId())) {
@@ -750,6 +844,36 @@ public class WechatSplitService {
                 resolveSubMchid(split));
     }
 
+    /**
+     * 该记录是否已错过可分账时机：同组已完结/回退，或距支付/建单已超过微信 30 天冻结上限。
+     * 命中后补冻必然失败（微信已无冻结资金），应置终态 {@code expired}，避免补偿调度无限重试。
+     */
+    private boolean noLongerSplittable(WechatSplitRecord split) {
+        if (split == null) {
+            return false;
+        }
+        if (StringUtils.hasText(split.getGroupNo())) {
+            boolean groupClosed = splitRecordRepository.findByGroupNo(split.getGroupNo()).stream()
+                    .anyMatch(s -> "finished".equals(s.getStatus())
+                            || "withdrawn".equals(s.getStatus())
+                            || "reverted".equals(s.getStatus()));
+            if (groupClosed) {
+                return true;
+            }
+        }
+        LocalDateTime base = split.getCreatedAt();
+        if (base == null && StringUtils.hasText(split.getPaymentRecordId())) {
+            base = paymentRecordRepository.findById(split.getPaymentRecordId())
+                    .map(PaymentRecord::getCreatedAt).orElse(null);
+        }
+        return base != null && base.plusDays(30).isBefore(LocalDateTime.now());
+    }
+
+    /** 该分账记录是否属于电商收付通通道（普通分账的对账调度需跳过，避免调错接口）。 */
+    public boolean isEcommerceSplitRecord(WechatSplitRecord split) {
+        return isEcommerceSplit(split);
+    }
+
     /** 收款方（账号 + 名称）解析结果。 */
     private record Receiver(String accountNo, String accountName) {
     }
@@ -757,9 +881,9 @@ public class WechatSplitService {
     /**
      * 构建分账计划（服务商/普通分账）：平台抽成 + 四层佣金分成 + 楼长 + 物业经理 + 快递员配送报酬。
      *
-     * <p><b>关键口径（对应「不走内部钱包」决策）</b>：除商家货款（留在商家子商户号、完结时解冻）外，
+     * <p><b>关键口径（对应「不走内部钱包」决策）</b>：除商家货款（留在商家特约商户号、完结时解冻）外，
      * 分账池内<b>每一分钱的归属主体都必须作为接收方分出</b>——服务商分账模式下未分出的资金
-     * 将随完结解冻退回商家（资金错配），直连模式下滞留平台（双重出款隐患）。
+     * 将随完结解冻退回商家（资金错配）。
      * 落点：平台佣金/配送分成→平台商户号；快递员/楼长/经理/协调员/负责人→个人零钱；
      * 物业公司→其微信商户号；均按运营录入的微信账户（{@code wechat_split_receiver_accounts}）解析。</p>
      *

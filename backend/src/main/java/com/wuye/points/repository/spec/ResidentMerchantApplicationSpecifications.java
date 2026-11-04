@@ -14,7 +14,8 @@ public final class ResidentMerchantApplicationSpecifications {
     public static Specification<ResidentMerchantApplication> withFilters(
             String propertyCompanyId,
             String status,
-            List<String> residentIdsByKeyword) {
+            List<String> residentIdsByKeyword,
+            String shopNameKeyword) {
         return (root, query, cb) -> {
             var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
@@ -24,12 +25,20 @@ public final class ResidentMerchantApplicationSpecifications {
             if (StringUtils.hasText(status)) {
                 predicates.add(cb.equal(root.get("status"), status));
             }
-            if (residentIdsByKeyword != null) {
-                if (residentIdsByKeyword.isEmpty()) {
-                    predicates.add(cb.disjunction());
-                } else {
-                    predicates.add(root.get("residentId").in(residentIdsByKeyword));
+            if (residentIdsByKeyword != null || StringUtils.hasText(shopNameKeyword)) {
+                var keywordPredicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
+                if (residentIdsByKeyword != null) {
+                    keywordPredicates.add(residentIdsByKeyword.isEmpty()
+                            ? cb.disjunction()
+                            : root.get("residentId").in(residentIdsByKeyword));
                 }
+                if (StringUtils.hasText(shopNameKeyword)) {
+                    keywordPredicates.add(cb.like(root.get("shopName"), "%" + shopNameKeyword + "%"));
+                }
+                predicates.add(keywordPredicates.size() == 1
+                        ? keywordPredicates.get(0)
+                        : cb.or(keywordPredicates.toArray(
+                                new jakarta.persistence.criteria.Predicate[0])));
             }
 
             return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));

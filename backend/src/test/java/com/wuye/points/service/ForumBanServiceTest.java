@@ -10,7 +10,7 @@ import com.wuye.points.repository.CommunityCommentRepository;
 import com.wuye.points.repository.CommunityPostRepository;
 import com.wuye.points.repository.ResidentForumBanRepository;
 import com.wuye.points.repository.ResidentRepository;
-import com.wuye.points.util.RoleGuard;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +54,7 @@ class ForumBanServiceTest {
     @Mock
     private CommunityCommentRepository commentRepository;
     @Mock
-    private RoleGuard roleGuard;
+    private PermissionGuard permissionGuard;
     @Mock
     private SnowflakeIdGenerator idGenerator;
 

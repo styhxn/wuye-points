@@ -1,4 +1,10 @@
 # 生产环境配置
+#
+# ⚠️ 本文件只写「开关类」默认值，**不含任何凭据**；通道凭据的真实生产值见仓库根 `.env.example`。
+# ⚠️ 本文件的 `${VAR:default}` 只表示"没配环境变量时怎样"，不等于线上现状。
+#    判断线上是否就绪要查 `systemctl cat wuye-points.service` + drop-in + `/proc/<MainPID>/environ`
+#    （2026-11-03 22:20 实测差异已列在 .env.example 顶部）。
+#
 # 生产关闭 Swagger/OpenAPI，避免接口与 DTO 全量暴露
 springdoc:
   api-docs:
@@ -9,7 +15,8 @@ springdoc:
 app:
   auth:
     # ⚠️ 测试模式：按当前联调要求默认开启，放开初始口令并跳过管理端角色校验。
-    # 正式上线前必须设 APP_AUTH_TEST_MODE=false（或删除本行，回落到 application.yml 的默认值）。
+    # 老服务器当前**未设该环境变量**，即线上实际就是 true（20 个同口令种子账号可登管理端）。
+    # 正式上线前必须显式设 APP_AUTH_TEST_MODE=false，并配套改口令/停用种子账号。
     test-mode: ${APP_AUTH_TEST_MODE:true}
   wechat:
     # 默认 false；仅测试服可显式设 APP_WECHAT_SKIP_API=true 以启用 dev_ 免密登录。
@@ -24,7 +31,10 @@ wechat:
     # 生产默认关闭分账标识；确需分账时显式置 WECHAT_PAY_PROFIT_SHARING=true（fail-closed）
     profit-sharing: ${WECHAT_PAY_PROFIT_SHARING:false}
 
-# 分账链路总开关：生产默认关闭，避免「未确认业务口径即自动分账划款」
+# 分账链路总开关：生产默认关闭，避免「未确认业务口径即自动分账划款」。
+# 开启前两个硬前提（详见 .env.example 的 WECHAT_SPLIT_ENABLED 注释）：
+#   ① wechat_split_receiver_accounts 已配齐接收方（空表时一开就全部静默 skipped，没人拿到钱）；
+#   ② 特约商户侧已确认分账授权并设置最大分账比例，且服务商 JSAPI 支付/API 退款两个授权产品已开通。
 wechat-split:
   enabled: ${WECHAT_SPLIT_ENABLED:false}
   auto-withdraw-enabled: ${WECHAT_SPLIT_AUTO_WITHDRAW_ENABLED:false}

@@ -227,7 +227,7 @@ public class CommunityServiceService {
     private ServiceOrderDetailResponse initiateBookChannelPayment(CommunityService service, Resident resident,
                                                                  BookServiceRequest request, BigDecimal amount,
                                                                  PaymentBreakdown breakdown) {
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
         }
         closeStalePendingOrders(service.getId(), resident.getId());
@@ -399,7 +399,7 @@ public class CommunityServiceService {
                                                                      SubscribeServiceRequest request,
                                                                      BigDecimal amount,
                                                                      PaymentBreakdown breakdown) {
-        if (!wechatPayService.isEnabled()) {
+        if (!wechatPayService.isDirectEnabled()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
         }
         closeStalePendingSubscriptions(service.getId(), resident.getId());

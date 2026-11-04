@@ -38,6 +38,7 @@ public class UnifiedEarningsService {
     private final MerchantRepository merchantRepository;
     private final WithdrawalRecordRepository withdrawalRecordRepository;
     private final WithdrawableService withdrawableService;
+    private final MerchantCoinReceivableService merchantCoinReceivableService;
 
     public record UnifiedEarnings(BigDecimal totalEarning, BigDecimal withdrawnAmount,
                                   BigDecimal pendingAmount, BigDecimal withdrawableAmount) {
@@ -63,8 +64,13 @@ public class UnifiedEarningsService {
 
         BigDecimal merchantRemaining = BigDecimal.ZERO;
         for (Merchant merchant : merchantRepository.findByResidentId(residentId)) {
-            merchantRemaining = merchantRemaining.add(defaultDecimal(
-                    withdrawableService.calcMerchantWithdrawable(merchant).withdrawableAmount()));
+            // 内部现金（直连代收/内部收益）+ 物业币应收可结算余额；
+            // 服务商/电商现金已由微信结算到商家商户号，不计入账号统一可提现。
+            merchantRemaining = merchantRemaining
+                    .add(defaultDecimal(withdrawableService
+                            .calcMerchantWithdrawable(merchant).withdrawableAmount()))
+                    .add(defaultDecimal(merchantCoinReceivableService
+                            .calc(merchant).coinAvailableAmount()));
         }
 
         BigDecimal totalEarning = leaderShare.add(sellerProfit).add(merchantRemaining)

@@ -31,6 +31,8 @@ public interface OrderRepository extends JpaRepository<Order, String>, JpaSpecif
 
     Page<Order> findByMerchantIdAndOrderStatus(String merchantId, String orderStatus, Pageable pageable);
 
+    List<Order> findByMerchantIdAndOrderStatusOrderByCompletedAtDesc(String merchantId, String orderStatus);
+
     Optional<Order> findByIdAndPropertyCompanyId(String id, String propertyCompanyId);
 
     @Query("""

@@ -54,6 +54,7 @@ public class WithdrawableService {
     private final DeliveryRepository deliveryRepository;
     private final WalletFlowRepository walletFlowRepository;
     private final WechatSplitRecordRepository splitRecordRepository;
+    private final MerchantCoinReceivableService merchantCoinReceivableService;
 
     /**
      * 个人类接收方「已由微信分账真实结算」的状态集合。
@@ -145,26 +146,51 @@ public class WithdrawableService {
         // 占用中的提现（pending/approved/completed；rejected 不占用）。
         // 不能传 null：null 会把 rejected 也扣减掉，导致商家被拒绝后永久少一笔可提现额度。
         List<String> occupiedStatuses = List.of("pending", "approved", "completed");
-        BigDecimal allWithdrawals = excludeWithdrawalId == null
-                ? merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(
-                        merchant.getId(), occupiedStatuses)
-                : merchantWithdrawalRepository.sumAmountByMerchantIdAndStatusesExcluding(
-                        merchant.getId(), occupiedStatuses, excludeWithdrawalId);
+        boolean technicianSource = "technician".equals(merchant.getMerchantSource());
+        boolean internalEarnings = technicianSource
+                || merchantCoinReceivableService.isInternalEarningsMerchant(merchant);
 
         // 商家收入：技师店走服务单营收（不分账记录），其余走分账 merchantShare（B 方案，历史回退 订单金额×(1−抽佣)）
         // 另叠加商家自配配送费分成（wallet_flows 兜底入账部分，entryType=merchant_delivery_fee_share）；
         // 微信 通道成功时该流水不产生，避免双算（资金在 微信 侧，不走内部可提现）
         // 一级代理另叠加业主小店订单的货款入账（entryType=distributor_wholesale_income，含退款负向冲正）
-        boolean technicianSource = "technician".equals(merchant.getMerchantSource());
-        BigDecimal merchantIncome = technicianSource
-                ? defaultDecimal(stats.totalRevenue())
-                : defaultDecimal(distributionRecordRepository
-                        .sumMerchantIncomeForCompletedOrders(merchant.getId()))
-                        .add(defaultDecimal(walletFlowRepository
-                                .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_MERCHANT_DELIVERY_FEE_SHARE)))
-                        .add(defaultDecimal(walletFlowRepository
-                                .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME)))
-                        .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal merchantIncome;
+        if (technicianSource) {
+            merchantIncome = defaultDecimal(stats.totalRevenue());
+        } else if (internalEarnings) {
+            merchantIncome = defaultDecimal(distributionRecordRepository
+                    .sumMerchantIncomeForCompletedOrders(merchant.getId()))
+                    .add(defaultDecimal(walletFlowRepository
+                            .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_MERCHANT_DELIVERY_FEE_SHARE)))
+                    .add(defaultDecimal(walletFlowRepository
+                            .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME)))
+                    .setScale(2, RoundingMode.HALF_UP);
+        } else {
+            // 标准商家：现金在商家特约商户号的已由微信结算，不走平台内部提现；
+            // 平台内部只兑付「直连代收现金 + 物业币应收」，物业币走独立入口，防止一笔钱付两次。
+            merchantIncome = merchantCoinReceivableService.calc(merchant, excludeWithdrawalId)
+                    .internalCashAmount()
+                    .add(defaultDecimal(walletFlowRepository
+                            .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_MERCHANT_DELIVERY_FEE_SHARE)))
+                    .add(defaultDecimal(walletFlowRepository
+                            .sumAmountByOwnerIdAndEntryType(merchant.getId(), ENTRY_DISTRIBUTOR_WHOLESALE_INCOME)))
+                    .setScale(2, RoundingMode.HALF_UP);
+        }
+        BigDecimal allWithdrawals;
+        if (internalEarnings) {
+            allWithdrawals = excludeWithdrawalId == null
+                    ? merchantWithdrawalRepository.sumAmountByMerchantIdAndStatuses(
+                            merchant.getId(), occupiedStatuses)
+                    : merchantWithdrawalRepository.sumAmountByMerchantIdAndStatusesExcluding(
+                            merchant.getId(), occupiedStatuses, excludeWithdrawalId);
+        } else {
+            // 物业币应收由独立入口结算，不占用本入口的现金可提现额度
+            allWithdrawals = excludeWithdrawalId == null
+                    ? merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatuses(
+                            merchant.getId(), occupiedStatuses)
+                    : merchantWithdrawalRepository.sumLegacyAmountByMerchantIdAndStatusesExcluding(
+                            merchant.getId(), occupiedStatuses, excludeWithdrawalId);
+        }
         // 应收：商家最终实得为负的订单金额合计（进入待偿账户，不进负可提现）
         BigDecimal receivableAmount = technicianSource
                 ? BigDecimal.ZERO

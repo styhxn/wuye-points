@@ -25,6 +25,8 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
 
     Optional<DistributionRecord> findFirstByOrderId(String orderId);
 
+    List<DistributionRecord> findByOrderIdIn(java.util.Collection<String> orderIds);
+
     List<DistributionRecord> findByCoordinatorId(String coordinatorId);
 
     List<DistributionRecord> findBySectorLeaderId(String sectorLeaderId);
@@ -102,6 +104,18 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
     org.springframework.data.domain.Page<DistributionRecord> findByBuildingLeaderIdOrderByCreatedAtDesc(
             String buildingLeaderId, org.springframework.data.domain.Pageable pageable);
 
+    org.springframework.data.domain.Page<DistributionRecord> findByMerchantIdOrderByCreatedAtDesc(
+            String merchantId, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<DistributionRecord> findByCoordinatorIdOrderByCreatedAtDesc(
+            String coordinatorId, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<DistributionRecord> findBySectorLeaderIdOrderByCreatedAtDesc(
+            String sectorLeaderId, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<DistributionRecord> findByIndividualLeaderIdOrderByCreatedAtDesc(
+            String individualLeaderId, org.springframework.data.domain.Pageable pageable);
+
     @Query("""
             SELECT COALESCE(SUM(d.buildingLeaderShare), 0) FROM DistributionRecord d
             WHERE d.buildingLeaderId = :buildingLeaderId
@@ -126,15 +140,36 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
                                       @Param("startDate") LocalDateTime startDate,
                                       @Param("endDate") LocalDateTime endDate);
 
-    @Query("SELECT COALESCE(SUM(d.totalAmount - " +
-           "(CASE WHEN d.propertyShare IS NULL THEN 0 ELSE d.propertyShare END) - " +
-           "(CASE WHEN d.coordinatorShare IS NULL THEN 0 ELSE d.coordinatorShare END) - " +
-           "(CASE WHEN d.sectorLeaderShare IS NULL THEN 0 ELSE d.sectorLeaderShare END) - " +
-           "(CASE WHEN d.individualLeaderShare IS NULL THEN 0 ELSE d.individualLeaderShare END)), 0) " +
-           "FROM DistributionRecord d WHERE d.merchantId = :merchantId")
+    /**
+     * 商家已完成订单应得 = Σ(商品金额 − 抽佣 − 商家承担的配送补贴)。
+     * 商品金额 = 订单总额 − 优惠券（优惠券由商家承担，不进入抽佣基数）。
+     * 平台/物业/负责人份额全部从抽佣中分配，不能再从商家应得里二次扣减。
+     */
+    @Query("SELECT COALESCE(SUM(" +
+           "CASE WHEN ((o.totalAmount - COALESCE(o.couponAmount, 0)) " +
+           "  - ((o.totalAmount - COALESCE(o.couponAmount, 0)) * d.commissionRate) " +
+           "  - CASE WHEN o.deliverySubsidySponsor = 'merchant' " +
+           "         THEN COALESCE(o.deliverySubsidyAmount, 0) ELSE 0 END) < 0 THEN 0 " +
+           "ELSE ((o.totalAmount - COALESCE(o.couponAmount, 0)) " +
+           "  - ((o.totalAmount - COALESCE(o.couponAmount, 0)) * d.commissionRate) " +
+           "  - CASE WHEN o.deliverySubsidySponsor = 'merchant' " +
+           "         THEN COALESCE(o.deliverySubsidyAmount, 0) ELSE 0 END) END), 0) " +
+           "FROM DistributionRecord d, Order o " +
+           "WHERE d.orderId = o.id AND d.merchantId = :merchantId AND o.orderStatus = 'completed'")
     BigDecimal sumMerchantIncomeForCompletedOrders(@Param("merchantId") String merchantId);
 
-    @Query("SELECT COALESCE(SUM(d.totalAmount), 0) FROM DistributionRecord d WHERE d.merchantId = :merchantId")
+    @Query("SELECT COALESCE(SUM(" +
+           "CASE WHEN ((o.totalAmount - COALESCE(o.couponAmount, 0)) " +
+           "  - ((o.totalAmount - COALESCE(o.couponAmount, 0)) * d.commissionRate) " +
+           "  - CASE WHEN o.deliverySubsidySponsor = 'merchant' " +
+           "         THEN COALESCE(o.deliverySubsidyAmount, 0) ELSE 0 END) < 0 " +
+           "THEN -((o.totalAmount - COALESCE(o.couponAmount, 0)) " +
+           "  - ((o.totalAmount - COALESCE(o.couponAmount, 0)) * d.commissionRate) " +
+           "  - CASE WHEN o.deliverySubsidySponsor = 'merchant' " +
+           "         THEN COALESCE(o.deliverySubsidyAmount, 0) ELSE 0 END) " +
+           "ELSE 0 END), 0) " +
+           "FROM DistributionRecord d, Order o " +
+           "WHERE d.orderId = o.id AND d.merchantId = :merchantId AND o.orderStatus = 'completed'")
     BigDecimal sumMerchantReceivableForCompletedOrders(@Param("merchantId") String merchantId);
 
     @Query("SELECT COALESCE(SUM(" +

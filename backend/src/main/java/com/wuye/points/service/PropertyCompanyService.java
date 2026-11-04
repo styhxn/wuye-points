@@ -3,10 +3,12 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.propertycompany.AdminAccountResponse;
+import com.wuye.points.dto.propertycompany.CoinDisplaySettingResponse;
 import com.wuye.points.dto.propertycompany.CommunityItemResponse;
 import com.wuye.points.dto.propertycompany.CommunityListResponse;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyRequest;
 import com.wuye.points.dto.propertycompany.CreatePropertyCompanyResponse;
+import com.wuye.points.dto.propertycompany.UpdateCoinDisplayRequest;
 import com.wuye.points.dto.propertycompany.UpdateCoinUseConditionRequest;
 import com.wuye.points.dto.propertycompany.PropertyCompanyCurrentResponse;
 import com.wuye.points.dto.propertycompany.PropertyCompanyDetailResponse;
@@ -28,8 +30,10 @@ import com.wuye.points.repository.PointPoolRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.PropertyCompanySpecifications;
+import com.wuye.points.support.RateDefaults;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.PasswordUtil;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
@@ -57,6 +61,10 @@ public class PropertyCompanyService {
     private static final BigDecimal DEFAULT_COORDINATOR_SHARE_RATE = new BigDecimal("0.7000");
     private static final BigDecimal DEFAULT_SECTOR_LEADER_RATE = new BigDecimal("0.1000");
     private static final BigDecimal DEFAULT_INDIVIDUAL_LEADER_RATE = BigDecimal.ZERO;
+    /** 用户积分预算比例默认值（占抽佣基础额，V36 先扣档） */
+    private static final BigDecimal DEFAULT_USER_POINT_SHARE_RATE = RateDefaults.USER_POINT_SHARE_RATE;
+    /** 用户奖励金预算比例默认值（占抽佣基础额，V36 先扣档） */
+    private static final BigDecimal DEFAULT_USER_REWARD_SHARE_RATE = RateDefaults.USER_REWARD_SHARE_RATE;
     private static final BigDecimal DEFAULT_WITHDRAWAL_FEE_RATE = new BigDecimal("0.0060");
     private static final BigDecimal DEFAULT_POINT_TO_FEE_RATE = new BigDecimal("0.0100");
     private static final BigDecimal DEFAULT_DELIVERY_COURIER_SHARE_RATE = new BigDecimal("1.0000");
@@ -78,6 +86,7 @@ public class PropertyCompanyService {
     private final OrderRepository orderRepository;
     private final PropertyCompanyConverter propertyCompanyConverter;
     private final RoleGuard roleGuard;
+    private final PermissionGuard permissionGuard;
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
@@ -211,6 +220,9 @@ public class PropertyCompanyService {
     public PropertyCompanyDetailResponse updatePropertyCompany(String id, UpdatePropertyCompanyRequest request) {
         validatePropertyCompanyId(id);
         PropertyCompany company = getManageableCompany(id);
+        if (hasConfigUpdate(request)) {
+            permissionGuard.requirePermission("config.set");
+        }
         applyUpdate(company, request);
         // 2026-09-08：仅当本次请求涉及一级分账比例时才做三档合计校验，
         // 避免历史数据（platform=0 且 property+coordinator=1）阻塞配送费、状态等无关字段的保存
@@ -220,13 +232,41 @@ public class PropertyCompanyService {
     }
 
     /**
+     * 物业币显示开关（权限码 coin.display_control）。
+     *
+     * <p>物业管理员只能操作本物业；平台管理员可指定任意物业。
+     * 持有该权限码的标签身份同样只能操作自身所属物业。</p>
+     */
+    @Transactional
+    public CoinDisplaySettingResponse updateCoinDisplay(String id, UpdateCoinDisplayRequest request) {
+        permissionGuard.requirePermission("coin.display_control");
+        validatePropertyCompanyId(id);
+        PropertyCompany company = propertyCompanyRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+        if (!roleGuard.isPlatformAdmin()) {
+            String currentPropertyCompanyId = UserContext.currentPropertyCompanyId();
+            if (!StringUtils.hasText(currentPropertyCompanyId)
+                    || !currentPropertyCompanyId.equals(company.getId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+        }
+        company.setCoinDisplayEnabled(Boolean.TRUE.equals(request.getEnabled()));
+        propertyCompanyRepository.save(company);
+        return CoinDisplaySettingResponse.builder()
+                .propertyCompanyId(company.getId())
+                .coinDisplayEnabled(Boolean.TRUE.equals(company.getCoinDisplayEnabled()))
+                .updatedAt(DateTimeUtil.nowIsoUtc())
+                .build();
+    }
+
+    /**
      * 设置物业币使用条件（§79.2 PUT /admin/property-companies/{id}/coin-use-condition）。
      * 角色：property_admin / platform_admin；property_admin 仅可操作本物业公司。
      */
     @Transactional
     public PropertyCompanyDetailResponse updateCoinUseCondition(String id, UpdateCoinUseConditionRequest request) {
         validatePropertyCompanyId(id);
-        roleGuard.requireAnyRole("property_admin", "platform_admin");
+        permissionGuard.requirePermission("config.set");
         PropertyCompany company = getManageableCompany(id);
 
         CoinUseCondition condition = CoinUseCondition.fromCode(request.getCondition());
@@ -303,6 +343,30 @@ public class PropertyCompanyService {
         return password.toString();
     }
 
+    /**
+     * 平台管理员重置物业管理员密码：一次性返回新随机密码，并递增 tokenVersion 使旧登录态失效。
+     */
+    @Transactional
+    public AdminAccountResponse resetPropertyAdminPassword(String companyId, String accountId) {
+        roleGuard.requireAnyRole("platform_admin");
+        validatePropertyCompanyId(companyId);
+        propertyCompanyRepository.findById(companyId)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+
+        Resident admin = residentRepository.findById(accountId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "管理员账号不存在"));
+        if (!companyId.equals(admin.getPropertyCompanyId())
+                || !"property_admin".equals(RoleGuard.normalizeRole(admin.getRole()))) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "管理员账号不存在");
+        }
+
+        String newPassword = generateInitialPassword();
+        admin.setPassword(PasswordUtil.hashPassword(newPassword));
+        admin.setTokenVersion(admin.getTokenVersion() == null ? 1 : admin.getTokenVersion() + 1);
+        residentRepository.save(admin);
+        return propertyCompanyConverter.toAdminAccount(admin, null, newPassword);
+    }
+
     private void initializeDefaults(PropertyCompany company) {
         PointPool pool = new PointPool();
         pool.setId(idGenerator.generateId("pp"));
@@ -335,6 +399,9 @@ public class PropertyCompanyService {
         company.setCoordinatorShareRate(DEFAULT_COORDINATOR_SHARE_RATE);
         company.setSectorLeaderRate(DEFAULT_SECTOR_LEADER_RATE);
         company.setIndividualLeaderRate(DEFAULT_INDIVIDUAL_LEADER_RATE);
+        // 用户侧先扣档（V36）：同 coin_enabled 的教训，Hibernate 插入显式 NULL 会绕过列默认值，须显式赋值
+        company.setUserPointShareRate(DEFAULT_USER_POINT_SHARE_RATE);
+        company.setUserRewardShareRate(DEFAULT_USER_REWARD_SHARE_RATE);
         company.setCoinDisplayEnabled(true);
         // point_enabled / coin_enabled 服务器列为 NOT NULL 且 Hibernate 插入显式 NULL 会绕过列默认值，
         // 必须显式赋值，否则创建物业公司 400「coin_enabled cannot be null」（2026-09-07 前端问题 G 根因）
@@ -379,23 +446,38 @@ public class PropertyCompanyService {
         }
 
         if (request.getPlatformShareRate() != null) {
-            // 「我们公司」一档为平台级配置，仅平台管理员可写；物业侧请走 /admin/platform-share-rates 只读查看
-            if (!roleGuard.isPlatformAdmin()) {
-                throw new BizException(ErrorCode.PERMISSION_DENIED, "仅平台管理员可修改我们公司（平台）分成比例");
-            }
+            requirePlatformAdminForRate("我们公司（平台）分成比例");
             company.setPlatformShareRate(request.getPlatformShareRate());
         }
         if (request.getPropertyShareRate() != null) {
+            requirePlatformAdminForRate("物业公司分成比例");
             company.setPropertyShareRate(request.getPropertyShareRate());
         }
         if (request.getCoordinatorShareRate() != null) {
+            requirePlatformAdminForRate("管理盘（统筹）分成比例");
             company.setCoordinatorShareRate(request.getCoordinatorShareRate());
         }
         if (request.getSectorLeaderRate() != null) {
+            requirePlatformAdminForRate("板块负责人分成比例");
             company.setSectorLeaderRate(request.getSectorLeaderRate());
         }
         if (request.getIndividualLeaderRate() != null) {
+            requirePlatformAdminForRate("个体负责人分成比例");
             company.setIndividualLeaderRate(request.getIndividualLeaderRate());
+        }
+        if (request.getUserPointShareRate() != null) {
+            requirePlatformAdminForRate("用户积分预算比例");
+            company.setUserPointShareRate(request.getUserPointShareRate());
+        }
+        if (request.getUserRewardShareRate() != null) {
+            requirePlatformAdminForRate("用户奖励金预算比例");
+            company.setUserRewardShareRate(request.getUserRewardShareRate());
+        }
+        if (request.getPointEnabled() != null) {
+            company.setPointEnabled(request.getPointEnabled());
+        }
+        if (request.getCoinEnabled() != null) {
+            company.setCoinEnabled(request.getCoinEnabled());
         }
         if (request.getCoinDisplayEnabled() != null) {
             company.setCoinDisplayEnabled(request.getCoinDisplayEnabled());
@@ -420,6 +502,7 @@ public class PropertyCompanyService {
             company.setDeliveryCourierPerOrder(request.getDeliveryCourierPerOrder());
         }
         if (request.getWithdrawalFeeRate() != null) {
+            requirePlatformAdminForRate("提现手续费率");
             company.setWithdrawalFeeRate(request.getWithdrawalFeeRate());
         }
         if (request.getPointToFeeRate() != null) {
@@ -439,6 +522,12 @@ public class PropertyCompanyService {
         }
         if (request.getNeighborDailyContactLimit() != null) {
             company.setNeighborDailyContactLimit(request.getNeighborDailyContactLimit());
+        }
+    }
+
+    private void requirePlatformAdminForRate(String label) {
+        if (!roleGuard.isPlatformAdmin()) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED, label + "仅平台管理员可修改");
         }
     }
 
@@ -513,6 +602,23 @@ public class PropertyCompanyService {
      * 二者相加并无业务含义，故只做 0~1 区间校验，<b>不再</b>校验二者之和。
      */
     private void validateDistributionRates(PropertyCompany company, UpdatePropertyCompanyRequest request) {
+        // 用户侧先扣档（V36）：从抽佣基础额中先切走，不进一级三档，故不参与 100% 合计校验；
+        // 但合计不得超过 100%——超过则平台盘被清零并记为击穿差额由物业承担，属配置错误。
+        // 放在一级三档的 early-return 之前：只改用户两档时也必须校验到。
+        if (request.getUserPointShareRate() != null || request.getUserRewardShareRate() != null) {
+            // 未配置按 RateDefaults 兜底（与结算取值口径一致）；显式配 0 表示不发，是合法值
+            BigDecimal userPoint = requireRate(company.getUserPointShareRate() != null
+                    ? company.getUserPointShareRate() : RateDefaults.USER_POINT_SHARE_RATE, "用户积分预算比例");
+            BigDecimal userReward = requireRate(company.getUserRewardShareRate() != null
+                    ? company.getUserRewardShareRate() : RateDefaults.USER_REWARD_SHARE_RATE, "用户奖励金预算比例");
+            BigDecimal userTotal = userPoint.add(userReward);
+            if (userTotal.compareTo(BigDecimal.ONE) > 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "用户积分与用户奖励金预算比例合计不得超过100%（当前为 "
+                                + toPercent(userTotal) + "%）");
+            }
+        }
+
         boolean touched = request.getPlatformShareRate() != null
                 || request.getPropertyShareRate() != null
                 || request.getCoordinatorShareRate() != null;
@@ -578,6 +684,10 @@ public class PropertyCompanyService {
                 || request.getCoordinatorShareRate() != null
                 || request.getSectorLeaderRate() != null
                 || request.getIndividualLeaderRate() != null
+                || request.getUserPointShareRate() != null
+                || request.getUserRewardShareRate() != null
+                || request.getPointEnabled() != null
+                || request.getCoinEnabled() != null
                 || request.getCoinDisplayEnabled() != null
                 || request.getCoinIssueMode() != null
                 || request.getCoinExpiryDays() != null
@@ -588,6 +698,8 @@ public class PropertyCompanyService {
                 || request.getWithdrawalFeeRate() != null
                 || request.getPointToFeeRate() != null
                 || request.getTwoYearClearEnabled() != null
+                || request.getPointTransferEnabled() != null
+                || request.getPointTransferMinYears() != null
                 || request.getNeighborDailyContactLimit() != null;
     }
 

@@ -7,16 +7,19 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 
 /**
- * 微信支付（平台微信支付分账 partner 模式）配置，绑定 application.yml 的 {@code wechat.pay} 前缀。
+ * 微信支付<b>服务商</b>通道配置（sp_mchid），绑定 application.yml 的 {@code wechat.pay} 前缀。
  *
- * <p>仅承载「微信官方支付 / 普通分账」所需配置，不含任何第三方聚合支付（扫呗 / LCSW / CBK）字段。
- * 资金分账走微信官方 {@code /v3/profitsharing/*} 普通分账，接收方类型为 MERCHANT_ID / PERSONAL_OPENID，
- * 不使用电商收付通的 sub_mchid 进件模式。</p>
+ * <p>承载「服务商 JSAPI 收款 + 官方分账」所需配置，不含任何第三方聚合支付（扫呗 / LCSW / CBK）字段。
+ * 商城订单经 {@code /v3/pay/partner/transactions/jsapi} 收款，资金进商家特约商户号（{@code sub_mchid}）；
+ * 分账走微信官方 {@code /v3/profitsharing/*} 普通分账，接收方类型为 MERCHANT_ID / PERSONAL_OPENID。</p>
+ *
+ * <p>平台自营业务（物业费/充值/食堂/广告等）走另一套独立账号
+ * {@link WechatDirectProperties}（{@code wechat.direct}），两套凭据不可混用。</p>
  */
 @Data
 @Component
 @ConfigurationProperties(prefix = "wechat.pay")
-public class WechatPayProperties {
+public class WechatPayProperties implements WechatMerchantProperties {
 
     /** 微信支付总开关（接入真实商户信息后置 true）。 */
     private boolean enabled;
@@ -78,14 +81,25 @@ public class WechatPayProperties {
     /** 平台证书刷新间隔（毫秒）。 */
     private long certRefreshMillis = 3_600_000L;
 
+    /** 微信支付公钥 ID（形如 PUB_KEY_ID_*）；配置后使用公钥验签，不再拉取平台证书。 */
+    private String publicKeyId;
+
+    /** 微信支付公钥文件路径（PEM）。 */
+    private String publicKeyPath;
+
+    /** 微信支付公钥（Base64/PEM 文本，与 public-key-path 二选一）。 */
+    private String publicKeyBase64;
+
     /** 是否已具备发起真实微信调用的最低配置。 */
+    @Override
     public boolean isConfigured() {
         return enabled
                 && isNotBlank(mchId)
-                && isNotBlank(apiV3Key)
+                && isNotBlank(apiV3Key) && apiV3Key.length() == 32
                 && (isNotBlank(privateKeyBase64) || isNotBlank(privateKeyPath))
                 && isNotBlank(merchantSerialNumber)
-                && isNotBlank(appId);
+                && isNotBlank(appId)
+                && isNotBlank(notifyUrl);
     }
 
     private static boolean isNotBlank(String s) {

@@ -39,8 +39,15 @@ public class WechatSplitProperties {
     /** 灰度白名单（物业公司 ID 列表）；空=全部启用（受全局 enabled 约束）。 */
     private List<String> enabledPropertyCompanies = new ArrayList<>();
 
-    /** 售后窗口天数（超过则自动完结划账）。 */
+    /** 售后窗口天数（超过则自动完结划账）。微信服务商分账最长冻结 30 天，配置值须小于等于 30。 */
     private int afterSaleDays = 7;
+
+    /**
+     * 单笔订单分账总额上限比例（相对订单实付金额），默认 0.30。
+     * <p>必须与微信商户平台「服务商分账 → 最大分账比例」保持一致：默认 30%，申请调高后同步调整本项。
+     * 超出时整单拦截（不发起任何一笔），避免部分接收方分出后其余被微信拒绝，造成资金与本地记录不一致。</p>
+     */
+    private BigDecimal maxSplitRatio = new BigDecimal("0.30");
 
     /**
      * 该物业公司是否启用分账：全局关闭则 false；白名单非空时仅名单内启用。

@@ -26,7 +26,7 @@ public class DistributionCalculateResponse {
     @Schema(description = "积分成本", example = "0.00")
     private BigDecimal pointCost;
 
-    @Schema(description = "金币成本", example = "0.00")
+    @Schema(description = "物业币支付金额（快照；不作为成本扣减）", example = "0.00")
     private BigDecimal coinCost;
 
     @Schema(description = "抽佣基础额 = 商品金额 × 抽佣率", example = "10.00")
@@ -35,13 +35,25 @@ public class DistributionCalculateResponse {
     @Schema(description = "兼容旧字段，等价于 commissionBaseAmount", example = "10.00")
     private BigDecimal productCommission;
 
-    @Schema(description = "商品实付 = 商品金额 − 积分成本 − 物业币成本", example = "100.00")
+    @Schema(description = "商品实付 = 商品金额 − 积分成本（物业币为支付资金来源，不扣减）", example = "100.00")
     private BigDecimal productBase;
 
-    @Schema(description = "平台盘 = max(抽佣基础额 − 积分成本 − 物业币成本, 0)", example = "10.00")
+    @Schema(description = "用户积分预算比例快照（占抽佣基础额，V36 先扣档）", example = "0.1000")
+    private BigDecimal userPointShareRate;
+
+    @Schema(description = "用户奖励金预算比例快照（占抽佣基础额，V36 先扣档）", example = "0.1000")
+    private BigDecimal userRewardShareRate;
+
+    @Schema(description = "本次从平台盘切出的用户积分预算（元）", example = "0.50")
+    private BigDecimal userPointBudget;
+
+    @Schema(description = "本次从平台盘切出的用户奖励金预算（元）", example = "0.50")
+    private BigDecimal userRewardBudget;
+
+    @Schema(description = "平台盘 = max(抽佣基础额 − 积分成本 − 用户两档预算, 0)", example = "10.00")
     private BigDecimal distributableAmount;
 
-    @Schema(description = "成本击穿差额", example = "0.00")
+    @Schema(description = "积分成本击穿差额（物业币不再击穿）", example = "0.00")
     private BigDecimal deficitAmount;
 
     @Schema(description = "击穿差额承担方，默认 property", example = "property")

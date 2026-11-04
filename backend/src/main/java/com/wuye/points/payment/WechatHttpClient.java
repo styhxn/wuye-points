@@ -28,19 +28,19 @@ import java.util.UUID;
 @Slf4j
 public class WechatHttpClient {
 
-    private final WechatPayProperties props;
+    private final WechatMerchantProperties props;
     private volatile PrivateKey privateKey;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    public WechatHttpClient(WechatPayProperties props, RestTemplate restTemplate, ObjectMapper objectMapper) {
+    public WechatHttpClient(WechatMerchantProperties props, RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.props = props;
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.privateKey = null; // 懒加载：仅在实际签名时解析，占位未配不会致启动失败
     }
 
-    private static PrivateKey resolvePrivateKey(WechatPayProperties props) {
+    private static PrivateKey resolvePrivateKey(WechatMerchantProperties props) {
         if (props.getPrivateKeyBase64() != null && !props.getPrivateKeyBase64().isBlank()) {
             return WechatCrypto.loadPrivateKey(props.getPrivateKeyBase64());
         }
@@ -73,7 +73,8 @@ public class WechatHttpClient {
         PrivateKey key = getPrivateKey();
         if (key == null) {
             throw new WechatPayException("CONFIG_MISSING",
-                    "微信支付商户私钥未配置（private-key-base64 / private-key-path），无法签名", null);
+                    "微信支付商户私钥未配置（mch=" + props.getMchId()
+                            + "，private-key-base64 / private-key-path 二选一），无法签名", null);
         }
         String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
         String nonce = UUID.randomUUID().toString().replace("-", "");
@@ -102,7 +103,10 @@ public class WechatHttpClient {
 
     public String post(String url, Object body, Map<String, String> extraHeaders) {
         String json = body == null ? "{}" : (body instanceof String ? (String) body : JSONUtil.toJsonStr(body));
-        HttpEntity<String> entity = new HttpEntity<>(json, authHeaders("POST", url, json, extraHeaders));
+        // 必须直接发 UTF-8 字节：Spring 的 StringHttpMessageConverter 默认 ISO-8859-1，
+        // 中文会被替换成 '?'，而签名按 UTF-8 计算，微信会返回 401 SIGN_ERROR。
+        HttpEntity<byte[]> entity = new HttpEntity<>(json.getBytes(StandardCharsets.UTF_8),
+                authHeaders("POST", url, json, extraHeaders));
         return exchange(url, HttpMethod.POST, entity);
     }
 
@@ -116,11 +120,11 @@ public class WechatHttpClient {
     }
 
     /**
-     * 微信媒体上传（POST /v3/merchant/media/upload 等）。
+     * 微信媒体上传（POST /v3/merchant/media/upload）。
      *
-     * <p>微信 APIv3 约定：media 上传的 HTTP body 为 {@code multipart/form-data}，
-     * 但签名串中的 BODY 为该文件原始内容（二进制按 ISO-8859-1 编码为字符串），
-     * 其余（时间戳/随机串/URL path）与 JSON 请求一致。</p>
+     * <p>官方约定（《文件上传》2.2/2.3）：body 为 {@code multipart/form-data}，包含必填的
+     * {@code meta}（JSON：filename + sha256）与 {@code file} 两个部分；<b>签名串中的 BODY 是
+     * meta 的 JSON 串，不是文件二进制</b>。文件名必须以 JPG/JPEG/PNG/BMP 结尾，图片不超过 5M。</p>
      *
      * @param url       完整请求地址
      * @param fileName  上传文件名（微信侧保存用）
@@ -128,12 +132,19 @@ public class WechatHttpClient {
      * @return 微信接口响应体（含 media_id）
      */
     public String postMultipart(String url, String fileName, byte[] fileBytes) {
+        String name = normalizeUploadFileName(fileName);
+        String metaJson = "{\"filename\":\"" + name + "\",\"sha256\":\"" + sha256Hex(fileBytes) + "\"}";
+
         String boundary = "----WuyePointsBoundary" + UUID.randomUUID().toString().replace("-", "");
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try {
             writeUtf8(bos, "--" + boundary + "\r\n");
-            writeUtf8(bos, "Content-Disposition: form-data; name=\"file\"; filename=\"" + sanitize(fileName) + "\"\r\n");
-            writeUtf8(bos, "Content-Type: application/octet-stream\r\n\r\n");
+            writeUtf8(bos, "Content-Disposition: form-data; name=\"meta\"\r\n");
+            writeUtf8(bos, "Content-Type: application/json\r\n\r\n");
+            writeUtf8(bos, metaJson);
+            writeUtf8(bos, "\r\n--" + boundary + "\r\n");
+            writeUtf8(bos, "Content-Disposition: form-data; name=\"file\"; filename=\"" + name + "\"\r\n");
+            writeUtf8(bos, "Content-Type: " + contentTypeOf(name) + "\r\n\r\n");
             bos.write(fileBytes);
             writeUtf8(bos, "\r\n--" + boundary + "--\r\n");
         } catch (Exception e) {
@@ -144,13 +155,12 @@ public class WechatHttpClient {
         PrivateKey key = getPrivateKey();
         if (key == null) {
             throw new WechatPayException("CONFIG_MISSING",
-                    "微信支付商户私钥未配置（private-key-base64 / private-key-path），无法签名", null);
+                    "微信支付商户私钥未配置（mch=" + props.getMchId()
+                            + "，private-key-base64 / private-key-path 二选一），无法签名", null);
         }
         String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
         String nonce = UUID.randomUUID().toString().replace("-", "");
-        // 签名串 BODY = 文件原始内容（非 multipart 报文）
-        String fileContent = new String(fileBytes, StandardCharsets.ISO_8859_1);
-        String message = "POST\n" + toSignUrl(url) + "\n" + timestamp + "\n" + nonce + "\n" + fileContent + "\n";
+        String message = "POST\n" + toSignUrl(url) + "\n" + timestamp + "\n" + nonce + "\n" + metaJson + "\n";
         String signature = WechatCrypto.sign(key, message);
 
         HttpHeaders headers = new HttpHeaders();
@@ -169,11 +179,39 @@ public class WechatHttpClient {
         bos.write(s.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static String sanitize(String fileName) {
-        if (fileName == null || fileName.isBlank()) {
-            return "file.bin";
+    /**
+     * 生成微信侧上传文件名：只保留合法扩展名，其余用随机 ASCII 名。
+     * 避免中文/引号/控制字符进入 meta JSON 与 multipart 头，导致签名串与报文字节不一致。
+     */
+    private static String normalizeUploadFileName(String fileName) {
+        String name = (fileName == null || fileName.isBlank()) ? "image.jpg" : fileName.trim();
+        int dot = name.lastIndexOf('.');
+        String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT) : "";
+        if (!(ext.equals("jpg") || ext.equals("jpeg") || ext.equals("png") || ext.equals("bmp"))) {
+            throw new WechatPayException("FILE_TYPE_INVALID",
+                    "进件图片仅支持 JPG/JPEG/PNG/BMP，当前文件名: " + name, null);
         }
-        return fileName.replaceAll("[\\r\\n\"\\\\]", "_");
+        return "applyment_" + UUID.randomUUID().toString().replace("-", "") + "." + ext;
+    }
+
+    private static String contentTypeOf(String fileName) {
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".bmp")) {
+            return "image/bmp";
+        }
+        return "image/jpeg";
+    }
+
+    private static String sha256Hex(byte[] bytes) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception e) {
+            throw new IllegalStateException("计算文件 sha256 失败", e);
+        }
     }
 
     private String exchange(String url, HttpMethod method, HttpEntity<?> entity) {

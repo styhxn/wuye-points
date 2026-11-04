@@ -312,6 +312,7 @@ public class ResidentService {
 
         return MyPointsResponse.builder()
                 .residentId(resident.getId())
+                .pointEnabled(company == null || !Boolean.FALSE.equals(company.getPointEnabled()))
                 .pointBalance(resident.getPointBalance() != null ? resident.getPointBalance() : 0)
                 .familyId(resident.getFamilyId())
                 .familyPointBalance(familyPointBalance)
@@ -347,15 +348,18 @@ public class ResidentService {
                     .orElse(BigDecimal.ZERO);
         }
 
+        boolean coinEnabled = true;
         boolean coinDisplayEnabled = true;
         if (StringUtils.hasText(resident.getPropertyCompanyId())) {
-            coinDisplayEnabled = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
-                    .map(PropertyCompany::getCoinDisplayEnabled)
-                    .orElse(true);
+            PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
+                    .orElse(null);
+            coinEnabled = company == null || !Boolean.FALSE.equals(company.getCoinEnabled());
+            coinDisplayEnabled = company == null || !Boolean.FALSE.equals(company.getCoinDisplayEnabled());
         }
 
         return MyCoinsResponse.builder()
                 .residentId(resident.getId())
+                .coinEnabled(coinEnabled)
                 .coinBalance(resident.getCoinBalance() != null ? resident.getCoinBalance() : BigDecimal.ZERO)
                 .coinFrozen(Boolean.TRUE.equals(resident.getCoinFrozen()))
                 .coinHidden(Boolean.TRUE.equals(resident.getCoinHidden()))

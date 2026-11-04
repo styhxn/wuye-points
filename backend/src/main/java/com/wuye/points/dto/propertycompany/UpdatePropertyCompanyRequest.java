@@ -39,6 +39,18 @@ public class UpdatePropertyCompanyRequest {
     @Schema(description = "个人负责人分成比例", example = "0.10")
     private BigDecimal individualLeaderRate;
 
+    @Schema(description = "用户积分预算比例（占抽佣基础额，分账链先扣档；0~1）", example = "0.10")
+    private BigDecimal userPointShareRate;
+
+    @Schema(description = "用户奖励金预算比例（占抽佣基础额，分账链先扣档；0~1）", example = "0.10")
+    private BigDecimal userRewardShareRate;
+
+    @Schema(description = "积分功能开关", example = "true")
+    private Boolean pointEnabled;
+
+    @Schema(description = "物业币功能开关", example = "true")
+    private Boolean coinEnabled;
+
     @Schema(description = "积分展示是否启用", example = "true")
     private Boolean coinDisplayEnabled;
 

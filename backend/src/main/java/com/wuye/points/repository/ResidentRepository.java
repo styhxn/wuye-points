@@ -26,6 +26,9 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
 
     Optional<Resident> findByPhone(String phone);
 
+    /** 同一手机号可能有多条记录（管理端预建 + 小程序登录新建），微信身份认领需要把它们找全。 */
+    List<Resident> findAllByPhone(String phone);
+
     List<Resident> findByFamilyId(String familyId);
 
     List<Resident> findByPropertyCompanyId(String propertyCompanyId);
@@ -42,6 +45,10 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
 
     List<Resident> findByPropertyCompanyIdAndBuildingAndUnitAndStatus(
             String propertyCompanyId, String building, String unit, String status);
+
+    /** 楼长「本单元」成员解析：岗位按 小区+单元 绑定（V21 起与楼栋无关） */
+    List<Resident> findByPropertyCompanyIdAndCommunityIdAndUnitAndStatus(
+            String propertyCompanyId, String communityId, String unit, String status);
 
     List<Resident> findByPropertyCompanyIdAndStatus(String propertyCompanyId, String status);
 

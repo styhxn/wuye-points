@@ -4,29 +4,31 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Service;
 
 import java.security.PublicKey;
 import java.util.Map;
 
 /**
- * 微信支付 APIv3 回调统一验签 + 解密（支付 / 分账 / 提现共用，单一事实来源）。
+ * 微信支付 APIv3 回调验签 + 解密（按商户通道独立实例化：服务商 / 直连）。
  *
  * <p>严格遵循官方规范：
  * <ol>
  *   <li>待签报文串 = {@code Wechatpay-Timestamp + "\n" + Wechatpay-Nonce + "\n" + body + "\n"}；</li>
- *   <li>用 {@code Wechatpay-Serial} 对应的平台证书（{@link WechatCertManager} 自动拉取并缓存）做 SHA256-RSA 验签；</li>
- *   <li>验签通过后用 APIv3 密钥对 resource（algorithm=AEAD_AES_256_GCM）解密，返回业务明文 Map。</li>
+ *   <li>用 {@code Wechatpay-Serial} 对应的公钥做 SHA256-RSA 验签
+ *       （微信支付公钥模式或用平台证书，由 {@link WechatCertManager} 自动适配）；</li>
+ *   <li>验签通过后用该通道的 APIv3 密钥对 resource（algorithm=AEAD_AES_256_GCM）解密，返回业务明文 Map。</li>
  * </ol>
+ *
+ * <p>每个通道必须使用<b>自己的</b>实例：服务商与直连商户的 APIv3 密钥、验签公钥都不同，
+ * 混用会同时导致验签失败与解密失败。</p>
  *
  * @throws WechatNotifyVerifyException 缺头 / 验签失败 / 解密异常时抛出
  */
 @Slf4j
-@Service
 @RequiredArgsConstructor
 public class WechatNotifyService {
 
-    private final WechatPayProperties props;
+    private final WechatMerchantProperties props;
     private final WechatCertManager certManager;
     private final ObjectMapper objectMapper;
 
@@ -42,7 +44,7 @@ public class WechatNotifyService {
         String message = timestamp + "\n" + nonce + "\n" + rawBody + "\n";
         PublicKey cert = certManager.getCertificate(serial);
         if (cert == null || !WechatCrypto.verify(cert, message, signature)) {
-            throw new WechatNotifyVerifyException("微信回调验签失败 serial=" + serial);
+            throw new WechatNotifyVerifyException("微信回调验签失败 mch=" + props.getMchId() + " serial=" + serial);
         }
         try {
             Map<String, Object> envelope = objectMapper.readValue(rawBody, Map.class);

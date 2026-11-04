@@ -56,6 +56,10 @@ public class SplitReconcileScheduler {
             if (!StringUtils.hasText(split.getSplitNo()) || !StringUtils.hasText(split.getWechatOutTradeNo())) {
                 continue;
             }
+            // 电商收付通分账走 /v3/ecommerce/profitsharing，不能拿普通分账查单接口对账
+            if (wechatSplitService.isEcommerceSplitRecord(split)) {
+                continue;
+            }
             // 刚冻结的记录跳过（微信侧可能仍在处理），老记录才查单
             if (split.getCreatedAt() != null && split.getCreatedAt().isAfter(cutoff)) {
                 continue;
@@ -66,11 +70,11 @@ public class SplitReconcileScheduler {
                 if (wx == null) {
                     continue;
                 }
-                // 微信「查询分账结果」的状态字段为 state（PROCESSING/FINISHED）；
-                // 历史实现误读 status 导致字段恒为空、对账静默失效，此处兼容两种写法
-                String wxStatus = wx.getStr("state");
+                // 官方「查询分账结果」应答的状态字段为 status（PROCESSING/FINISHED），
+                // 兼容历史误读的 state 写法，避免旧数据/文档混用导致对账静默失效
+                String wxStatus = wx.getStr("status");
                 if (!StringUtils.hasText(wxStatus)) {
-                    wxStatus = wx.getStr("status");
+                    wxStatus = wx.getStr("state");
                 }
                 if (!StringUtils.hasText(wxStatus)) {
                     continue;

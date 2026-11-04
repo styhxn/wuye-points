@@ -1,5 +1,6 @@
 package com.wuye.points.service;
 
+import com.wuye.points.dto.admin.transaction.TransactionDetailResponse;
 import com.wuye.points.dto.admin.transaction.TransactionItemResponse;
 import com.wuye.points.dto.admin.transaction.TransactionOverviewResponse;
 import com.wuye.points.dto.common.PageResponse;
@@ -22,6 +23,7 @@ import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,6 +46,20 @@ public class AdminTransactionService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_EXPORT_ROWS = 50_000;
     private static final int MAX_KEYWORD_LENGTH = 100;
+    private static final int MAX_DETAIL_ID_LENGTH = 64;
+
+    /** 流水来源表：只给打印页标注数据出处，不参与查询拼接。 */
+    private static final Map<String, String> SOURCE_TABLE = Map.ofEntries(
+            Map.entry("payment", "payment_records"),
+            Map.entry("refund", "payment_records"),
+            Map.entry("wallet", "wallet_flows"),
+            Map.entry("distribution", "distribution_records"),
+            Map.entry("split", "wechat_split_record"),
+            Map.entry("transfer", "merchant_transfers"),
+            Map.entry("settlement", "resident_merchant_settlements"),
+            Map.entry("point", "point_records"),
+            Map.entry("coin", "property_coin_records"),
+            Map.entry("canteen", "canteen_directed_flows"));
 
     private static final Set<String> DIRECTIONS = Set.of("income", "expense", "neutral");
 
@@ -284,6 +300,112 @@ public class AdminTransactionService {
         return new CsvExport(csv.toString(), items.size() >= MAX_EXPORT_ROWS, items.size());
     }
 
+    /**
+     * 单条流水详情（打印/对账用）。
+     *
+     * <p>{@code category} 必传：{@code payment} 与 {@code refund} 共用同一条
+     * {@code payment_records.id}，只给 ID 分不清是收款还是退款，打出来的单子方向会反。</p>
+     */
+    @Transactional(readOnly = true)
+    public TransactionDetailResponse detail(String category, String id) {
+        roleGuard.requireAnyRole("platform_admin");
+        if (!StringUtils.hasText(id)) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "id不能为空");
+        }
+        String trimmedId = id.trim();
+        if (trimmedId.length() > MAX_DETAIL_ID_LENGTH) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "id长度不能超过" + MAX_DETAIL_ID_LENGTH + "个字符");
+        }
+        String normalizedCategory = normalizeCategory(category);
+        if (normalizedCategory == null) {
+            throw new BizException(ErrorCode.PARAM_MISSING,
+                    "category不能为空，可选: payment/refund/wallet/distribution/split/"
+                            + "withdrawal/transfer/settlement/point/coin/canteen");
+        }
+
+        List<TransactionItemResponse> rows = queryItems(ledgerSql.byId(normalizedCategory, trimmedId));
+        if (rows.isEmpty()) {
+            throw new BizException(ErrorCode.TRANSACTION_NOT_FOUND);
+        }
+        TransactionItemResponse row = rows.get(0);
+        String relatedKeyword = StringUtils.hasText(row.getOrderId()) ? row.getOrderId() : row.getBizId();
+        return TransactionDetailResponse.builder()
+                .transaction(row)
+                .sourceTable(sourceTable(row))
+                .relatedKeyword(relatedKeyword)
+                .links(buildLinks(row, relatedKeyword))
+                .build();
+    }
+
+    private String sourceTable(TransactionItemResponse row) {
+        if ("withdrawal".equals(row.getCategory())) {
+            if ("merchant_withdrawal".equals(row.getBizType())) {
+                return "merchant_withdrawals";
+            }
+            if ("coin_withdrawal".equals(row.getBizType())) {
+                return "coin_withdrawals";
+            }
+            return "withdrawal_records";
+        }
+        return SOURCE_TABLE.get(row.getCategory());
+    }
+
+    /**
+     * 关联接口指引：只列后端已存在、且 platform_admin 可访问的路径，
+     * 打印页顺着 links 取数即可拼出整张单据，不需要前端自己猜路径。
+     */
+    private List<TransactionDetailResponse.Link> buildLinks(TransactionItemResponse row, String relatedKeyword) {
+        List<TransactionDetailResponse.Link> links = new ArrayList<>();
+        if (StringUtils.hasText(relatedKeyword)) {
+            links.add(link("同一单据的全部流水",
+                    "/admin/transactions?keyword=" + relatedKeyword + "&pageSize=100"));
+        }
+        String orderId = row.getOrderId();
+        if (StringUtils.hasText(orderId)) {
+            links.add(link("订单详情", "/orders/" + orderId));
+        }
+        switch (row.getCategory()) {
+            case "payment", "refund" -> {
+                if (StringUtils.hasText(orderId)) {
+                    links.add(link("退货审核列表", "/admin/orders/refunds?keyword=" + orderId));
+                }
+            }
+            case "wallet", "distribution", "split" -> {
+                if (StringUtils.hasText(orderId)) {
+                    links.add(link("订单分成记录", "/distribution/records?orderId=" + orderId));
+                }
+            }
+            case "withdrawal" -> {
+                if ("merchant_withdrawal".equals(row.getBizType()) && StringUtils.hasText(row.getPartyId())) {
+                    links.add(link("商家提现审核列表",
+                            "/admin/merchant-withdrawals?merchantId=" + row.getPartyId()));
+                } else if (StringUtils.hasText(row.getBizId())) {
+                    links.add(link("多角色提现审核列表", "/admin/role-withdrawals?keyword=" + row.getBizId()));
+                }
+            }
+            case "settlement" -> links.add(link("业主小店结算明细", "/admin/resident-merchant-settlements"));
+            case "canteen" -> {
+                if (StringUtils.hasText(row.getPartyId())) {
+                    links.add(link("食堂定向余额流水",
+                            "/admin/canteen/flows?residentId=" + row.getPartyId()));
+                }
+            }
+            case "point", "coin" -> {
+                if (StringUtils.hasText(row.getPartyId())) {
+                    links.add(link("住户详情", "/residents/" + row.getPartyId()));
+                }
+            }
+            default -> {
+            }
+        }
+        return links;
+    }
+
+    private static TransactionDetailResponse.Link link(String label, String path) {
+        return TransactionDetailResponse.Link.builder().label(label).method("GET").path(path).build();
+    }
+
     private QueryContext prepare(String propertyCompanyId,
                                  String startDate,
                                  String endDate,
@@ -333,7 +455,7 @@ public class AdminTransactionService {
         }
 
         Filters filters = new Filters(normalizedCategory, normalizedGroup, normalizedDirection,
-                normalizedStatus, normalizedKeyword, resolvedPropertyCompanyId);
+                normalizedStatus, normalizedKeyword, resolvedPropertyCompanyId, null);
         return new QueryContext(filters, start, end);
     }
 

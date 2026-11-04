@@ -289,12 +289,12 @@ class V823FrontendFeedbackTest extends ControllerTestBase {
     }
 
     @Test
-    @DisplayName("2.2 POST /merchant/ads/{id}/repay：校验归属，微信未开启时明确报错")
+    @DisplayName("2.2 POST /merchant/ads/{id}/repay：校验归属，微信通道未配置时明确报错")
     void adRepay_shouldValidateOwnershipAndSwitch() throws Exception {
         mockMvc.perform(post("/merchant/ads/mad_v823_pending/repay")
                         .header("Authorization", token(MERCHANT_USER, "merchant")))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message", containsString("微信支付暂未开放")));
+                .andExpect(jsonPath("$.message", containsString("在线支付未开通")));
 
         mockMvc.perform(post("/merchant/ads/mad_v823_pending/repay")
                         .header("Authorization", token(DIST_USER, "merchant")))

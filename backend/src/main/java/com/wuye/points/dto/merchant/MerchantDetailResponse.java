@@ -119,11 +119,41 @@ public class MerchantDetailResponse {
     @Schema(description = "盈利余额口径：shop=本店铺（固定值，供前端判断）", example = "shop")
     private String profitScope;
 
+    @Schema(description = "结算模式：internal=内部收益（技师店/组长店/业主小店）；split=现金与物业币分账", example = "split")
+    private String settlementMode;
+
+    @Schema(description = "平台内部现金可提现（直连代收现金；服务商/电商现金已在商家微信商户号，不在此列）", example = "0.00")
+    private java.math.BigDecimal cashWithdrawableAmount;
+
+    @Schema(description = "物业币应收累计（已完成订单中商家应得但特约商户号无现金的部分）", example = "320.00")
+    private java.math.BigDecimal coinReceivableAmount;
+
+    @Schema(description = "物业币应收已结算金额", example = "120.00")
+    private java.math.BigDecimal coinSettledAmount;
+
+    @Schema(description = "物业币应收在途金额（pending/approved）", example = "50.00")
+    private java.math.BigDecimal coinPendingAmount;
+
+    @Schema(description = "物业币应收可结算余额", example = "150.00")
+    private java.math.BigDecimal coinAvailableAmount;
+
+    @Schema(description = "已由微信服务商/电商分账结算到商家商户号的现金（仅供对账，不走平台内部提现）", example = "880.00")
+    private java.math.BigDecimal wechatCashSettledAmount;
+
+    @Schema(description = "商家累计应得（商品金额 − 抽佣 − 商家承担的配送补贴）", example = "1200.00")
+    private java.math.BigDecimal totalIncomeAmount;
+
     @Schema(description = "累计订单总数（不含已取消/已退款）", example = "128")
     private Long totalOrders;
 
+    @Schema(description = "累计已完成订单金额（已完成订单 totalAmount 合计；仅商家本人/管理端查询时返回）", example = "12500.00")
+    private java.math.BigDecimal totalRevenue;
+
     @Schema(description = "商家购分账户剩余积分（与 /merchant/points/* 同一账户）", example = "5000")
     private Integer pointBalance;
+
+    @Schema(description = "积分兑换比（1元=X积分）；配置缺失时按系统默认 100 返回", example = "100.00")
+    private java.math.BigDecimal pointExchangeRate;
 
     @Schema(description = "盈利余额（店铺口径，不含楼长分成/业主卖货收益；与 shopWithdrawableAmount 同值）", example = "1280.50")
     private java.math.BigDecimal profitBalance;

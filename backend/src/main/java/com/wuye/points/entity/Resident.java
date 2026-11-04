@@ -129,9 +129,13 @@ public class Resident extends BaseEntity {
     /**
      * 令牌版本号：登出/强制下线时 +1，旧 access/refresh token 立即失效。
      * 旧数据默认 0；历史 token 不带 tv 声明时走兼容分支。
+     *
+     * <p>必须给实体默认值：库里该列是 {@code INT NOT NULL DEFAULT 0}，而 Hibernate 会把未赋值的
+     * 字段以显式 NULL 写进 INSERT，绕过列默认值，导致新建账号报「字段 token_version 不能为空」——
+     * 微信首次登录建号与管理端建角色账号都会踩到（同 merchants 的 NOT NULL 默认值处理）。
      */
     @Column(name = "token_version")
-    private Integer tokenVersion;
+    private Integer tokenVersion = 0;
 
     /** 提现是否被冻结 */
     @Column(name = "withdrawal_blocked")

@@ -6,6 +6,7 @@ import com.wuye.points.entity.Coordinator;
 import com.wuye.points.entity.IndividualLeader;
 import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.repository.ActivityLeaderIdentityRepository;
+import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
@@ -33,6 +34,7 @@ class LeaderIdentityGuardTest {
     private SectorLeaderRepository sectorLeaderRepository;
     private IndividualLeaderRepository individualLeaderRepository;
     private ActivityLeaderIdentityRepository activityLeaderIdentityRepository;
+    private BuildingLeaderRepository buildingLeaderRepository;
     private LeaderIdentityGuard guard;
 
     @BeforeEach
@@ -41,8 +43,9 @@ class LeaderIdentityGuardTest {
         sectorLeaderRepository = mock(SectorLeaderRepository.class);
         individualLeaderRepository = mock(IndividualLeaderRepository.class);
         activityLeaderIdentityRepository = mock(ActivityLeaderIdentityRepository.class);
+        buildingLeaderRepository = mock(BuildingLeaderRepository.class);
         guard = new LeaderIdentityGuard(coordinatorRepository, sectorLeaderRepository,
-                individualLeaderRepository, activityLeaderIdentityRepository);
+                individualLeaderRepository, activityLeaderIdentityRepository, buildingLeaderRepository);
     }
 
     @AfterEach

@@ -34,7 +34,7 @@ public class AdminMerchantService {
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
-    private final EcommerceApplymentService applymentService;
+    private final MerchantApplymentService applymentService;
 
     @Transactional
     public KickMerchantResponse kickMerchant(String merchantId, KickMerchantRequest request) {
@@ -134,12 +134,12 @@ public class AdminMerchantService {
     // 微信进件（电商收付通阶段1）
     // ---------------------------------------------------------------------
 
-    /** 查看商家进件资料与状态（运营后台）。 */
-    @Transactional(readOnly = true)
+    /** 查看商家进件资料与状态（运营后台；审核中会顺带刷新微信状态）。 */
+    @Transactional
     public ApplymentDetailResponse getApplyment(String merchantId) {
         requireAnyAdminRole();
         requireMerchantInScope(merchantId);
-        return applymentService.getApplyment(merchantId);
+        return applymentService.getApplymentForAdmin(merchantId);
     }
 
     /** 手动触发商家进件提交（运营后台；默认进件触发方式）。 */
@@ -147,7 +147,7 @@ public class AdminMerchantService {
     public ApplymentDetailResponse submitApplyment(String merchantId) {
         requireAnyAdminRole();
         requireMerchantInScope(merchantId);
-        return applymentService.submitApplyment(merchantId);
+        return applymentService.submitApplymentForAdmin(merchantId);
     }
 
     /** 手动查询微信侧进件状态并推进本地状态机（运营后台）。 */
@@ -158,7 +158,7 @@ public class AdminMerchantService {
         MerchantApplyment applyment = applymentRepository.findByMerchantId(merchantId)
                 .orElseThrow(() -> new BizException(ErrorCode.APPLYMENT_NOT_FOUND));
         applymentService.refreshApplymentStatus(applyment);
-        return applymentService.getApplyment(merchantId);
+        return applymentService.getApplymentForAdmin(merchantId);
     }
 
     /** 设置/取消商家官方推荐（运营后台）。 */

@@ -61,12 +61,14 @@ public class MerchantService {
     private final ResidentRepository residentRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
     private final MerchantConverter merchantConverter;
+    private final MerchantCategoryService merchantCategoryService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final WithdrawableService withdrawableService;
     private final UnifiedEarningsService unifiedEarningsService;
     private final OrderRepository orderRepository;
     private final MerchantPointPurchaseRepository merchantPointPurchaseRepository;
+    private final MerchantCoinReceivableService merchantCoinReceivableService;
 
     @Transactional(readOnly = true)
     public PageResponse<MerchantListItemResponse> listMerchants(
@@ -427,7 +429,21 @@ public class MerchantService {
         response.setProfitBalance(shopWithdrawable);
         response.setProfitScope("shop");
         response.setWithdrawableBlocked(withdrawable.withdrawalBlocked());
+        MerchantCoinReceivableService.MerchantIncome incomeSplit =
+                merchantCoinReceivableService.calc(merchant);
+        boolean internal = merchantCoinReceivableService.isInternalEarningsMerchant(merchant);
+        response.setSettlementMode(internal ? "internal" : "split");
+        response.setCashWithdrawableAmount(shopWithdrawable);
+        response.setCoinReceivableAmount(incomeSplit.coinReceivableAmount());
+        response.setCoinSettledAmount(incomeSplit.coinSettledAmount());
+        response.setCoinPendingAmount(incomeSplit.coinPendingAmount());
+        response.setCoinAvailableAmount(incomeSplit.coinAvailableAmount());
+        response.setWechatCashSettledAmount(incomeSplit.wechatCashAmount());
+        response.setTotalIncomeAmount("technician".equals(merchant.getMerchantSource())
+                ? withdrawable.totalRevenue()
+                : incomeSplit.totalIncomeAmount());
         response.setTotalOrders(orderRepository.countAllByMerchantId(merchant.getId()));
+        response.setTotalRevenue(withdrawable.totalRevenue());
         response.setPointBalance((int) merchantPointPurchaseRepository.sumRemainingPointsByMerchantId(merchant.getId()));
         return response;
     }
@@ -626,7 +642,8 @@ public class MerchantService {
     }
 
     private void validateListFilters(String category, String merchantLevel) {
-        if (StringUtils.hasText(category) && !RoleGuard.MERCHANT_CATEGORIES.contains(category)) {
+        // 过滤参数按字典全量（含 inactive）放行：历史商家可能仍挂在已下架品类上，拦掉会让列表查不出来
+        if (StringUtils.hasText(category) && !merchantCategoryService.knownCategoryNames().contains(category)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
         }
         if (StringUtils.hasText(merchantLevel) && !RoleGuard.MERCHANT_LEVELS.contains(merchantLevel)) {
@@ -635,8 +652,9 @@ public class MerchantService {
     }
 
     private void validateCreateRequest(CreateMerchantRequest request) {
-        if (!RoleGuard.MERCHANT_CATEGORIES.contains(request.getCategory())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "category值无效");
+        if (!merchantCategoryService.activeCategoryNames().contains(request.getCategory())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "category值无效，可选品类见 GET /merchant-categories");
         }
         if (request.getCommissionRate() != null
                 && (request.getCommissionRate().compareTo(BigDecimal.ZERO) < 0
