@@ -31,6 +31,9 @@ public interface CoordinatorRepository extends JpaRepository<Coordinator, String
 
     Optional<Coordinator> findByResidentIdAndPropertyCompanyId(String residentId, String propertyCompanyId);
 
+    /** 该住户的全部历史统筹身份（含已停用/跨物业），供「我的分账所得」聚合使用。 */
+    List<Coordinator> findAllByResidentId(String residentId);
+
     Optional<Coordinator> findFirstByPropertyCompanyIdAndStatusOrderByCommissionRateDesc(
             String propertyCompanyId, String status);
 

@@ -3,6 +3,7 @@ package com.wuye.points.controller;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.message.BroadcastMessageRequest;
+import com.wuye.points.dto.message.BlockedNeighborItemResponse;
 import com.wuye.points.dto.message.ConversationItemResponse;
 import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
@@ -29,6 +30,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 消息模块
  */
@@ -52,10 +55,25 @@ public class MessageController {
         return ApiResponse.success(messageService.searchNeighbors(page, pageSize, keyword, communityId, building, sort));
     }
 
-    @Operation(summary = "获取邻居搜索限制", description = "获取邻居搜索限制")
+    @Operation(summary = "获取邻居私聊限额", description = "当天私聊总量限额与已用次数（条目27：口径为当天总量，跨所有邻居合并计数）")
     @GetMapping("/neighbor-limit")
     public ApiResponse<NeighborLimitResponse> getNeighborLimit() {
         return ApiResponse.success(messageService.getNeighborLimit());
+    }
+
+    @Operation(summary = "获取邻居私聊限额（别名）",
+            description = "与 GET /messages/neighbor-limit 同一份数据。小程序聊天收件箱按本路径请求，"
+                    + "此前后端没有该路由，前端只能静默回退（条目27）")
+    @GetMapping("/contact-quota")
+    public ApiResponse<NeighborLimitResponse> getContactQuota() {
+        return ApiResponse.success(messageService.getNeighborLimit());
+    }
+
+    @Operation(summary = "我的屏蔽名单",
+            description = "返回当前住户屏蔽掉的邻居（条目28：此前无任何查询接口，重新登录后前端恢复不出屏蔽状态）")
+    @GetMapping("/neighbors/blocked")
+    public ApiResponse<List<BlockedNeighborItemResponse>> listBlockedNeighbors() {
+        return ApiResponse.success(messageService.listBlockedNeighbors());
     }
 
     @Operation(summary = "邻居私聊", description = "邻居私聊")

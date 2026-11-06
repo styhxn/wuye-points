@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -192,7 +193,7 @@ public class PropertyFeeReportService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, r -> r, (a, b) -> a));

@@ -124,6 +124,14 @@ public class AdminCoinWithdrawalService {
         String currentStatus = withdrawal.getAuditStatus();
         assertTransition(currentStatus, request.getAuditResult());
 
+        // 条目23：出金前复检封禁状态——「先提申请、后被封禁」的单子不能再放行。
+        if ("approved".equals(request.getAuditResult())) {
+            Merchant merchant = merchantRepository.findById(withdrawal.getMerchantId()).orElse(null);
+            if (merchant != null && Boolean.TRUE.equals(merchant.getWithdrawalBlocked())) {
+                throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+            }
+        }
+
         if ("rejected".equals(request.getAuditResult())
                 && ("pending".equals(currentStatus) || "approved".equals(currentStatus))) {
             refundCoins(withdrawal);
@@ -251,8 +259,12 @@ public class AdminCoinWithdrawalService {
     private void refundCoins(CoinWithdrawal withdrawal) {
         Merchant merchant = merchantRepository.findById(withdrawal.getMerchantId())
                 .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
-        Resident merchantUser = residentRepository.findByPhone(merchant.getContactPhone())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "商家账号不存在"));
+        Resident merchantUser = StringUtils.hasText(merchant.getResidentId())
+                ? residentRepository.findById(merchant.getResidentId()).orElse(null)
+                : residentRepository.findByPhone(merchant.getContactPhone()).orElse(null);
+        if (merchantUser == null) {
+            throw new BizException(ErrorCode.RESIDENT_NOT_FOUND, "商家账号不存在");
+        }
 
         propertyCoinService.earnCoins(
                 merchantUser,

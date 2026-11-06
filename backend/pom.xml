@@ -21,6 +21,8 @@
         <java.version>17</java.version>
         <jjwt.version>0.12.5</jjwt.version>
         <hutool.version>5.8.27</hutool.version>
+        <!-- hutool QrCodeUtil 的运行时依赖：生成收款码/签约码二维码图片 -->
+        <zxing.version>3.5.3</zxing.version>
         <wechatpay.version>0.2.12</wechatpay.version>
         <!-- 与 spring-boot-dependencies 3.2.x 内置的 Flyway 版本保持一致，避免运行期不兼容 -->
         <flyway.version>9.22.3</flyway.version>
@@ -127,6 +129,18 @@
             <groupId>cn.hutool</groupId>
             <artifactId>hutool-all</artifactId>
             <version>${hutool.version}</version>
+        </dependency>
+
+        <!-- 二维码图片生成：hutool QrCodeUtil 运行时需要 zxing -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>${zxing.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>${zxing.version}</version>
         </dependency>
 
         <!-- 微信支付 SDK -->

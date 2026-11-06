@@ -32,13 +32,19 @@ public class AdminNavigationService {
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional(readOnly = true)
-    public List<NavigationItem> list(String propertyCompanyId) {
+    public List<NavigationItem> list(String propertyCompanyId, String module) {
         roleGuard.requireAnyRole("property_admin", "platform_admin");
         String pcId = propertyCompanyId != null ? propertyCompanyId : UserContext.currentPropertyCompanyId();
+        List<NavigationItem> items;
         if (!StringUtils.hasText(pcId)) {
-            return navigationItemRepository.findByPropertyCompanyIdIsNullAndEnabledTrueOrderBySortOrderAsc();
+            items = navigationItemRepository.findByPropertyCompanyIdIsNullAndEnabledTrueOrderBySortOrderAsc();
+        } else {
+            items = navigationItemRepository.findByPropertyCompanyIdOrderBySortOrderAsc(pcId);
         }
-        return navigationItemRepository.findByPropertyCompanyIdOrderBySortOrderAsc(pcId);
+        if (StringUtils.hasText(module)) {
+            items = items.stream().filter(i -> module.equals(i.getModule())).toList();
+        }
+        return items;
     }
 
     @Transactional
@@ -72,21 +78,46 @@ public class AdminNavigationService {
 
     /**
      * 手机端拉取导航：可按模块过滤（home/service/activity/resident_merchant），
-     * 优先本物业公司配置，未配置时回落平台默认。
+     * 优先本物业公司配置，该模块一条都没配时回落平台默认。
+     *
+     * <p>条目31：小程序首页九宫格调用时只传 {@code module=home}、不传 position，
+     * 并把返回当成整组导航直接渲染。此前 position 缺省被固定成 bottom，
+     * 管理端配在 top 的导航项在首页永远查不到，表现就是「后台配好并启用了，首页一个都不显示，
+     * 只有显式按顶部查才出现」。现在缺省不限位置，只有显式传 position 才过滤。</p>
+     *
+     * <p>回落判定按模块粒度做：本物业配了别的模块（如 service）不该把 home 的平台默认项一起挡掉。</p>
      */
     @Transactional(readOnly = true)
-    public List<NavigationItem> listForApp(String module) {
+    public List<NavigationItem> listForApp(String module, String position) {
         String pcId = UserContext.currentPropertyCompanyId();
-        List<NavigationItem> items = StringUtils.hasText(pcId)
+        List<NavigationItem> tenantItems = StringUtils.hasText(pcId)
                 ? navigationItemRepository.findByPropertyCompanyIdAndEnabledTrueOrderBySortOrderAsc(pcId)
                 : List.of();
-        if (items.isEmpty()) {
-            items = navigationItemRepository.findByPropertyCompanyIdIsNullAndEnabledTrueOrderBySortOrderAsc();
-        }
+        List<NavigationItem> platformItems =
+                navigationItemRepository.findByPropertyCompanyIdIsNullAndEnabledTrueOrderBySortOrderAsc();
+
+        List<NavigationItem> candidates = tenantItems;
         if (StringUtils.hasText(module)) {
-            items = items.stream().filter(i -> module.equals(i.getModule())).toList();
+            candidates = byModule(tenantItems, module);
+            if (candidates.isEmpty()) {
+                candidates = byModule(platformItems, module);
+            }
+        } else if (candidates.isEmpty()) {
+            candidates = platformItems;
         }
-        return items;
+
+        if (StringUtils.hasText(position)) {
+            candidates = filterByPosition(candidates, position);
+        }
+        return candidates;
+    }
+
+    private List<NavigationItem> byModule(List<NavigationItem> items, String module) {
+        return items.stream().filter(i -> module.equals(i.getModule())).toList();
+    }
+
+    private List<NavigationItem> filterByPosition(List<NavigationItem> items, String position) {
+        return items.stream().filter(i -> position.equals(i.getPosition())).toList();
     }
 
     private void apply(NavigationItem item, NavigationItem request) {

@@ -3,8 +3,10 @@ package com.wuye.points.controller;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.distribution.DistributionCalculateResponse;
+import com.wuye.points.dto.distribution.DistributionEarningsResponse;
 import com.wuye.points.dto.distribution.DistributionRecordItemResponse;
 import com.wuye.points.dto.distribution.DistributionStatsResponse;
+import com.wuye.points.service.DistributionEarningsService;
 import com.wuye.points.service.DistributionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -26,6 +28,25 @@ import java.math.BigDecimal;
 public class DistributionController {
 
     private final DistributionService distributionService;
+    private final DistributionEarningsService distributionEarningsService;
+
+    @Operation(summary = "我的分账所得",
+            description = "按登录住户的全部历史身份（含已停用/跨物业）聚合：summary[] 按角色给出应付分成与已到账，"
+                    + "list[] 为明细分页。物业公司只展示不参与过滤；商家/技师商品收入不计入。"
+                    + "Auth: Required，仅认 token 内人员 ID")
+    @GetMapping("/distribution/earnings/mine")
+    public ApiResponse<DistributionEarningsResponse> listMyEarnings(
+            @Parameter(description = "角色筛选，可逗号分隔：COORDINATOR/SECTOR_LEADER/INDIVIDUAL_LEADER/BUILDING_LEADER/PROPERTY_MANAGER")
+            @RequestParam(required = false) String role,
+            @Parameter(description = "开始时间（ISO8601 UTC，含）", example = "2026-01-01T00:00:00.000Z")
+            @RequestParam(required = false) String startDate,
+            @Parameter(description = "结束时间（ISO8601 UTC，不含）", example = "2026-12-01T00:00:00.000Z")
+            @RequestParam(required = false) String endDate,
+            @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
+            @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize) {
+        return ApiResponse.success(
+                distributionEarningsService.listMine(role, startDate, endDate, page, pageSize));
+    }
 
     @Operation(summary = "分成记录列表", description = "分成记录列表。Auth: Required | Roles: coordinator, property_admin, platform_admin")
     @GetMapping("/distribution/records")

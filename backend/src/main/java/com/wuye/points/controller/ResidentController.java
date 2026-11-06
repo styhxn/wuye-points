@@ -8,6 +8,7 @@ import com.wuye.points.dto.resident.CreateResidentRequest;
 import com.wuye.points.dto.resident.DeleteAccountResponse;
 import com.wuye.points.dto.resident.MyCoinsResponse;
 import com.wuye.points.dto.resident.MyPointsResponse;
+import com.wuye.points.dto.resident.CancelDeletionResponse;
 import com.wuye.points.dto.resident.RequestAccountDeletionRequest;
 import com.wuye.points.dto.resident.ResidentDetailResponse;
 import com.wuye.points.dto.resident.ResidentListItemResponse;
@@ -192,6 +193,17 @@ public class ResidentController {
     public ApiResponse<DeleteAccountResponse> requestAccountDeletion(
             @Valid @RequestBody RequestAccountDeletionRequest request) {
         return ApiResponse.success(residentService.requestAccountDeletion(request));
+    }
+
+    /**
+     * 撤回账号注销申请（冷静期内）
+     * Auth: Required | Roles: resident
+     */
+    @Operation(summary = "撤回账号注销申请",
+            description = "15 天冷静期内自助撤回，账号回到 active。需登录，角色：resident")
+    @PostMapping("/me/delete-request/cancel")
+    public ApiResponse<CancelDeletionResponse> cancelAccountDeletion() {
+        return ApiResponse.success(residentService.cancelAccountDeletion());
     }
 
     @Operation(summary = "提交楼栋变更申请",

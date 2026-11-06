@@ -53,6 +53,7 @@ import com.wuye.points.util.FeatureSwitchGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -70,6 +71,7 @@ import java.util.List;
 import java.util.Set;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class PropertyCoinService {
 
@@ -274,12 +276,16 @@ public class PropertyCoinService {
         if (!StringUtils.hasText(resident.getOpenid())) {
             throw new BizException(ErrorCode.PARAM_MISSING, "openid不能为空（微信小程序支付需要）");
         }
-        if (!paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
-                PaymentBizType.COIN_RECHARGE, resident.getId(), "pending").isEmpty()) {
-            throw new BizException(ErrorCode.ORDER_CONFLICT, "充值支付处理中，请勿重复提交");
-        }
-
         BigDecimal amount = request.getAmount();
+        // 条目11：上一次拉起支付后取消/放弃，会留下一条 pending 流水。以前一律回
+        // 「充值支付处理中，请勿重复提交」，要等 30~40 分钟超时收尾才能再充，用户没法二次购买。
+        // 修法是先关掉旧流水（含微信侧关单）再新建；刻意不复用旧记录——超时收尾按 created_at 判断，
+        // 复用一条已接近超时的流水会让用户刚付完就被收尾，走到「已关单但已支付 → 原路退款」。
+        paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
+                        PaymentBizType.COIN_RECHARGE, resident.getId(), "pending")
+                .forEach(record -> wechatPayService.closeForRetry(record, "物业币充值",
+                        "上一笔充值已支付成功，正在到账，请稍后再发起新的充值"));
+
         PaymentRecord record = wechatPayService.createIntent(
                 PaymentBizType.COIN_RECHARGE,
                 resident.getId(),
@@ -292,13 +298,18 @@ public class PropertyCoinService {
                 amount);
         WechatJsPayParams payParams = wechatPayService.miniPay(record, resident.getOpenid(), "物业币充值");
 
+        return toRechargeResponse(record, payParams, resident.getId());
+    }
+
+    private RechargeCoinResponse toRechargeResponse(
+            PaymentRecord record, WechatJsPayParams payParams, String residentId) {
         return RechargeCoinResponse.builder()
                 .paymentRecordId(record.getId())
                 .outTradeNo(record.getOutTradeNo())
                 .status("pending")
                 .payParams(payParams)
-                .amount(amount)
-                .residentId(resident.getId())
+                .amount(record.getCashAmount())
+                .residentId(residentId)
                 .build();
     }
 
@@ -552,27 +563,49 @@ public class PropertyCoinService {
         roleGuard.requireAnyRole("resident");
         Resident resident = getActiveResident(UserContext.currentUserId());
 
-        String conditionCode = CoinUseCondition.NONE.getCode();
-        Integer pointThreshold = 0;
-        if (StringUtils.hasText(resident.getPropertyCompanyId())) {
-            PropertyCompany company = propertyCompanyRepository.findById(resident.getPropertyCompanyId())
-                    .orElse(null);
-            if (company != null && StringUtils.hasText(company.getCoinUseCondition())) {
-                conditionCode = company.getCoinUseCondition();
-                pointThreshold = company.getCoinPointThreshold() != null
-                        ? company.getCoinPointThreshold() : 0;
-            }
-        }
-
-        boolean satisfied = resolveUseConditionSatisfied(resident, conditionCode, pointThreshold);
+        CoinCondition condition = resolveCompanyCondition(resident);
+        boolean satisfied = resolveUseConditionSatisfied(resident, condition.code(), condition.pointThreshold());
         boolean frozen = Boolean.TRUE.equals(resident.getCoinFrozen());
         return CoinUseConditionResponse.builder()
-                .condition(conditionCode)
-                .pointThreshold(conditionCode.equals(CoinUseCondition.POINT_THRESHOLD.getCode())
-                        ? pointThreshold : null)
+                .condition(condition.code())
+                .pointThreshold(condition.code().equals(CoinUseCondition.POINT_THRESHOLD.getCode())
+                        ? condition.pointThreshold() : null)
                 .satisfied(satisfied)
                 .eligible(satisfied && !frozen)
                 .build();
+    }
+
+    /**
+     * §79.2 业务规则「消费物业币时校验」：条件不满足直接拒绝，判定口径与
+     * {@code GET /property-coins/use-condition} 完全一致，避免前端展示了、后端却照样放行。
+     */
+    public void assertUseConditionSatisfied(Resident resident) {
+        if (!isUseConditionSatisfied(resident)) {
+            throw new BizException(ErrorCode.COIN_USE_CONDITION_NOT_SATISFIED);
+        }
+    }
+
+    /** 试算用：只回答是否满足，不抛错。 */
+    public boolean isUseConditionSatisfied(Resident resident) {
+        CoinCondition condition = resolveCompanyCondition(resident);
+        return resolveUseConditionSatisfied(resident, condition.code(), condition.pointThreshold());
+    }
+
+    private CoinCondition resolveCompanyCondition(Resident resident) {
+        String code = CoinUseCondition.NONE.getCode();
+        int pointThreshold = 0;
+        if (resident != null && StringUtils.hasText(resident.getPropertyCompanyId())) {
+            PropertyCompany company = propertyCompanyRepository
+                    .findById(resident.getPropertyCompanyId()).orElse(null);
+            if (company != null && StringUtils.hasText(company.getCoinUseCondition())) {
+                code = company.getCoinUseCondition();
+                pointThreshold = company.getCoinPointThreshold() != null ? company.getCoinPointThreshold() : 0;
+            }
+        }
+        return new CoinCondition(code, pointThreshold);
+    }
+
+    private record CoinCondition(String code, int pointThreshold) {
     }
 
     private boolean resolveUseConditionSatisfied(Resident resident, String conditionCode, int pointThreshold) {

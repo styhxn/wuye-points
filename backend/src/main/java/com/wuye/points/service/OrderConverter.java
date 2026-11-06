@@ -91,6 +91,7 @@ public class OrderConverter {
                 .distributorId(order.getDistributorId())
                 .residentMerchantId(order.getResidentMerchantId())
                 .settlementOwner(order.getSettlementOwner() != null ? order.getSettlementOwner() : "merchant")
+                .listingId(order.getListingId())
                 .build();
     }
 
@@ -150,6 +151,10 @@ public class OrderConverter {
                 .fulfillmentModeLabel(base.getFulfillmentModeLabel())
                 .fulfillmentDeadline(base.getFulfillmentDeadline())
                 .fulfillmentChosenAt(base.getFulfillmentChosenAt())
+                // 详情页也要能判别「业主小店代销单」：sourceType + listingId 决定试算走
+                // /orders/from-listing/preview 还是 /orders/preview（后者查不到 dpr_ 货源商品）。
+                .sourceType(base.getSourceType())
+                .listingId(base.getListingId())
                 .residentId(order.getResidentId())
                 .propertyCompanyId(order.getPropertyCompanyId())
                 .deliveryAddress(order.getAddress())

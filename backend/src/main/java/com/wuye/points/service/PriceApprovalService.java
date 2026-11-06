@@ -10,12 +10,14 @@ import com.wuye.points.dto.priceapproval.PriceApprovalDetailResponse;
 import com.wuye.points.dto.priceapproval.PriceApprovalListItemResponse;
 import com.wuye.points.entity.IndividualLeader;
 import com.wuye.points.entity.Merchant;
+import com.wuye.points.entity.MerchantPropertyConfig;
 import com.wuye.points.entity.PriceApproval;
 import com.wuye.points.entity.Product;
 import com.wuye.points.entity.PropertyCompany;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.IndividualLeaderRepository;
+import com.wuye.points.repository.MerchantPropertyConfigRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.PriceApprovalRepository;
 import com.wuye.points.repository.ProductRepository;
@@ -26,6 +28,7 @@ import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -34,9 +37,13 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PriceApprovalService {
@@ -45,10 +52,14 @@ public class PriceApprovalService {
 
     private static final BigDecimal MIN_PRODUCT_PRICE = new BigDecimal("0.01");
 
+    /** 审批落库金额上限（配送费等），与商家侧字段口径保持一致 */
+    private static final BigDecimal MAX_APPROVAL_AMOUNT = new BigDecimal("9999.99");
+
     private final PriceApprovalRepository priceApprovalRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ProductRepository productRepository;
     private final MerchantRepository merchantRepository;
+    private final MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
     private final RoleGuard roleGuard;
     private final PermissionGuard permissionGuard;
@@ -111,15 +122,20 @@ public class PriceApprovalService {
 
     /**
      * 审批通过后按 itemType 落库。
-     * 当前支持：resident_share_rate（分成比例）、product_price（商品价格）。
+     * 当前支持：resident_share_rate（分成比例）、product_price（商品价格）、
+     * merchant_distribution（商家平台抽佣）、delivery_fee（商家配送费）。
+     *
+     * <p>未落库的类型（merchant_ad / property_fee_price）在此显式告警，
+     * 避免「审批单显示已通过、业务参数一点没动」再次无声发生。</p>
      */
     private void applyApprovedChanges(PriceApproval approval) {
-        if ("resident_share_rate".equals(approval.getItemType())) {
-            applyResidentShareRate(approval);
-        } else if ("product_price".equals(approval.getItemType())) {
-            applyProductPrice(approval);
-        } else if ("merchant_distribution".equals(approval.getItemType())) {
-            applyMerchantDistribution(approval);
+        switch (approval.getItemType() == null ? "" : approval.getItemType()) {
+            case "resident_share_rate" -> applyResidentShareRate(approval);
+            case "product_price" -> applyProductPrice(approval);
+            case "merchant_distribution" -> applyMerchantDistribution(approval);
+            case "delivery_fee" -> applyDeliveryFee(approval);
+            default -> log.warn("[价格审批] itemType={} 无落库实现，审批状态已置为 approved 但业务参数未变更 id={} itemId={}",
+                    approval.getItemType(), approval.getId(), approval.getItemId());
         }
     }
 
@@ -159,11 +175,52 @@ public class PriceApprovalService {
     }
 
     /**
-     * 商家分成审批落库：
-     * itemId = merchants.id，newValue = 个体负责人分成比例(0~1)。
-     * 审批通过后写入商家 individual_leader_rate，并绑定归属个体负责人。
+     * 商家平台抽佣审批落库：
+     * itemId = merchants.id，newValue = 平台抽佣比例（0~1），
+     * 落 {@code merchant_property_configs.commission_rate}（分账计算真正读取的字段，按商家×物业公司）。
+     *
+     * <p>此前这里写的是 {@code merchants.individual_leader_rate}——该列全仓库无任何读取方
+     * （分账用的个体负责人比例在 {@code property_companies.individual_leader_rate}），
+     * 所以「物业领导点了通过、抽佣一点没变」。同时值格式有两种来源，都必须能吃下：
+     * 个体负责人接口落纯数字（{@code 0.1}），管理端「发起申请」落 JSON（{@code {"rate":0.1}}）。</p>
      */
     private void applyMerchantDistribution(PriceApproval approval) {
+        Merchant merchant = requireMerchantInApprovalProperty(approval);
+        BigDecimal rate = parseRate(approval.getNewValue());
+
+        MerchantPropertyConfig config = merchantPropertyConfigRepository
+                .findByMerchantIdAndPropertyCompanyId(merchant.getId(), approval.getPropertyCompanyId())
+                .orElseGet(() -> {
+                    MerchantPropertyConfig created = new MerchantPropertyConfig();
+                    created.setId(idGenerator.generateId("mpc"));
+                    created.setMerchantId(merchant.getId());
+                    created.setPropertyCompanyId(approval.getPropertyCompanyId());
+                    created.setStatus("active");
+                    return created;
+                });
+        config.setCommissionRate(rate);
+        merchantPropertyConfigRepository.save(config);
+
+        // 商家归属的个体负责人绑定保持原行为（申请人是在职个体负责人时才绑）
+        individualLeaderRepository
+                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
+                        approval.getApplicantId(), approval.getPropertyCompanyId(), "active")
+                .ifPresent(leader -> merchant.setIndividualLeaderId(leader.getId()));
+        merchantRepository.save(merchant);
+    }
+
+    /**
+     * 商家配送费审批落库：itemId = merchants.id，
+     * newValue = {@code {"amount":1}}（管理端「发起申请」）或纯数字。
+     */
+    private void applyDeliveryFee(PriceApproval approval) {
+        Merchant merchant = requireMerchantInApprovalProperty(approval);
+        BigDecimal amount = parseAmount(approval.getNewValue());
+        merchant.setDeliveryFee(amount);
+        merchantRepository.save(merchant);
+    }
+
+    private Merchant requireMerchantInApprovalProperty(PriceApproval approval) {
         String merchantId = approval.getItemId();
         if (!StringUtils.hasText(merchantId)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "itemId 必须为商家ID");
@@ -174,24 +231,57 @@ public class PriceApprovalService {
                 || !approval.getPropertyCompanyId().equals(merchant.getPropertyCompanyId())) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "商家不属于该审批所属物业公司");
         }
+        return merchant;
+    }
 
-        BigDecimal rate;
-        try {
-            rate = new BigDecimal(approval.getNewValue().trim());
-        } catch (Exception e) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "newValue 必须为 0~1 之间的分成比例数字");
-        }
+    /** 抽佣比例：接受纯数字或 {@code {"rate":x}} / {@code {"commissionRate":x}}，范围 0~1。 */
+    private BigDecimal parseRate(String value) {
+        BigDecimal rate = readNumber(value, "rate", "commissionRate");
         if (rate.compareTo(BigDecimal.ZERO) < 0 || rate.compareTo(BigDecimal.ONE) > 0) {
             throw new BizException(ErrorCode.PARAM_INVALID, "分成比例必须在 0~1 之间");
         }
+        return rate;
+    }
 
-        // 绑定申请人对应的个体负责人（按申请人住户ID+物业公司定位）
-        individualLeaderRepository
-                .findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
-                        approval.getApplicantId(), approval.getPropertyCompanyId(), "active")
-                .ifPresent(leader -> merchant.setIndividualLeaderId(leader.getId()));
-        merchant.setIndividualLeaderRate(rate);
-        merchantRepository.save(merchant);
+    /** 金额：接受纯数字或 {@code {"amount":x}}，范围 0~9999.99。 */
+    private BigDecimal parseAmount(String value) {
+        BigDecimal amount = readNumber(value, "amount", "deliveryFee");
+        if (amount.compareTo(BigDecimal.ZERO) < 0 || amount.compareTo(MAX_APPROVAL_AMOUNT) > 0) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "金额必须在 0~9999.99 之间");
+        }
+        return amount;
+    }
+
+    private BigDecimal readNumber(String raw, String... jsonFields) {
+        if (!StringUtils.hasText(raw)) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "newValue 不能为空");
+        }
+        String text = raw.trim();
+        if (text.startsWith("{")) {
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(text);
+            } catch (Exception e) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "newValue 格式不正确");
+            }
+            for (String field : jsonFields) {
+                JsonNode node = root.path(field);
+                if (node.isNumber() || node.isTextual()) {
+                    return toDecimal(node.asText());
+                }
+            }
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "newValue 需为 " + String.join("/", jsonFields) + " 的数值");
+        }
+        return toDecimal(text);
+    }
+
+    private BigDecimal toDecimal(String text) {
+        try {
+            return new BigDecimal(text.trim());
+        } catch (NumberFormatException e) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "newValue 必须为数字");
+        }
     }
 
     /**
@@ -463,8 +553,9 @@ public class PriceApprovalService {
                     scopedPropertyCompanyId, pageable);
         }
 
+        Map<String, String> itemNames = resolveItemNames(approvalPage.getContent());
         List<PriceApprovalListItemResponse> list = approvalPage.getContent().stream()
-                .map(this::toListItem)
+                .map(approval -> toListItem(approval, itemNames))
                 .toList();
 
         return PageResponse.of(list, page, pageSize, approvalPage.getTotalElements());
@@ -482,7 +573,7 @@ public class PriceApprovalService {
         return approval;
     }
 
-    private PriceApprovalListItemResponse toListItem(PriceApproval approval) {
+    private PriceApprovalListItemResponse toListItem(PriceApproval approval, Map<String, String> itemNames) {
         return PriceApprovalListItemResponse.builder()
                 .id(approval.getId())
                 .propertyCompanyId(approval.getPropertyCompanyId())
@@ -490,6 +581,7 @@ public class PriceApprovalService {
                 .applicantRole(approval.getApplicantRole())
                 .itemType(approval.getItemType())
                 .itemId(approval.getItemId())
+                .itemName(itemNames.get(approval.getItemId()))
                 .oldValue(approval.getOldValue())
                 .newValue(approval.getNewValue())
                 .reason(approval.getReason())
@@ -502,6 +594,10 @@ public class PriceApprovalService {
     }
 
     private PriceApprovalDetailResponse toDetail(PriceApproval approval) {
+        return toDetail(approval, resolveItemNames(List.of(approval)));
+    }
+
+    private PriceApprovalDetailResponse toDetail(PriceApproval approval, Map<String, String> itemNames) {
         return PriceApprovalDetailResponse.builder()
                 .id(approval.getId())
                 .propertyCompanyId(approval.getPropertyCompanyId())
@@ -509,6 +605,7 @@ public class PriceApprovalService {
                 .applicantRole(approval.getApplicantRole())
                 .itemType(approval.getItemType())
                 .itemId(approval.getItemId())
+                .itemName(itemNames.get(approval.getItemId()))
                 .oldValue(approval.getOldValue())
                 .newValue(approval.getNewValue())
                 .reason(approval.getReason())
@@ -519,6 +616,44 @@ public class PriceApprovalService {
                 .createdAt(DateTimeUtil.toIsoUtc(approval.getCreatedAt()))
                 .updatedAt(DateTimeUtil.toIsoUtc(approval.getUpdatedAt()))
                 .build();
+    }
+
+    /**
+     * 「对象」列的名字：按 itemId 前缀定位（{@code mch_}=商家、{@code prd_}/{@code p_}=商品、
+     * {@code pc_}=物业公司），批量回查一次；查不到名字的键缺失，前端回退显示 ID。
+     */
+    private Map<String, String> resolveItemNames(List<PriceApproval> approvals) {
+        List<String> merchantIds = new ArrayList<>();
+        List<String> productIds = new ArrayList<>();
+        List<String> companyIds = new ArrayList<>();
+        for (PriceApproval approval : approvals) {
+            String itemId = approval.getItemId();
+            if (!StringUtils.hasText(itemId)) {
+                continue;
+            }
+            if (itemId.startsWith("mch_")) {
+                merchantIds.add(itemId);
+            } else if (itemId.startsWith("prd_") || itemId.startsWith("p_")) {
+                productIds.add(itemId);
+            } else if (itemId.startsWith("pc_")) {
+                companyIds.add(itemId);
+            }
+        }
+
+        Map<String, String> names = new HashMap<>();
+        if (!merchantIds.isEmpty()) {
+            merchantRepository.findAllById(merchantIds)
+                    .forEach(merchant -> names.put(merchant.getId(), merchant.getName()));
+        }
+        if (!productIds.isEmpty()) {
+            productRepository.findAllById(productIds)
+                    .forEach(product -> names.put(product.getId(), product.getName()));
+        }
+        if (!companyIds.isEmpty()) {
+            propertyCompanyRepository.findAllById(companyIds)
+                    .forEach(company -> names.put(company.getId(), company.getName()));
+        }
+        return names;
     }
 
     private void validateStatus(String status) {

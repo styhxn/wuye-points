@@ -48,6 +48,8 @@ public class PropertyCoinMallRuleService {
 
     /**
      * 校验并返回允许使用的物业币金额；requestedCoin 超限直接报错（不自动截断）。
+     *
+     * <p>{@code coin_use_condition}（§79.2）由调用方先行校验，本方法只管商城开关/起购/比例/余额。</p>
      */
     public BigDecimal assertCoinAllowed(PropertyCompany company,
                                         BigDecimal totalAmount,
@@ -91,6 +93,18 @@ public class PropertyCoinMallRuleService {
                                               BigDecimal totalAmount,
                                               BigDecimal requestedCoin,
                                               BigDecimal availableBalance) {
+        return previewCoinAllowance(company, totalAmount, requestedCoin, availableBalance, true);
+    }
+
+    /**
+     * 试算（含 §79.2 物业币使用条件）：条件不满足时抵扣直接归零，
+     * 与支付链路 {@code assertUseConditionSatisfied} 的拒绝口径保持一致。
+     */
+    public CoinAllowance previewCoinAllowance(PropertyCompany company,
+                                              BigDecimal totalAmount,
+                                              BigDecimal requestedCoin,
+                                              BigDecimal availableBalance,
+                                              boolean useConditionSatisfied) {
         BigDecimal orderAmount = defaultAmount(totalAmount);
         BigDecimal requested = normalizeMoney(requestedCoin);
         boolean enabled = resolveEnabled(company.getCoinMallEnabled());
@@ -103,6 +117,8 @@ public class PropertyCoinMallRuleService {
         BigDecimal maxCoinAllowed = BigDecimal.ZERO;
         if (!enabled) {
             reasonIfCapped = "该物业未开启物业币抵扣";
+        } else if (!useConditionSatisfied) {
+            reasonIfCapped = "未满足物业币使用条件";
         } else if (orderAmount.compareTo(minAmount) < 0) {
             reasonIfCapped = "未达物业币最低使用金额";
         } else {
@@ -118,6 +134,8 @@ public class PropertyCoinMallRuleService {
         if (requested.compareTo(BigDecimal.ZERO) > 0 && coinUsed.compareTo(requested) < 0) {
             if (!enabled) {
                 reasonIfCapped = "该物业未开启物业币抵扣";
+            } else if (!useConditionSatisfied) {
+                reasonIfCapped = "未满足物业币使用条件";
             } else if (orderAmount.compareTo(minAmount) < 0) {
                 reasonIfCapped = "未达物业币最低使用金额";
             } else if (requested.compareTo(maxByRatio) > 0) {

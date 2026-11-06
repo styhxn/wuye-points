@@ -18,6 +18,7 @@ import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -233,13 +234,7 @@ public class MerchantKeywordService {
         roleGuard.requireAnyRole("merchant");
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     private void assertCanManageKeyword(MerchantKeyword keyword) {

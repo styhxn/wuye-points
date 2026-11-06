@@ -279,6 +279,12 @@ public class PermissionInterceptor implements HandlerInterceptor {
             }
             if (permissionCode != null) {
                 authorize(permissionCode);
+            } else {
+                // 整改清单条目24/25：新增的 /admin/** 若忘了登记权限码，过去等于对
+                // 住户/商家令牌敞开（只有控制器自己写了角色门才挡住）。这里补一道
+                // 工作台身份兜底，未登记的路由默认只有管理端身份可用；
+                // 刻意不 markGranted——没有权限码授权时不应让标签身份过 property_admin 角色门。
+                permissionGuard.requireAdminWorkspace();
             }
             return true;
         }

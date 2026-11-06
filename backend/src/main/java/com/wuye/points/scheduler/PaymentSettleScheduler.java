@@ -32,7 +32,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PaymentSettleScheduler {
 
-    private static final int RECONCILE_PENDING_SECONDS = 30; // 下单超过 30s 才主动查询，避免与回调竞争
+    // 主动查单窗口与轮询间隔：正常路径是微信回调（1~3s），这里只兜底回调丢失/验签失败。
+    // 线上实测（2026-11-06，直连商户回调验签失败期间）到账感知耗时 36~56s，用户在支付页
+    // 看到的就是「校验时间过长」；由 30s/30s 收紧到 10s/10s 后最坏 ~20s。
+    // 阈值仍大于回调正常到达时间，不会与回调抢同一条流水。
+    private static final int RECONCILE_PENDING_SECONDS = 10;
     private static final int CLOSE_ORDER_HOURS = 2;          // 超过 2h 仍非支付成功则关单
     private static final int STUCK_PROCESSING_MINUTES = 5;   // outbox 卡在 PROCESSING 超过 5 分钟视为 JVM 崩溃遗留，回收重试
 
@@ -59,7 +63,7 @@ public class PaymentSettleScheduler {
     }
 
     /** ② 主动查询兜底（官方建议）。 */
-    @Scheduled(fixedDelay = 30_000)
+    @Scheduled(fixedDelay = 10_000)
     @SchedulerLock(name = "payment_settle_reconcile_pending", lockAtMostFor = "PT4M", lockAtLeastFor = "PT0S")
     public void reconcilePending() {
         LocalDateTime before = LocalDateTime.now().minusSeconds(RECONCILE_PENDING_SECONDS);

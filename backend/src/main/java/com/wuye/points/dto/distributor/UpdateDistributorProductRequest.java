@@ -33,6 +33,6 @@ public class UpdateDistributorProductRequest {
     @Schema(description = "服务区间 city(本市)/community(小区)")
     private String serviceScope;
 
-    @Schema(description = "供给范围（只读）：代理端禁止传，传非空值返回 403，由平台/物业管理员设置", example = "company")
+    @Schema(description = "供给范围：可省略或传 company（本物业公司，等同不改）；platform 需平台/物业管理员在管理端授予，代理端传 platform 返回 403", example = "company")
     private String supplyScope;
 }

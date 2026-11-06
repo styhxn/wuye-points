@@ -42,7 +42,6 @@ import java.math.BigDecimal;
 public class PropertyManagerWorkbenchService {
 
     private static final String OWNER_TYPE_PROPERTY_MANAGER = "property_manager";
-    private static final String BALANCE_TYPE_WITHDRAWABLE = "withdrawable";
     private static final String WITHDRAWAL_TYPE_PROPERTY_MANAGER = "property_manager";
 
     private final PropertyManagerRepository propertyManagerRepository;
@@ -50,6 +49,7 @@ public class PropertyManagerWorkbenchService {
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final WalletFlowRepository walletFlowRepository;
     private final WithdrawalRecordRepository withdrawalRecordRepository;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final AdminBuildingLeaderService adminBuildingLeaderService;
     private final RoleGuard roleGuard;
 
@@ -108,26 +108,22 @@ public class PropertyManagerWorkbenchService {
                 flowPage.getTotalElements());
     }
 
-    /** 钱包概览：累计抽成 − 已提现 − 在途 = 可提现 */
+    /** 钱包概览：累计抽成 − 已提现 − 在途 − 微信分账已实时到账 = 可提现（与提现校验同源） */
     @Transactional(readOnly = true)
     public PropertyManagerWalletResponse getMyWallet() {
         PropertyManager manager = requireCurrentManager();
-        BigDecimal totalEarning = defaultDecimal(walletFlowRepository
-                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType(
-                        OWNER_TYPE_PROPERTY_MANAGER, manager.getResidentId(), BALANCE_TYPE_WITHDRAWABLE));
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService.forPropertyManager(
+                manager.getId(), manager.getResidentId(), manager.getPropertyCompanyId());
         BigDecimal withdrawn = defaultDecimal(withdrawalRecordRepository
                 .sumAmountByApplicant(manager.getId(), WITHDRAWAL_TYPE_PROPERTY_MANAGER, "completed"));
-        BigDecimal pending = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(manager.getId(), WITHDRAWAL_TYPE_PROPERTY_MANAGER, "pending"))
-                .add(defaultDecimal(withdrawalRecordRepository
-                        .sumAmountByApplicant(manager.getId(), WITHDRAWAL_TYPE_PROPERTY_MANAGER, "approved")));
-        BigDecimal withdrawable = totalEarning.subtract(withdrawn).subtract(pending).max(BigDecimal.ZERO);
 
         return PropertyManagerWalletResponse.builder()
-                .totalEarning(totalEarning)
+                .totalEarning(balance.creditedAmount())
                 .withdrawnAmount(withdrawn)
-                .pendingAmount(pending)
-                .withdrawableAmount(withdrawable)
+                .pendingAmount(balance.pendingWithdrawalAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .build();
     }
 

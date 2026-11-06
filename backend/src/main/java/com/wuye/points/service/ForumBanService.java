@@ -89,9 +89,11 @@ public class ForumBanService {
 
         LocalDateTime expiresAt = null;
         if (StringUtils.hasText(request.getExpiresAt())) {
-            expiresAt = DateTimeUtil.parseLocalDateTime(request.getExpiresAt().trim());
+            // 条目26：管理端 datetime-local + toISOString() 会发出带 .000Z 的串，纯日期按当天结束理解
+            expiresAt = DateTimeUtil.parseApiDateTime(request.getExpiresAt(), true);
             if (expiresAt == null) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "expiresAt 格式不正确（支持 yyyy-MM-ddTHH:mm:ss）");
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "expiresAt 格式不正确，支持 yyyy-MM-ddTHH:mm:ss / yyyy-MM-dd HH:mm:ss / 带时区偏移的 ISO8601 / yyyy-MM-dd");
             }
             if (!expiresAt.isAfter(LocalDateTime.now())) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "expiresAt 必须晚于当前时间");

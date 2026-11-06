@@ -44,8 +44,21 @@ public class CoordinatorMyResponse {
     @Schema(description = "累计收益")
     private BigDecimal totalEarnings;
 
-    @Schema(description = "可提现金额（累计分成-已占用提现，占用含 pending/approved/completed）", example = "800.00")
+    @Schema(description = "可提现金额（累计分成 − 已占用提现 − 微信分账已实时到账；"
+            + "与 POST /coordinators/{id}/withdrawals 校验同源，占用含 pending/approved/completed）",
+            example = "800.00")
     private BigDecimal withdrawableAmount;
+
+    @Schema(description = "在途提现金额（待审核 + 已通过待打款）", example = "200.00")
+    private BigDecimal pendingWithdrawalAmount;
+
+    @Schema(description = "提现手续费率（物业公司覆盖值优先，未配置取平台默认，手续费开关关闭时为 0）",
+            example = "0.0060")
+    private BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
 
     @Schema(description = "状态")
     private String status;

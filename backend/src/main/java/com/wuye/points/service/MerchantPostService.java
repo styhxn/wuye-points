@@ -17,6 +17,7 @@ import com.wuye.points.util.AdminSupport;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -126,13 +127,7 @@ public class MerchantPostService {
     private Merchant resolveCurrentMerchant() {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     private MerchantPostItemResponse toItem(MerchantPost post, String merchantName) {

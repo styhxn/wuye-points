@@ -230,8 +230,8 @@ public class RoleGuard {
     public static final Set<String> MERCHANT_OPERATION_STATUS = Set.of("active", "frozen");
     public static final Set<String> PRODUCT_STATUS = Set.of("active", "inactive", "sold_out");
     public static final Set<String> ORDER_STATUS = Set.of(
-            "pending", "paid", "delivering", "completed", "cancelled",
-            "refunding", "refunded", "refund_rejected");
+            "pending", "paid", "pending_verification", "verified", "delivering", "completed",
+            "cancelled", "refunding", "refunded", "refund_rejected");
     public static final Set<String> PAYMENT_METHODS = Set.of(
             "property_coin", "point", "wechat", "mixed");
     /**
@@ -266,7 +266,7 @@ public class RoleGuard {
             "resident", "property_admin", "technician", "courier", "merchant");
     public static final Set<String> FILE_CATEGORIES = Set.of(
             "avatar", "announcement", "merchant", "service", "activity", "product",
-            "delivery_proof", "withdrawal_proof");
+            "community", "delivery_proof", "withdrawal_proof");
     public static final Set<String> SERVICE_CATEGORIES = Set.of(
             "cleaning_repair", "canteen", "tutoring", "elderly_care", "medical",
             "pet_medical", "life_service", "dating");

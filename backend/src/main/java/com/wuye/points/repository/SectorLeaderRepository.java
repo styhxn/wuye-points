@@ -32,6 +32,9 @@ public interface SectorLeaderRepository extends JpaRepository<SectorLeader, Stri
     Optional<SectorLeader> findByResidentIdAndPropertyCompanyIdAndStatus(
             String residentId, String propertyCompanyId, String status);
 
+    /** 该住户的全部历史板块负责人身份（含已停用/跨物业、跨板块多条），供「我的分账所得」聚合使用。 */
+    List<SectorLeader> findAllByResidentId(String residentId);
+
     /**
      * 同一住户可跨板块持有多个启用中的板块负责人记录（负责人标签化后按住户聚合身份用）。
      */

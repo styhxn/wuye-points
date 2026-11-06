@@ -7,6 +7,7 @@ import com.wuye.points.dto.residentmerchant.SellerWalletResponse;
 import com.wuye.points.entity.DistributorProduct;
 import com.wuye.points.entity.Order;
 import com.wuye.points.entity.OrderItem;
+import com.wuye.points.entity.Resident;
 import com.wuye.points.entity.ResidentMerchantListing;
 import com.wuye.points.entity.ResidentMerchantSettlement;
 import com.wuye.points.entity.WalletFlow;
@@ -16,6 +17,7 @@ import com.wuye.points.repository.DistributorProductRepository;
 import com.wuye.points.repository.OrderItemRepository;
 import com.wuye.points.repository.ResidentMerchantListingRepository;
 import com.wuye.points.repository.ResidentMerchantSettlementRepository;
+import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.WalletFlowRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.util.DateTimeUtil;
@@ -56,6 +58,8 @@ public class ResidentMerchantSettlementService {
     private final WalletFlowRepository walletFlowRepository;
     private final WalletFlowWriter walletFlowWriter;
     private final PlatformSettingService platformSettingService;
+    private final ResidentRepository residentRepository;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -219,12 +223,15 @@ public class ResidentMerchantSettlementService {
 
     /**
      * 业主卖货独立钱包概览：钱包金额来源于业主商城卖货收益，仅可用于提现。
-     * 可提现余额 = 累计已结算卖货收益 − 已完成提现 − 在途提现（待审核+已通过），口径与提现校验保持一致。
+     * 可提现余额取账号统一收益账户（与楼长/商家共用同一余额），口径与提现校验保持一致；
+     * totalProfit / withdrawn / pending 仍是卖货这一路的分项统计。
      */
     @Transactional(readOnly = true)
     public SellerWalletResponse getSellerWallet() {
         roleGuard.requireAnyRole("resident");
         String residentId = UserContext.currentUserId();
+        Resident resident = residentRepository.findById(residentId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
 
         BigDecimal totalProfit = defaultAmount(settlementRepository.sumResellerProfitByResidentId(residentId));
         BigDecimal withdrawn = defaultAmount(withdrawalRecordRepository
@@ -233,15 +240,18 @@ public class ResidentMerchantSettlementService {
                 .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, "pending"))
                 .add(defaultAmount(withdrawalRecordRepository
                         .sumAmountByApplicant(residentId, WITHDRAWAL_TYPE_RESIDENT_SELLER, "approved")));
-        BigDecimal withdrawable = totalProfit.subtract(withdrawn).subtract(pending)
-                .max(BigDecimal.ZERO);
+
+        RoleWithdrawableService.RoleBalance balance =
+                roleWithdrawableService.forResidentSeller(residentId, resident.getPropertyCompanyId());
 
         return SellerWalletResponse.builder()
                 .residentId(residentId)
                 .totalProfit(totalProfit)
                 .withdrawnAmount(withdrawn)
                 .pendingAmount(pending)
-                .withdrawableAmount(withdrawable)
+                .withdrawableAmount(balance.withdrawableAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .build();
     }
 

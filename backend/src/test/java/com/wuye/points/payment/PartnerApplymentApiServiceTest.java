@@ -159,17 +159,19 @@ class PartnerApplymentApiServiceTest {
     }
 
     @Test
-    @DisplayName("银行列表：对公/对私走不同官方路径")
+    @DisplayName("银行列表：对公/对私走不同官方路径，并透传 offset/limit")
     void listBanks_paths() {
         when(http.get(anyString())).thenReturn("{\"data\":[]}");
 
-        api.listBanks("BANK_ACCOUNT_TYPE_CORPORATE");
-        api.listBanks("BANK_ACCOUNT_TYPE_PERSONAL");
+        api.listBanks("BANK_ACCOUNT_TYPE_CORPORATE", 0, 200);
+        api.listBanks("BANK_ACCOUNT_TYPE_PERSONAL", 200, 200);
 
         ArgumentCaptor<String> url = ArgumentCaptor.forClass(String.class);
         verify(http, org.mockito.Mockito.times(2)).get(url.capture());
         assertTrue(url.getAllValues().get(0).contains("/banks/corporate-banking"));
+        assertTrue(url.getAllValues().get(0).contains("offset=0&limit=200"));
         assertTrue(url.getAllValues().get(1).contains("/banks/personal-banking"));
+        assertTrue(url.getAllValues().get(1).contains("offset=200"));
     }
 
     @Test

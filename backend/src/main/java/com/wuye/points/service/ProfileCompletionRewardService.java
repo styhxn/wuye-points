@@ -19,6 +19,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ import java.util.Map;
 /**
  * 信息采集积分激励服务
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProfileCompletionRewardService {
@@ -62,6 +64,7 @@ public class ProfileCompletionRewardService {
     private final PointService pointService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final QrCodeService qrCodeService;
 
     /** 自注入以通过代理调用 triggerReward，确保每个字段独立事务 */
     @Lazy
@@ -372,11 +375,23 @@ public class ProfileCompletionRewardService {
         String scoped = roleGuard.resolveListPropertyCompanyId(propertyCompanyId);
         String query = StringUtils.hasText(scoped) ? "?propertyCompanyId=" + scoped : "";
         String shareUrl = statsShareBaseUrl + query;
+        // 二维码要的是图片，不是带 format=qrcode 的网页链接；采集统计没有对应小程序页，
+        // 因此按分享链接生成本地二维码。H5 站点未部署时扫码会 404，需运维补 /h5/stats。
+        String qrcodeUrl = null;
+        try {
+            qrcodeUrl = qrCodeService.linkQrCode(shareUrl, statsFileName(scoped), true).url();
+        } catch (RuntimeException ex) {
+            log.warn("[资料奖励] 统计分享二维码生成失败: {}", ex.getMessage());
+        }
         return StatsShareResponse.builder()
                 .shareUrl(shareUrl)
                 .posterImageUrl(statsShareBaseUrl.replace("/h5/stats", "/api/v1/static/posters/stats.png"))
-                .qrcodeUrl(shareUrl + (query.isEmpty() ? "?format=qrcode" : "&format=qrcode"))
+                .qrcodeUrl(qrcodeUrl)
                 .build();
+    }
+
+    private String statsFileName(String propertyCompanyId) {
+        return StringUtils.hasText(propertyCompanyId) ? "stats_" + propertyCompanyId + ".png" : "stats_platform.png";
     }
 
     private void validateScope(String scope) {

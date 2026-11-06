@@ -60,4 +60,12 @@ public class NavigationItem extends BaseEntity {
     /** 物业公司ID（空=平台级默认） */
     @Column(name = "property_company_id", length = 32)
     private String propertyCompanyId;
+
+    /**
+     * 手机端读取跳转目标的别名字段（不落库）。
+     * App 侧按 linkTarget/target/url/path 取目标，只回 linkUrl 会解析成空路径。
+     */
+    public String getLinkTarget() {
+        return linkUrl;
+    }
 }

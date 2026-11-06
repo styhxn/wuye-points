@@ -131,4 +131,7 @@ public class OrderListItemResponse {
 
     @Schema(description = "结算归属方：merchant=商家，distributor=一级代理商")
     private String settlementOwner;
+
+    @Schema(description = "业主上架商品ID（仅业主小店代销单返回）。待支付单重新试算须带它调 POST /orders/from-listing/preview，不能用 POST /orders/preview")
+    private String listingId;
 }

@@ -48,6 +48,7 @@ public class IndividualLeaderWorkbenchService {
     private final ResidentRepository residentRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final DistributionRecordRepository distributionRecordRepository;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
 
@@ -57,6 +58,10 @@ public class IndividualLeaderWorkbenchService {
         IndividualLeader current = getCurrentIndividualLeader();
         Resident resident = residentRepository.findById(current.getResidentId()).orElse(null);
         PropertyCompany company = propertyCompanyRepository.findById(current.getPropertyCompanyId()).orElse(null);
+
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService.forShareLedgerRole(
+                RoleWithdrawableService.ShareLedgerRole.INDIVIDUAL_LEADER,
+                current.getId(), current.getPropertyCompanyId());
 
         return IndividualLeaderMyResponse.builder()
                 .id(current.getId())
@@ -69,8 +74,11 @@ public class IndividualLeaderWorkbenchService {
                 .sectorLeaderId(current.getSectorLeaderId())
                 .sector(current.getSector())
                 .commissionRate(current.getCommissionRate())
-                .totalEarnings(distributionRecordRepository
-                        .sumIndividualLeaderShareByIndividualLeaderId(current.getId()))
+                .totalEarnings(balance.creditedAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
+                .pendingWithdrawalAmount(balance.pendingWithdrawalAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .status(current.getStatus())
                 .build();
     }

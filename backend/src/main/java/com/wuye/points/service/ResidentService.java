@@ -2,6 +2,7 @@ package com.wuye.points.service;
 
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
+import com.wuye.points.dto.resident.CancelDeletionResponse;
 import com.wuye.points.dto.resident.DeleteAccountResponse;
 import com.wuye.points.dto.resident.MyCoinsResponse;
 import com.wuye.points.dto.resident.MyPointsResponse;
@@ -44,6 +45,7 @@ import com.wuye.points.util.PhoneUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -63,6 +65,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class ResidentService {
 
@@ -83,6 +86,7 @@ public class ResidentService {
     private final BuildingChangeRequestRepository buildingChangeRequestRepository;
     private final CommunityRepository communityRepository;
     private final ResidentIdentityTags residentIdentityTags;
+    private final RoomOccupancyGuard roomOccupancyGuard;
 
     @Transactional(readOnly = true)
     public PageResponse<ResidentListItemResponse> listResidents(
@@ -525,6 +529,12 @@ public class ResidentService {
         roleGuard.requireAnyRole("resident");
         Resident resident = getActiveResident(UserContext.currentUserId());
 
+        // 已在冷静期里再点一次不该把到期时间往后推（清单口径：提交申请→等待审核）
+        if ("pending_deletion".equals(resident.getStatus())) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "已有待审核的注销申请，可在账号管理中撤回");
+        }
+
         // 1. 校验 confirmText
         if (!"确认注销".equals(request.getConfirmText())) {
             throw new BizException(ErrorCode.PARAM_INVALID, "请确认注销操作");
@@ -557,10 +567,12 @@ public class ResidentService {
         });
 
         // 3. 设置 pending_deletion 状态和 15 天冷静期
+        // 条目9：冷静期到期时间写在 deletion_expires_at，不再占用 deleted_at——
+        // 后者是全站「已注销」判据，写未来时间会让人登录不了、也撤回不了。
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expiresAt = now.plusDays(15);
         resident.setStatus("pending_deletion");
-        resident.setDeletedAt(expiresAt);
+        resident.setDeletionExpiresAt(expiresAt);
         residentRepository.save(resident);
 
         // 4. 生成请求 ID
@@ -589,9 +601,9 @@ public class ResidentService {
         }
         Pageable pageable = PageRequest.of(
                 Math.max(page, 1) - 1, Math.min(Math.max(pageSize, 1), 100),
-                Sort.by(Sort.Direction.DESC, "deletedAt"));
+                Sort.by(Sort.Direction.DESC, "deletionExpiresAt"));
         Page<Resident> residentPage = residentRepository.findAll(
-                ResidentSpecifications.withFilters(null, null, null, null, "pending_deletion", null),
+                ResidentSpecifications.deletionRequests(),
                 pageable);
         Map<String, String> communityNameMap = residentConverter.loadCommunityNameMap(residentPage.getContent());
         List<ResidentListItemResponse> list = residentPage.getContent().stream()
@@ -603,20 +615,84 @@ public class ResidentService {
     @Transactional
     public void reviewAccountDeletion(String residentId, String action, String rejectReason) {
         roleGuard.requireAnyRole("platform_admin");
-        Resident resident = getResidentOrThrow(residentId);
-        if (!"pending_deletion".equals(resident.getStatus())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "该住户当前不处于注销申请状态");
-        }
+        // 条目10：不能走 getResidentOrThrow——历史实现把 deletedAt 非空当成「不存在」，
+        // 而注销申请单在旧口径下正是靠 deletedAt 记录冷静期，导致审核必然 404。
+        Resident resident = residentRepository.findById(residentId)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+
         if ("approve".equals(action)) {
-            resident.setStatus("deleted");
-            resident.setDeletedAt(LocalDateTime.now());
-        } else if ("reject".equals(action)) {
-            resident.setStatus("active");
-            resident.setDeletedAt(null);
-        } else {
-            throw new BizException(ErrorCode.PARAM_INVALID, "action 仅支持 approve/reject");
+            if (ResidentStatus.deleted.name().equals(resident.getStatus())) {
+                return; // 已注销，幂等成功
+            }
+            if (!"pending_deletion".equals(resident.getStatus())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "该住户当前不处于注销申请状态");
+            }
+            finalizeDeletion(resident, "平台审核通过");
+            return;
         }
+        if ("reject".equals(action)) {
+            if ("active".equals(resident.getStatus()) && resident.getDeletionExpiresAt() == null) {
+                return; // 已驳回过，幂等成功
+            }
+            if (!"pending_deletion".equals(resident.getStatus())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "该住户当前不处于注销申请状态");
+            }
+            resident.setStatus(ResidentStatus.active.name());
+            resident.setDeletionExpiresAt(null);
+            residentRepository.save(resident);
+            log.info("[账号注销] 驳回 residentId={} 原因={}", resident.getId(),
+                    StringUtils.hasText(rejectReason) ? rejectReason : "未填写");
+            return;
+        }
+        throw new BizException(ErrorCode.PARAM_INVALID, "action 仅支持 approve/reject");
+    }
+
+    /**
+     * 居民自助撤回注销申请（条目9：冷静期内允许登录并撤回）。
+     * 撤回后账号回到 active，冷静期未消耗完的余额不受影响。
+     */
+    @Transactional
+    public CancelDeletionResponse cancelAccountDeletion() {
+        roleGuard.requireAnyRole("resident");
+        Resident resident = residentRepository.findById(UserContext.currentUserId())
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        if (!"pending_deletion".equals(resident.getStatus())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "当前没有待审核的账号注销申请");
+        }
+        resident.setStatus(ResidentStatus.active.name());
+        resident.setDeletionExpiresAt(null);
         residentRepository.save(resident);
+        log.info("[账号注销] 居民自助撤回 residentId={}", resident.getId());
+        return CancelDeletionResponse.builder()
+                .residentId(resident.getId())
+                .status(resident.getStatus())
+                .message("已撤回注销申请，账号恢复正常使用")
+                .build();
+    }
+
+    /**
+     * 冷静期到期自动注销（条目9：此前没有任何到期处理，账号永久卡在 pending_deletion）。
+     *
+     * @return 本轮完成注销的账号数
+     */
+    @Transactional
+    public int finalizeExpiredDeletions() {
+        List<Resident> expired = residentRepository
+                .findByStatusAndDeletionExpiresAtLessThanEqual("pending_deletion", LocalDateTime.now());
+        for (Resident resident : expired) {
+            finalizeDeletion(resident, "冷静期到期");
+        }
+        return expired.size();
+    }
+
+    /** 真正落地注销：状态、软删时间、冷静期字段清零，并让该账号所有令牌立即失效。 */
+    private void finalizeDeletion(Resident resident, String via) {
+        resident.setStatus(ResidentStatus.deleted.name());
+        resident.setDeletedAt(LocalDateTime.now());
+        resident.setDeletionExpiresAt(null);
+        resident.setTokenVersion((resident.getTokenVersion() != null ? resident.getTokenVersion() : 0) + 1);
+        residentRepository.save(resident);
+        log.info("[账号注销] 已注销 residentId={} 途径={}", resident.getId(), via);
     }
 
     @Transactional
@@ -706,12 +782,38 @@ public class ResidentService {
 
             Resident resident = residentRepository.findById(req.getResidentId())
                     .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+
+            // 申请挂起期间该房号可能已被别的家庭入住，审批前复检一次（同家庭成员与本人不算占用）
+            roomOccupancyGuard.assertRoomNotTaken(req.getCommunityId(), req.getBuilding(),
+                    req.getUnit(), req.getRoom(), resident.getFamilyId(), resident.getId());
+
             resident.setCommunityId(req.getCommunityId());
             resident.setBuilding(req.getBuilding());
             resident.setFloor(req.getFloor());
             resident.setUnit(req.getUnit());
             resident.setRoom(req.getRoom());
             residentRepository.save(resident);
+
+            // 条目12/44：户主地址变了但 families 仍留旧地址，家庭列表与「同房号」判定就会自相矛盾
+            // （前端表现为「不是同一个房号」「家庭记录同步中」）。审批通过即同步户主所在家庭地址，
+            // 并把住址同步到全部家庭成员——只改户主一个人的话，其余成员仍是旧房号，冲突原样复现。
+            familyRepository.findByOwnerId(resident.getId()).ifPresent(family -> {
+                family.setCommunityId(req.getCommunityId());
+                family.setBuilding(req.getBuilding());
+                family.setUnit(req.getUnit());
+                family.setRoom(req.getRoom());
+                familyRepository.save(family);
+                for (Resident member : residentRepository.findByFamilyId(family.getId())) {
+                    member.setCommunityId(family.getCommunityId());
+                    member.setBuilding(family.getBuilding());
+                    member.setUnit(family.getUnit());
+                    member.setFloor(req.getFloor());
+                    member.setRoom(family.getRoom());
+                    residentRepository.save(member);
+                }
+                log.info("[楼栋变更] 家庭与成员地址同步 familyId={} 新地址={}{}{}{}",
+                        family.getId(), req.getBuilding(), req.getUnit(), req.getFloor(), req.getRoom());
+            });
         } else {
             if (!StringUtils.hasText(reason)) {
                 throw new BizException(ErrorCode.PARAM_MISSING, "驳回必须填写原因");
@@ -746,6 +848,16 @@ public class ResidentService {
         roleGuard.requireAnyRole("resident");
         Resident resident = getActiveResident(UserContext.currentUserId());
 
+        // 家庭成员的住址随家庭（2026-11-06 老板口径）：成员单独申请改楼栋会让他与家庭地址不一致，
+        // 要换房号由户主申请（审批通过同步全家），或先由户主把他移出家庭再申请。
+        if (StringUtils.hasText(resident.getFamilyId())) {
+            Family family = familyRepository.findById(resident.getFamilyId()).orElse(null);
+            if (family != null && !resident.getId().equals(family.getOwnerId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED,
+                        "家庭成员的地址随家庭，请由户主提交变更申请，或先由户主将其移出家庭后再申请");
+            }
+        }
+
         BuildingChangeRequest pending = buildingChangeRequestRepository
                 .findFirstByResidentIdAndStatusInOrderByAppliedAtDesc(
                         resident.getId(), List.of("pending", "pending_audit"))
@@ -753,6 +865,11 @@ public class ResidentService {
         if (pending != null) {
             throw new BizException(ErrorCode.PARAM_INVALID, "已存在待审批的楼栋变更申请，请等待审批结果");
         }
+
+        // 提交时就判房号占用，别等物业审批通过才发现两个家庭挤一个房号
+        // （同家庭成员与本人不算占用，见 RoomOccupancyGuard）。
+        roomOccupancyGuard.assertRoomNotTaken(request.getCommunityId(), request.getBuilding(),
+                request.getUnit(), request.getRoom(), resident.getFamilyId(), resident.getId());
 
         BuildingChangeRequest req = new BuildingChangeRequest();
         req.setId(idGenerator.generateId("bcr"));

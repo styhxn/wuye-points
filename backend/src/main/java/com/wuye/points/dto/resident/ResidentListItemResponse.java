@@ -74,9 +74,14 @@ public class ResidentListItemResponse {
     @Schema(description = "金币是否冻结", example = "false")
     private Boolean coinFrozen;
 
-    @Schema(description = "住户状态", example = "active", allowableValues = {"active", "frozen", "disabled"})
+    @Schema(description = "住户状态", example = "active",
+            allowableValues = {"active", "frozen", "disabled", "pending_deletion", "deleted"})
     private String status;
 
     @Schema(description = "创建时间", example = "2026-01-01T00:00:00.000Z")
     private String createdAt;
+
+    @Schema(description = "注销冷静期到期时间，格式 yyyy-MM-dd HH:mm:ss，仅 status=pending_deletion 时返回；到期前可由平台驳回恢复",
+            example = "2026-11-19 21:16:41")
+    private String deletionExpiresAt;
 }

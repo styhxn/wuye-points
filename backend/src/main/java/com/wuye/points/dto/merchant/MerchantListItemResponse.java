@@ -60,6 +60,11 @@ public class MerchantListItemResponse {
     @Schema(description = "配送费", example = "3.00")
     private BigDecimal deliveryFee;
 
+    @Schema(description = "本店在本物业公司下的平台抽佣比例（0~1，即分账实际使用的 "
+            + "merchant_property_configs.commission_rate）。经营敏感：仅平台/物业管理员与在职负责人"
+            + "（统筹/板块/个体）可见，住户与普通调用方该键缺失", example = "0.1000")
+    private BigDecimal commissionRate;
+
     @Schema(description = "免配送费门槛金额", example = "50.00")
     private BigDecimal freeDeliveryThreshold;
 

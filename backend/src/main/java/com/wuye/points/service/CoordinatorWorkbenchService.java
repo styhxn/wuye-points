@@ -58,12 +58,11 @@ public class CoordinatorWorkbenchService {
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final SectorLeaderRepository sectorLeaderRepository;
     private final IndividualLeaderRepository individualLeaderRepository;
-    private final DistributionRecordRepository distributionRecordRepository;
     private final MerchantRepository merchantRepository;
     private final MerchantPropertyConfigRepository merchantPropertyConfigRepository;
     private final PlatformMerchantRepository platformMerchantRepository;
     private final SpecialOfferRepository specialOfferRepository;
-    private final WithdrawalRecordRepository withdrawalRecordRepository;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final RoleGuard roleGuard;
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
@@ -87,12 +86,9 @@ public class CoordinatorWorkbenchService {
         long activeOfferCount = specialOfferRepository.countByPropertyCompanyIdAndStatus(
                 coordinator.getPropertyCompanyId(), "published");
 
-        BigDecimal totalEarnings = distributionRecordRepository
-                .sumCoordinatorShareByCoordinatorId(coordinator.getId());
-        BigDecimal occupied = withdrawalRecordRepository
-                .sumAmountByApplicant(coordinator.getId(), "coordinator", null);
-        BigDecimal withdrawableAmount = defaultDecimal(totalEarnings)
-                .subtract(defaultDecimal(occupied)).max(BigDecimal.ZERO);
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService.forShareLedgerRole(
+                RoleWithdrawableService.ShareLedgerRole.COORDINATOR,
+                coordinator.getId(), coordinator.getPropertyCompanyId());
 
         return CoordinatorMyResponse.builder()
                 .id(coordinator.getId())
@@ -105,8 +101,11 @@ public class CoordinatorWorkbenchService {
                 .individualLeaderCount(0L)
                 .merchantCount(merchantCount)
                 .activeSpecialOfferCount(activeOfferCount)
-                .totalEarnings(totalEarnings)
-                .withdrawableAmount(withdrawableAmount)
+                .totalEarnings(balance.creditedAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
+                .pendingWithdrawalAmount(balance.pendingWithdrawalAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .status(coordinator.getStatus())
                 .build();
     }

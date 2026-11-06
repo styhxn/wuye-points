@@ -27,6 +27,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -153,7 +154,7 @@ public class AdminCoinExpiryService {
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         Map<String, String> names = new HashMap<>();
         residentRepository.findAllById(residentIds).forEach(resident ->

@@ -38,4 +38,7 @@ public class NeighborSearchResponse {
 
     @Schema(description = "是否单元负责人/楼长（与 isBuildingLeader 同口径）", example = "true")
     private Boolean isUnitLeader;
+
+    @Schema(description = "是否已被本人屏蔽（条目28：被屏蔽的邻居 chatStatus 恒为 blocked）", example = "false")
+    private Boolean isBlocked;
 }

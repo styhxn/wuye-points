@@ -11,6 +11,7 @@ import com.wuye.points.service.OrderService;
 import com.wuye.points.service.PropertyCoinService;
 import com.wuye.points.service.PropertyFeeService;
 import com.wuye.points.service.ResidentShopService;
+import com.wuye.points.service.ScanPayService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,7 @@ public class PaymentBizDispatcher {
     private final ResidentShopService residentShopService;
     private final CanteenService canteenService;
     private final MerchantAdService merchantAdService;
+    private final ScanPayService scanPayService;
 
     public void complete(PaymentRecord record) {
         switch (record.getBizType()) {
@@ -45,6 +47,7 @@ public class PaymentBizDispatcher {
             case PaymentBizType.RESIDENT_SHOP_DEPOSIT -> residentShopService.completeChannelPayment(record);
             case PaymentBizType.QUOTA_PURCHASE -> canteenService.completeQuotaPurchase(record);
             case PaymentBizType.AD_PURCHASE -> merchantAdService.completeChannelPayment(record);
+            case PaymentBizType.SCAN_PAY -> scanPayService.completeChannelPayment(record);
             default -> throw new BizException(ErrorCode.WECHAT_API_ERROR,
                     "未知支付业务类型: " + record.getBizType());
         }

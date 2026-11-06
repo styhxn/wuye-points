@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -164,11 +165,16 @@ public class AdminCanteenController {
     @Operation(summary = "三类流水导出CSV", description = "角色: property_admin, platform_admin")
     @GetMapping("/admin/canteen/export")
     public void exportCsv(
-            @Parameter(description = "类型 quota_purchase/recharge/directed_flow") @RequestParam String type,
+            @Parameter(description = "类型 quota_purchase/recharge/directed_flow") @RequestParam(required = false) String type,
             @Parameter(description = "主商家ID") @RequestParam(required = false) String merchantId,
             @Parameter(description = "开始日期 yyyy-MM-dd") @RequestParam(required = false) String startDate,
             @Parameter(description = "结束日期 yyyy-MM-dd") @RequestParam(required = false) String endDate,
             HttpServletResponse response) throws IOException {
+        // 条目35：缺 type  previously 由 Spring 抛缺参异常被兜底成 500，这里显式给 400 + 取值清单
+        if (!StringUtils.hasText(type)) {
+            throw new com.wuye.points.exception.BizException(
+                    com.wuye.points.exception.ErrorCode.PARAM_MISSING, "type不能为空，取值 quota_purchase/recharge/directed_flow");
+        }
         String csv = switch (type) {
             case "quota_purchase" -> exportQuotaPurchases(merchantId, startDate, endDate);
             case "recharge" -> exportRecharges(merchantId, startDate, endDate);
@@ -184,44 +190,59 @@ public class AdminCanteenController {
         response.getOutputStream().flush();
     }
 
-    private String exportQuotaPurchases(String merchantId, String startDate, String endDate) {
-        PageResponse<QuotaRecordResponse> data = adminCanteenService.listQuotaPurchases(
-                1, 1000, merchantId, null, startDate, endDate);
-        StringBuilder sb = new StringBuilder("流水ID,商家ID,购买金额,手续费,到账额度,状态,创建时间\n");
-        List<QuotaRecordResponse> list = data.getList();
-        if (list != null) {
-            for (QuotaRecordResponse r : list) {
-                sb.append(join(r.getId(), merchantId, r.getAmount(), r.getFeeAmount(),
-                        r.getActualQuota(), r.getStatus(), r.getCreatedAt()));
+    /**
+     * 导出用的分页聚合：列表接口有 pageSize≤100 的护栏（条目35 里固定传 1000 必报「参数值超出范围」），
+     * 因此按 100 条一页循环取，直到取完或触到 {@link #EXPORT_MAX_ROWS} 上限。
+     */
+    private static final int EXPORT_PAGE_SIZE = 100;
+    private static final int EXPORT_MAX_PAGES = 200;
+
+    private <T> List<T> collectAllPages(java.util.function.IntFunction<PageResponse<T>> pageFetcher) {
+        List<T> all = new java.util.ArrayList<>();
+        for (int page = 1; page <= EXPORT_MAX_PAGES; page++) {
+            PageResponse<T> data = pageFetcher.apply(page);
+            List<T> list = data.getList();
+            if (list == null || list.isEmpty()) {
+                break;
             }
+            all.addAll(list);
+            int totalPages = data.getPagination() == null ? page : data.getPagination().getTotalPages();
+            if (page >= totalPages) {
+                break;
+            }
+        }
+        return all;
+    }
+
+    private String exportQuotaPurchases(String merchantId, String startDate, String endDate) {
+        List<QuotaRecordResponse> list = collectAllPages(
+                page -> adminCanteenService.listQuotaPurchases(page, EXPORT_PAGE_SIZE, merchantId, null, startDate, endDate));
+        StringBuilder sb = new StringBuilder("流水ID,商家ID,购买金额,手续费,到账额度,状态,创建时间\n");
+        for (QuotaRecordResponse r : list) {
+            sb.append(join(r.getId(), merchantId, r.getAmount(), r.getFeeAmount(),
+                    r.getActualQuota(), r.getStatus(), r.getCreatedAt()));
         }
         return sb.toString();
     }
 
     private String exportRecharges(String merchantId, String startDate, String endDate) {
-        PageResponse<AdminRechargeResponse> data = adminCanteenService.listRecharges(
-                1, 1000, merchantId, null, startDate, endDate);
+        List<AdminRechargeResponse> list = collectAllPages(
+                page -> adminCanteenService.listRecharges(page, EXPORT_PAGE_SIZE, merchantId, null, startDate, endDate));
         StringBuilder sb = new StringBuilder("流水ID,主商家ID,用户ID,用户姓名,手机号,充值金额,充值后余额,备注,创建时间\n");
-        List<AdminRechargeResponse> list = data.getList();
-        if (list != null) {
-            for (AdminRechargeResponse r : list) {
-                sb.append(join(r.getId(), r.getMainMerchantId(), r.getResidentId(), r.getResidentName(),
-                        r.getResidentPhone(), r.getAmount(), r.getBalanceAfter(), r.getRemark(), r.getCreatedAt()));
-            }
+        for (AdminRechargeResponse r : list) {
+            sb.append(join(r.getId(), r.getMainMerchantId(), r.getResidentId(), r.getResidentName(),
+                    r.getResidentPhone(), r.getAmount(), r.getBalanceAfter(), r.getRemark(), r.getCreatedAt()));
         }
         return sb.toString();
     }
 
     private String exportFlows(String merchantId, String startDate, String endDate) {
-        PageResponse<DirectedFlowResponse> data = adminCanteenService.listFlows(
-                1, 1000, merchantId, null, null, null, startDate, endDate);
+        List<DirectedFlowResponse> list = collectAllPages(
+                page -> adminCanteenService.listFlows(page, EXPORT_PAGE_SIZE, merchantId, null, null, null, startDate, endDate));
         StringBuilder sb = new StringBuilder("流水ID,主商家体系,消费商家,类型,金额,变动后余额,创建时间\n");
-        List<DirectedFlowResponse> list = data.getList();
-        if (list != null) {
-            for (DirectedFlowResponse r : list) {
-                sb.append(join(r.getId(), r.getMainMerchantName(), r.getMerchantName(),
-                        r.getFlowType(), r.getAmount(), r.getBalanceAfter(), r.getCreatedAt()));
-            }
+        for (DirectedFlowResponse r : list) {
+            sb.append(join(r.getId(), r.getMainMerchantName(), r.getMerchantName(),
+                    r.getFlowType(), r.getAmount(), r.getBalanceAfter(), r.getCreatedAt()));
         }
         return sb.toString();
     }

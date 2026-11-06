@@ -112,7 +112,17 @@ public class AutoWithdrawalScheduler {
         return today.getDayOfYear() % periodDays == 0;
     }
 
+    /**
+     * 店铺归属住户：优先用 {@code resident_id}（权威归属），
+     * 只有历史未绑定的店才退回手机号反查——避免同号店铺的钱打到别人账上。
+     */
     private Resident resolveMerchantUser(Merchant merchant) {
+        if (StringUtils.hasText(merchant.getResidentId())) {
+            Resident bound = residentRepository.findById(merchant.getResidentId()).orElse(null);
+            if (bound != null) {
+                return bound;
+            }
+        }
         if (!StringUtils.hasText(merchant.getContactPhone())) {
             return null;
         }

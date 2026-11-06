@@ -114,31 +114,60 @@ public class PropertyCompanyService {
             String keyword,
             String status,
             String sort) {
-        roleGuard.requireAnyRole("platform_admin", "property_admin");
-        if (pageSize > 100) {
-            throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
-        }
-        validateStatus(status);
-
+        // 注册页要按「物业公司 → 小区」选归属，调用方是还没登录的新住户，
+        // 此前这里一刀切 requireAnyRole(管理员) 直接把注册流程打死（线上实测 403，
+        // 前端把它显示成「暂无可选物业公司」）。改为按身份分档：
+        //   管理员：全量字段（含小区数/商户数/住户数、联系电话、地址），可按 status 过滤；
+        //   其他身份与未登录：只回选择所需的 id/name/logoUrl，且强制 status=active。
+        // 公开档的信息量不超过本就免登录可访问的 GET /property-companies/{id}。
+        boolean adminView = roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin();
+        String effectiveStatus = status;
         String scopedId = null;
-        if (roleGuard.isPropertyAdmin()) {
-            scopedId = UserContext.currentPropertyCompanyId();
+
+        if (adminView) {
+            if (pageSize > 100) {
+                throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
+            }
+            validateStatus(status);
+            if (roleGuard.isPropertyAdmin()) {
+                scopedId = UserContext.currentPropertyCompanyId();
+            }
+        } else {
+            // 公开档忽略传入 status，避免调用方拿 inactive/任意值翻出停用物业公司
+            effectiveStatus = "active";
         }
 
         Pageable pageable = buildPageable(page, pageSize, sort);
         Page<PropertyCompany> companyPage = propertyCompanyRepository.findAll(
-                PropertyCompanySpecifications.withFilters(keyword, status, scopedId),
+                PropertyCompanySpecifications.withFilters(keyword, effectiveStatus, scopedId),
                 pageable);
 
-        List<PropertyCompanyListItemResponse> list = companyPage.getContent().stream()
-                .map(company -> propertyCompanyConverter.toListItem(
-                        company,
-                        communityRepository.countByPropertyCompanyId(company.getId()),
-                        merchantRepository.countByPropertyCompanyId(company.getId()),
-                        residentRepository.countByPropertyCompanyId(company.getId())))
-                .toList();
+        List<PropertyCompanyListItemResponse> list = adminView
+                ? companyPage.getContent().stream()
+                        .map(company -> propertyCompanyConverter.toListItem(
+                                company,
+                                communityRepository.countByPropertyCompanyId(company.getId()),
+                                merchantRepository.countByPropertyCompanyId(company.getId()),
+                                residentRepository.countByPropertyCompanyId(company.getId())))
+                        .toList()
+                : companyPage.getContent().stream()
+                        .map(this::toPublicListItem)
+                        .toList();
 
         return PageResponse.of(list, page, pageSize, companyPage.getTotalElements());
+    }
+
+    /**
+     * 公开档列表项：只带选择所需字段。
+     * 其余字段留 null，由全局 {@code default-property-inclusion: non_null} 直接不输出，
+     * 因此响应里不会出现 contactPhone / address / stats。
+     */
+    private PropertyCompanyListItemResponse toPublicListItem(PropertyCompany company) {
+        return PropertyCompanyListItemResponse.builder()
+                .id(company.getId())
+                .name(company.getName())
+                .logoUrl(company.getLogoUrl())
+                .build();
     }
 
     @Transactional(readOnly = true)
@@ -151,13 +180,42 @@ public class PropertyCompanyService {
     @Transactional(readOnly = true)
     public CommunityListResponse listCommunities(String id) {
         validatePropertyCompanyId(id);
-        PropertyCompany company = getReadableCompany(id);
-        List<CommunityItemResponse> communities = communityRepository.findByPropertyCompanyId(company.getId()).stream()
-                .map(propertyCompanyConverter::toCommunityItem)
-                .toList();
+        // 注册页第二步「所属小区」的下拉同样是未登录住户在调，
+        // 走 getReadableCompany 会被管理员角色门挡成 403，故此处按身份分档。
+        PropertyCompany company = propertyCompanyRepository.findById(id)
+                .orElseThrow(() -> new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND));
+
+        if (roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin()) {
+            // 物业管理员仍只能看本公司小区（沿用 getReadableCompany 的既有收敛，别在这里放开）
+            if (roleGuard.isPropertyAdmin()
+                    && !company.getId().equals(UserContext.currentPropertyCompanyId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED, "无权访问该物业公司");
+            }
+            return buildCommunityList(company.getId(),
+                    communityRepository.findByPropertyCompanyId(company.getId()).stream()
+                            .map(propertyCompanyConverter::toCommunityItem)
+                            .toList());
+        }
+
+        // 公开档：停用的物业公司不给翻小区；小区只回选择所需的 id/name/address，且只列启用中的
+        if (!"active".equals(company.getStatus())) {
+            throw new BizException(ErrorCode.PROPERTY_COMPANY_NOT_FOUND);
+        }
+        return buildCommunityList(company.getId(),
+                communityRepository.findByPropertyCompanyId(company.getId()).stream()
+                        .filter(community -> "active".equals(community.getStatus()))
+                        .map(community -> CommunityItemResponse.builder()
+                                .id(community.getId())
+                                .name(community.getName())
+                                .address(community.getAddress())
+                                .build())
+                        .toList());
+    }
+
+    private CommunityListResponse buildCommunityList(String propertyCompanyId, List<CommunityItemResponse> list) {
         return CommunityListResponse.builder()
-                .propertyCompanyId(company.getId())
-                .list(communities)
+                .propertyCompanyId(propertyCompanyId)
+                .list(list)
                 .build();
     }
 

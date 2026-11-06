@@ -82,7 +82,12 @@ public class CommunityRoomService {
         List<AvailableRoomItemResponse> items = new ArrayList<>();
         for (CommunityRoom r : rooms) {
             String key = roomKey(r.getBuilding(), r.getUnit(), r.getRoom());
-            if (occupied.containsKey(key) || STATUS_LOCKED.equals(r.getStatus())) {
+            // 条目32：占用判定补上「房号主表状态」，住户占用作为交叉校验。
+            // 此前只排除 locked，主表 status=occupied 的房号（如已绑定住户的 108）仍被列为可用。
+            // 只按已知占用态排除，避免历史数据里 status 为空/未知值时把可选房号一起吞掉。
+            if (occupied.containsKey(key)
+                    || STATUS_OCCUPIED.equals(r.getStatus())
+                    || STATUS_LOCKED.equals(r.getStatus())) {
                 continue; // 已占用或锁定的房号不可选
             }
             items.add(AvailableRoomItemResponse.builder()
@@ -421,7 +426,9 @@ public class CommunityRoomService {
             // 主表 unit 已规范为 ''，住户 unit 可能为 null，故两者等价匹配
             return cb.or(cb.equal(root.get("unit"), unit), cb.equal(root.get("unit"), ""));
         }
-        return cb.or(cb.isNull(root.get("unit")), cb.equal(root.get("unit"), ""));
+        // 条目32：未指定单元时不能只把「无单元」的住户算作占用，
+        // 否则 1 单元已入住的房号在只传 building 的查询里会被当成可用。
+        return cb.conjunction();
     }
 
     private String currentResidentName(CommunityRoom room) {

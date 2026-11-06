@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,6 +52,7 @@ public class CourierManagerService {
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final WithdrawableService withdrawableService;
+    private final RoleWithdrawableService roleWithdrawableService;
 
     // ============== 快递负责人 CRUD ==============
 
@@ -284,6 +286,9 @@ public class CourierManagerService {
                     .deliveryTimeConfig(manager.getDeliveryTimeConfig())
                     .courierCount(courierCount)
                     .withdrawableAmount(w.withdrawableAmount())
+                    .pendingWithdrawalAmount(roleWithdrawableService.courierPendingWithdrawal(manager.getId()))
+                    .feeRate(roleWithdrawableService.feeRate(manager.getPropertyCompanyId()))
+                    .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                     .totalWithdrawn(w.totalWithdrawn())
                     .withdrawalBlocked(w.withdrawalBlocked())
                     .status(manager.getStatus())
@@ -309,6 +314,9 @@ public class CourierManagerService {
                 .deliveryTimeConfig(null)
                 .courierCount(0L)
                 .withdrawableAmount(w.withdrawableAmount())
+                .pendingWithdrawalAmount(roleWithdrawableService.courierPendingWithdrawal(courier.getId()))
+                .feeRate(roleWithdrawableService.feeRate(courier.getPropertyCompanyId()))
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .totalWithdrawn(w.totalWithdrawn())
                 .withdrawalBlocked(w.withdrawalBlocked())
                 .status(StringUtils.hasText(courier.getStatus()) ? courier.getStatus() : "active")
@@ -327,7 +335,7 @@ public class CourierManagerService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds == null || residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, resident -> resident));

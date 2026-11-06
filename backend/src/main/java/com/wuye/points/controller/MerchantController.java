@@ -5,6 +5,7 @@ import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.merchant.CreateMerchantRequest;
 import com.wuye.points.dto.merchant.MerchantDetailResponse;
 import com.wuye.points.dto.merchant.MerchantListItemResponse;
+import com.wuye.points.dto.merchant.MerchantQrCodeResponse;
 import com.wuye.points.dto.merchant.UpdateDeliveryFeesRequest;
 import com.wuye.points.dto.merchant.UpdateMerchantRequest;
 import com.wuye.points.dto.order.ChooseFulfillmentRequest;
@@ -13,6 +14,7 @@ import com.wuye.points.dto.order.MerchantVerifyResponse;
 import com.wuye.points.dto.order.OrderListItemResponse;
 import com.wuye.points.dto.order.SendDeliveryResponse;
 import com.wuye.points.service.MerchantService;
+import com.wuye.points.service.MerchantQrCodeService;
 import com.wuye.points.service.MerchantVerificationService;
 import com.wuye.points.service.OrderService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -39,6 +41,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MerchantController {
 
     private final MerchantService merchantService;
+    private final MerchantQrCodeService merchantQrCodeService;
     private final OrderService orderService;
     private final MerchantVerificationService merchantVerificationService;
 
@@ -101,6 +104,21 @@ public class MerchantController {
     @GetMapping("/my")
     public ApiResponse<MerchantDetailResponse> getMyMerchant() {
         return ApiResponse.success(merchantService.getMyMerchant());
+    }
+
+    @Operation(summary = "生成我的收款二维码",
+            description = "为本人生成微信小程序码（永久有效，扫码直达本店页），图片URL写回 qrCodeUrl，"
+                    + "商家中心「收款二维码」区块随即有值。默认复用已有码，force=true 重新生成。角色: merchant")
+    @PostMapping("/my/qrcode")
+    public ApiResponse<MerchantQrCodeResponse> generateMyQrCode(
+            @Parameter(description = "是否强制重新生成") @RequestParam(defaultValue = "false") boolean force) {
+        return ApiResponse.success(merchantQrCodeService.generateForOwner(force));
+    }
+
+    @Operation(summary = "查看我的收款二维码", description = "不触发微信调用。角色: merchant")
+    @GetMapping("/my/qrcode")
+    public ApiResponse<MerchantQrCodeResponse> getMyQrCode() {
+        return ApiResponse.success(merchantQrCodeService.getForOwner());
     }
 
     @Operation(summary = "更新我的多档配送费",

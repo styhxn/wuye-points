@@ -9,15 +9,19 @@ import com.wuye.points.dto.admin.merchant.SetOfficialRecommendationRequest;
 import com.wuye.points.dto.merchant.ApplymentDetailResponse;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantApplyment;
+import com.wuye.points.entity.Product;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.repository.MerchantApplymentRepository;
 import com.wuye.points.repository.MerchantRepository;
+import com.wuye.points.repository.ProductRepository;
+import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.AdminSupport;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -26,6 +30,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class AdminMerchantService {
 
@@ -35,6 +40,8 @@ public class AdminMerchantService {
     private final AdminSupport adminSupport;
     private final SnowflakeIdGenerator idGenerator;
     private final MerchantApplymentService applymentService;
+    private final ProductRepository productRepository;
+    private final ResidentRepository residentRepository;
 
     @Transactional
     public KickMerchantResponse kickMerchant(String merchantId, KickMerchantRequest request) {
@@ -55,7 +62,16 @@ public class AdminMerchantService {
         }
 
         merchant.setStatus("kicked");
+        // 条目15：封禁/踢出的影响面按老板口径 = 只停商家身份，不动本人住户账号。
+        // 商家侧所有接口由 MerchantSupport.requireCurrentMerchant（status 必须 active）拒绝，
+        // 这里补齐三件必须同生同灭的事：商品下架、资金冻结、旧令牌失效。
+        merchant.setWithdrawalBlocked(true);
         merchantRepository.save(merchant);
+
+        int productsTakenOff = takeDownActiveProducts(merchantId);
+        revokeMerchantUserSessions(merchant);
+
+        log.info("[踢出商家] merchantId={} 商品下架={} 提现冻结=true", merchantId, productsTakenOff);
 
         return KickMerchantResponse.builder()
                 .id(merchant.getId())
@@ -63,6 +79,33 @@ public class AdminMerchantService {
                 .reason(request.getReason())
                 .kickedAt(DateTimeUtil.toIsoUtc(LocalDateTime.now()))
                 .build();
+    }
+
+    /** 商家被踢后其在售（active）商品全部下架；已售罄/已下架的不动，历史订单不受影响。 */
+    private int takeDownActiveProducts(String merchantId) {
+        int count = 0;
+        for (Product product : productRepository.findByMerchantId(merchantId)) {
+            if ("active".equals(product.getStatus())) {
+                product.setStatus("inactive");
+                productRepository.save(product);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 让该店主账号的既有令牌立即失效（下一次请求就得重新登录，进不去商家工作台）。
+     * 只递增 token_version，不改 residents.status——本人作为住户的登录与资产不受影响。
+     */
+    private void revokeMerchantUserSessions(Merchant merchant) {
+        if (!StringUtils.hasText(merchant.getResidentId())) {
+            return;
+        }
+        residentRepository.findById(merchant.getResidentId()).ifPresent(owner -> {
+            owner.setTokenVersion((owner.getTokenVersion() != null ? owner.getTokenVersion() : 0) + 1);
+            residentRepository.save(owner);
+        });
     }
 
     @Transactional

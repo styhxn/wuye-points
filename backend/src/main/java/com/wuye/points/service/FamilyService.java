@@ -46,6 +46,7 @@ public class FamilyService {
     private final FamilyConverter familyConverter;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
+    private final RoomOccupancyGuard roomOccupancyGuard;
 
     @Transactional
     public FamilyResponse createFamily(CreateFamilyRequest request) {
@@ -74,6 +75,11 @@ public class FamilyService {
 
         int ownerPoints = owner.getPointBalance() != null ? owner.getPointBalance() : 0;
         BigDecimal ownerCoins = owner.getCoinBalance() != null ? owner.getCoinBalance() : BigDecimal.ZERO;
+
+        // 一个房号只允许一个家庭：此前只有前端选择器在挡，接口层能绕过造出两个家庭同房号。
+        // 已被别人占住时不再简单拒死，而是引导走「户主添加家庭成员」这条正确路径。
+        roomOccupancyGuard.assertRoomNotTaken(request.getCommunityId(), request.getBuilding(),
+                request.getUnit(), request.getRoom(), null, owner.getId());
 
         Family family = new Family();
         family.setId(idGenerator.generateId("fam"));
@@ -128,7 +134,14 @@ public class FamilyService {
         }
         Family family = getFamilyForUpdate(current.getFamilyId());
         assertFamilyOwner(family);
+        String beforeAddress = addressKey(family.getCommunityId(), family.getBuilding(), family.getUnit(), family.getRoom());
         applyFamilyUpdate(family, request);
+        if (!beforeAddress.equals(addressKey(family.getCommunityId(), family.getBuilding(),
+                family.getUnit(), family.getRoom()))) {
+            roomOccupancyGuard.assertRoomNotTaken(family.getCommunityId(), family.getBuilding(),
+                    family.getUnit(), family.getRoom(), family.getId(), current.getId());
+            syncMemberAddress(family);
+        }
         familyRepository.save(family);
         return buildDetail(family);
     }
@@ -171,6 +184,9 @@ public class FamilyService {
 
         member.setFamilyId(family.getId());
         member.setFamilyRelation(request.getRelation());
+        // 家庭成员的住址以家庭为准：此前只搬余额不写地址，被添加进来的人仍是「无房号住户」，
+        // 定向通告按楼栋筛选、邻居列表、楼栋长范围都查不到他（2026-11-06 家庭与房号冲突整改）。
+        applyAddress(member, family);
 
         familyRepository.save(family);
         residentRepository.save(member);
@@ -215,6 +231,7 @@ public class FamilyService {
         member.setCoinBalance(avgCoin);
         member.setFamilyId(null);
         member.setFamilyRelation(null);
+        releaseRoom(member);
 
         family.setPointBalance(defaultPointBalance(family) - avgPoints);
         family.setCoinBalance(defaultCoinBalance(family).subtract(avgCoin));
@@ -291,6 +308,51 @@ public class FamilyService {
     private FamilyDetailResponse buildDetail(Family family) {
         List<Resident> members = residentRepository.findByFamilyId(family.getId());
         return familyConverter.toDetail(family, members);
+    }
+
+    /**
+     * 家庭地址变更后把住址同步到全部成员（含户主）：`residents` 与 `families` 的地址必须一致，
+     * 否则「同房号」判定、定向通告楼栋筛选、家庭池口径会各自读到不同答案。
+     */
+    private void syncMemberAddress(Family family) {
+        for (Resident member : residentRepository.findByFamilyId(family.getId())) {
+            applyAddress(member, family);
+            residentRepository.save(member);
+        }
+    }
+
+    /**
+     * 脱离家庭即不再占住房号（2026-11-06 老板口径）。
+     *
+     * <p>住址随家庭写入成员后，若退出/被移出时仍留着楼栋单元房号，这个家庭就永久占着一个房号：
+     * 可选房号列表里不会出现，别人也建不了家庭，而系统里又查不到这个人和该房号的关系。
+     * 只清 楼栋/单元/房号，保留 {@code communityId}（他仍属于这个小区账号，与刚注册未填地址的人同状态）。</p>
+     */
+    private void releaseRoom(Resident member) {
+        member.setBuilding(null);
+        member.setUnit(null);
+        member.setRoom(null);
+    }
+
+    private void applyAddress(Resident member, Family family) {
+        // 家庭本身没有地址（历史数据/管理端预建）时不写空值，否则会把成员原有的住址抹掉。
+        if (!StringUtils.hasText(family.getBuilding()) || !StringUtils.hasText(family.getRoom())) {
+            return;
+        }
+        member.setCommunityId(family.getCommunityId());
+        member.setBuilding(family.getBuilding());
+        member.setUnit(family.getUnit());
+        member.setRoom(family.getRoom());
+    }
+
+    /** 地址比较键：单元/房号的历史值可能是 null 或带空格，统一按空串等价处理。 */
+    private String addressKey(String communityId, String building, String unit, String room) {
+        return String.join("|", nullToEmpty(communityId), nullToEmpty(building),
+                nullToEmpty(unit), nullToEmpty(room));
+    }
+
+    private String nullToEmpty(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
     }
 
     private void applyFamilyUpdate(Family family, UpdateFamilyRequest request) {
@@ -372,6 +434,7 @@ public class FamilyService {
         current.setCoinBalance(avgCoin);
         current.setFamilyId(null);
         current.setFamilyRelation(null);
+        releaseRoom(current);
 
         family.setPointBalance(defaultPointBalance(family) - avgPoints);
         family.setCoinBalance(defaultCoinBalance(family).subtract(avgCoin));

@@ -72,6 +72,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.DisplayLabelUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -89,6 +90,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -140,6 +142,7 @@ public class OrderService {
     private final PropertyManagerRepository propertyManagerRepository;
     private final ResidentMerchantApplicationRepository residentMerchantApplicationRepository;
     private final ListingStockService listingStockService;
+    private final DeliveryFeeCalculator deliveryFeeCalculator;
 
     @Transactional
     public CreateOrderResponse createOrder(CreateOrderRequest request) {
@@ -156,11 +159,18 @@ public class OrderService {
         BigDecimal subtotal = preparedItems.stream()
                 .map(PreparedItem::totalPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal deliveryFee = calculateDeliveryFee(merchant, subtotal);
+        // 条目14：团购免运费此前只在试算里生效，下单无条件按商家运费算，
+        // 结果「预览免、实收一笔配送费」。两处必须同源。
+        boolean groupBuy = isGroupBuyCart(preparedItems);
+        DeliveryFeeQuote quote = groupBuy
+                ? new DeliveryFeeQuote(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false)
+                : quoteDeliveryFee(merchant, subtotal, resident.getCommunityId());
+        BigDecimal deliveryFee = quote.charged();
         BigDecimal totalAmount = subtotal;
-        // 配送满额减免快照（规范§7.6）：减免额与承担方在下单时固定，结算不得按最新配置重算
-        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
-        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
+        // 配送满额减免快照（规范§7.6）：减免额与承担方在下单时固定，结算不得按最新配置重算。
+        // 原价取「档位/默认值报价结果」而不是单一 delivery_fee，否则档位差会被当成商家补贴扣商家钱。
+        BigDecimal originalDeliveryFee = quote.quoted();
+        BigDecimal deliveryWaiverAmount = quote.waiver();
 
         if (StringUtils.hasText(request.getFamilyId())) {
             if (!request.getFamilyId().equals(resident.getFamilyId())) {
@@ -179,7 +189,8 @@ public class OrderService {
         order.setTotalAmount(totalAmount);
         order.setDeliveryFee(deliveryFee);
         order.setOriginalDeliveryFee(originalDeliveryFee);
-        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "merchant" : "none");
+        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0
+                ? resolveSubsidySponsor(merchant) : "none");
         order.setDeliverySubsidyAmount(deliveryWaiverAmount);
         order.setPointUsed(0);
         order.setCoinUsed(BigDecimal.ZERO);
@@ -262,10 +273,11 @@ public class OrderService {
 
         BigDecimal unitPrice = defaultDecimal(listing.getRetailPrice());
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity)).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal deliveryFee = calculateDeliveryFee(merchant, totalAmount);
-        // 配送满额减免快照（规范§7.6）
-        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
-        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
+        DeliveryFeeQuote quote = quoteDeliveryFee(merchant, totalAmount, resident.getCommunityId());
+        BigDecimal deliveryFee = quote.charged();
+        // 配送满额减免快照（规范§7.6）：原价为档位/默认值报价结果，减免额只取真正被减免的部分
+        BigDecimal originalDeliveryFee = quote.quoted();
+        BigDecimal deliveryWaiverAmount = quote.waiver();
 
         Order order = new Order();
         order.setId(idGenerator.generateId("ord"));
@@ -279,7 +291,8 @@ public class OrderService {
         order.setTotalAmount(totalAmount);
         order.setDeliveryFee(deliveryFee);
         order.setOriginalDeliveryFee(originalDeliveryFee);
-        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "merchant" : "none");
+        order.setDeliverySubsidySponsor(deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0
+                ? resolveSubsidySponsor(merchant) : "none");
         order.setDeliverySubsidyAmount(deliveryWaiverAmount);
         order.setPointUsed(0);
         order.setCoinUsed(BigDecimal.ZERO);
@@ -523,12 +536,18 @@ public class OrderService {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "在线支付未开通，请联系物业或使用积分/物业币支付");
         }
-        // 防重复提交：订单已有待支付流水时拒绝，避免重复扣款
-        if (!paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
-                PaymentBizType.ORDER, order.getId(), "pending").isEmpty()) {
-            throw new BizException(ErrorCode.ORDER_CONFLICT, "订单支付处理中，请勿重复提交");
+        // 条目13：上一次拉起支付后取消/放弃，会留下一条 pending 流水（本单库存也已按它预占）。
+        // 以前一律回「订单支付处理中，请勿重复提交」，要等 30 分钟超时收尾才能重付。
+        // 现在先作废遗留流水（查单 → 已支付则提示到账中、未支付则微信关单）再新建，
+        // 与物业币二次充值同口径。库存只在首次预下单时扣：预占跟着流水走，重付沿用既有预占
+        // （与 restoreStock 的「有流水才算扣过」判据一致），不会重复扣减。
+        List<PaymentRecord> stalePayments = paymentRecordRepository.findByBizTypeAndBizIdAndStatus(
+                PaymentBizType.ORDER, order.getId(), "pending");
+        if (stalePayments.isEmpty()) {
+            deductStock(order, items);
         }
-        deductStock(order, items);
+        stalePayments.forEach(record -> wechatPayService.closeForRetry(record, "商城订单",
+                "上一笔支付已成功，正在确认到账，请稍后刷新订单，无需重复支付"));
         if (StringUtils.hasText(request.getFamilyId())) {
             order.setFamilyId(request.getFamilyId());
         }
@@ -955,22 +974,23 @@ public class OrderService {
         assertMerchantAvailable(merchant);
         loadMerchantConfig(merchant.getId(), resident.getPropertyCompanyId());
 
-        List<PreparedItem> preparedItems = prepareItems(request.getItems(), merchant.getId(), resident);
+        // 条目13：试算把「本人待支付订单已预占的库存」还回去——预支付即扣库存，
+        // 取消支付后重进支付页若按净库存判断，会误报库存不足并让前端兜底成「暂无法计算优惠」。
+        List<PreparedItem> preparedItems = prepareItems(request.getItems(), merchant.getId(), resident, true);
         BigDecimal productAmount = preparedItems.stream()
                 .map(PreparedItem::totalPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 团购单特殊口径：整单商品分类均为"团购"时免配送费
-        boolean groupBuy = !preparedItems.isEmpty() && preparedItems.stream()
-                .allMatch(item -> "团购".equals(item.product().getCategory()));
+        boolean groupBuy = isGroupBuyCart(preparedItems);
 
-        BigDecimal originalDeliveryFee = groupBuy ? BigDecimal.ZERO : defaultDecimal(merchant.getDeliveryFee());
-        BigDecimal deliveryFee = groupBuy ? BigDecimal.ZERO : calculateDeliveryFee(merchant, productAmount);
-        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
-        boolean freeDeliveryEligible = !groupBuy
-                && deliveryFee.compareTo(BigDecimal.ZERO) == 0
-                && merchant.getFreeDeliveryThreshold() != null
-                && productAmount.compareTo(merchant.getFreeDeliveryThreshold()) >= 0;
+        DeliveryFeeQuote quote = groupBuy
+                ? new DeliveryFeeQuote(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false)
+                : quoteDeliveryFee(merchant, productAmount, resident.getCommunityId());
+        BigDecimal deliveryFee = quote.charged();
+        BigDecimal originalDeliveryFee = quote.quoted();
+        BigDecimal deliveryWaiverAmount = quote.waiver();
+        boolean freeDeliveryEligible = !groupBuy && quote.waivedByThreshold();
 
         BigDecimal totalAmount = productAmount.add(deliveryFee);
 
@@ -985,7 +1005,8 @@ public class OrderService {
                 : null;
         PropertyCoinMallRuleService.CoinAllowance allowance = company != null
                 ? propertyCoinMallRuleService.previewCoinAllowance(
-                        company, totalAmount, request.getCoinUsed(), availableCoin)
+                        company, totalAmount, request.getCoinUsed(), availableCoin,
+                        propertyCoinService.isUseConditionSatisfied(resident))
                 : new PropertyCoinMallRuleService.CoinAllowance(
                         totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, totalAmount, null);
 
@@ -1017,7 +1038,8 @@ public class OrderService {
                 .deliveryWaiverAmount(deliveryWaiverAmount)
                 .deliverySubsidySponsor(groupBuy
                         ? null
-                        : (deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "merchant" : null))
+                        : (deliveryWaiverAmount.compareTo(BigDecimal.ZERO) > 0
+                                ? resolveSubsidySponsor(merchant) : null))
                 .deliverySubsidyAmount(deliveryWaiverAmount)
                 .deliverySettlementBase(deliveryFee.add(deliveryWaiverAmount))
                 .freeDeliveryEligible(freeDeliveryEligible)
@@ -1077,12 +1099,11 @@ public class OrderService {
         BigDecimal productAmount = retailPrice.multiply(BigDecimal.valueOf(quantity))
                 .setScale(2, RoundingMode.HALF_UP);
 
-        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
-        BigDecimal deliveryFee = calculateDeliveryFee(merchant, productAmount);
-        BigDecimal deliveryWaiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
-        boolean freeDeliveryEligible = deliveryFee.compareTo(BigDecimal.ZERO) == 0
-                && merchant.getFreeDeliveryThreshold() != null
-                && productAmount.compareTo(merchant.getFreeDeliveryThreshold()) >= 0;
+        DeliveryFeeQuote quote = quoteDeliveryFee(merchant, productAmount, resident.getCommunityId());
+        BigDecimal deliveryFee = quote.charged();
+        BigDecimal originalDeliveryFee = quote.quoted();
+        BigDecimal deliveryWaiverAmount = quote.waiver();
+        boolean freeDeliveryEligible = quote.waivedByThreshold();
 
         BigDecimal totalAmount = productAmount.add(deliveryFee);
 
@@ -1097,7 +1118,8 @@ public class OrderService {
                 : null;
         PropertyCoinMallRuleService.CoinAllowance allowance = company != null
                 ? propertyCoinMallRuleService.previewCoinAllowance(
-                        company, totalAmount, request.getCoinUsed(), availableCoin)
+                        company, totalAmount, request.getCoinUsed(), availableCoin,
+                        propertyCoinService.isUseConditionSatisfied(resident))
                 : new PropertyCoinMallRuleService.CoinAllowance(
                         totalAmount, BigDecimal.ZERO, BigDecimal.ZERO, totalAmount, null);
 
@@ -1175,12 +1197,15 @@ public class OrderService {
                     .multiply(BigDecimal.valueOf(item.getQuantity())));
         }
 
-        BigDecimal originalDeliveryFee = defaultDecimal(merchant.getDeliveryFee());
+        DeliveryFeeQuote quote = quoteDeliveryFee(merchant, productAmount,
+                getActiveResident(UserContext.currentUserId()).getCommunityId());
+        BigDecimal originalDeliveryFee = quote.quoted();
+        BigDecimal deliveryFee = quote.charged();
+        BigDecimal waiverAmount = quote.waiver();
         BigDecimal threshold = merchant.getFreeDeliveryThreshold();
-        boolean eligible = threshold != null && productAmount.compareTo(threshold) >= 0;
-        BigDecimal deliveryFee = calculateDeliveryFee(merchant, productAmount);
-        BigDecimal waiverAmount = originalDeliveryFee.subtract(deliveryFee).max(BigDecimal.ZERO);
-        BigDecimal shortfall = eligible || threshold == null
+        // 「还差多少免配送费」只在减免真的开着、且还没被免掉时才给数值
+        BigDecimal shortfall = quote.waivedByThreshold()
+                || !isFreeDeliveryEnabled(merchant) || threshold == null
                 ? BigDecimal.ZERO
                 : threshold.subtract(productAmount).max(BigDecimal.ZERO);
 
@@ -1188,11 +1213,11 @@ public class OrderService {
                 .productAmount(productAmount)
                 .deliveryFee(deliveryFee)
                 .freeDeliveryThreshold(threshold)
-                .freeDeliveryEligible(eligible)
+                .freeDeliveryEligible(quote.waivedByThreshold())
                 .freeDeliveryShortfall(shortfall)
                 .originalDeliveryFee(originalDeliveryFee)
                 .deliveryWaiverAmount(waiverAmount)
-                .deliverySubsidySponsor("merchant")
+                .deliverySubsidySponsor(resolveSubsidySponsor(merchant))
                 .deliverySubsidyAmount(waiverAmount)
                 .deliverySettlementBase(deliveryFee.add(waiverAmount))
                 .waiverReason(waiverAmount.compareTo(BigDecimal.ZERO) > 0 ? "threshold" : "none")
@@ -1247,6 +1272,10 @@ public class OrderService {
         refundPayment(resident, order, refundPoint, refundCoin);
         restoreStock(order, orderItemRepository.findByOrderId(order.getId()));
         reverseRewards(resident, order);
+        // 退款审核通过：先冲正分成台账 + 全主体钱包流水（与取消订单同一实现，幂等），再发起外部退款。
+        // 顺序放在退款 API 之前：冲正是本地事务，失败可整单回滚重试；若放在后面，冲正失败会留下
+        // "微信已退款但台账未冲正"的不可回滚中间态。不冲正会让台账与真实资金分叉。
+        distributionService.reverseForCancelledOrder(order.getId());
         refundCashIfAny(order, "退货审核通过");
         if (!StringUtils.hasText(order.getRefundStatus())) {
             order.setRefundStatus("refunded");
@@ -1333,7 +1362,7 @@ public class OrderService {
      */
     @Transactional
     public SendDeliveryResponse chooseFulfillment(String orderId, ChooseFulfillmentRequest request) {
-        roleGuard.requireAnyRole("merchant");
+        requireMerchantWorkspace();
         if (!orderId.startsWith("ord_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "订单ID格式不正确");
         }
@@ -1371,7 +1400,7 @@ public class OrderService {
      */
     @Transactional
     public SendDeliveryResponse sendDelivery(String orderId) {
-        roleGuard.requireAnyRole("merchant");
+        requireMerchantWorkspace();
         if (!orderId.startsWith("ord_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "订单ID格式不正确");
         }
@@ -1620,7 +1649,10 @@ public class OrderService {
 
     @Transactional
     public UpdateOrderStatusResponse updateStatus(String id, UpdateOrderStatusRequest request) {
-        roleGuard.requireAnyRole("merchant", "courier");
+        // 快递员保留角色门；商家侧改由「名下有店铺」判定，具体能否操作这张单由 assertCanManageOrder 把关
+        if (!roleGuard.isCourier()) {
+            requireMerchantWorkspace();
+        }
         if (!id.startsWith("ord_")) {
             throw new BizException(ErrorCode.PARAM_INVALID, "订单ID格式不正确");
         }
@@ -1691,7 +1723,8 @@ public class OrderService {
             throw new BizException(ErrorCode.ORDER_STATUS_INVALID);
         }
 
-        if (roleGuard.isMerchant()) {
+        if (isOwnMerchantOrder(order)) {
+            // 商家侧（含一级代理载体）：不再按 residents.role 判，见 requireMerchantWorkspace()
             if ("delivering".equals(targetStatus)) {
                 if (!"paid".equals(order.getOrderStatus())) {
                     throw new BizException(ErrorCode.ORDER_STATUS_INVALID);
@@ -1739,7 +1772,7 @@ public class OrderService {
     /** 按订单批量加载配送单（避免列表 N+1；无配送单的订单不出现在 Map 中） */
     private Map<String, Delivery> loadDeliveryMap(List<Order> orders) {
         if (orders == null || orders.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         List<String> orderIds = orders.stream().map(Order::getId).distinct().toList();
         return deliveryRepository.findByOrderIdIn(orderIds).stream()
@@ -1787,6 +1820,13 @@ public class OrderService {
     private List<PreparedItem> prepareItems(List<CreateOrderRequest.OrderItemRequest> items,
                                             String merchantId,
                                             Resident resident) {
+        return prepareItems(items, merchantId, resident, false);
+    }
+
+    private List<PreparedItem> prepareItems(List<CreateOrderRequest.OrderItemRequest> items,
+                                            String merchantId,
+                                            Resident resident,
+                                            boolean exemptSelfPending) {
         List<PreparedItem> preparedItems = new ArrayList<>();
         for (CreateOrderRequest.OrderItemRequest itemRequest : items) {
             if (!itemRequest.getProductId().startsWith("prd_")) {
@@ -1794,7 +1834,9 @@ public class OrderService {
                     throw new BizException(ErrorCode.PARAM_INVALID, "业主上架商品请调用 /orders/from-listing 下单");
                 }
                 if (itemRequest.getProductId().startsWith("dpr_")) {
-                    throw new BizException(ErrorCode.PARAM_INVALID, "货源商品请经由业主上架商品下单，请勿直接调用本接口");
+                    throw new BizException(ErrorCode.PARAM_INVALID,
+                            "货源商品请按订单详情的 listingId 调用 /orders/from-listing/preview 试算、"
+                                    + "/orders/from-listing 下单（待支付单重付同样走这两个接口）");
                 }
                 throw new BizException(ErrorCode.PARAM_INVALID, "商品ID格式不正确");
             }
@@ -1806,7 +1848,9 @@ public class OrderService {
             if (!"active".equals(product.getStatus())) {
                 throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "商品已下架");
             }
-            if (defaultStock(product) < itemRequest.getQuantity()) {
+            if (defaultStock(product) + (exemptSelfPending
+                    ? orderItemRepository.sumPendingReservedQuantity(resident.getId(), product.getId())
+                    : 0) < itemRequest.getQuantity()) {
                 throw new BizException(ErrorCode.ORDER_STATUS_INVALID, "商品库存不足");
             }
 
@@ -1825,13 +1869,56 @@ public class OrderService {
         return product.getPrice();
     }
 
-    private BigDecimal calculateDeliveryFee(Merchant merchant, BigDecimal subtotal) {
-        BigDecimal fee = defaultDecimal(merchant.getDeliveryFee());
+    /**
+     * 配送费报价（减免前 / 实收 / 减免额）。
+     *
+     * <p>先由 {@link DeliveryFeeCalculator} 按商家自由配置的档位（未命中回落到 {@code delivery_fee} 默认值）
+     * 得到「本次应收原价」，再判满额减免。<b>减免压在档位之上</b>：档位本身给出 0 时不算减免，
+     * 否则会把「档位差」错记成商家补贴（结算侧 {@code delivery_subsidy_sponsor=merchant} 会真扣商家钱）。</p>
+     */
+    private DeliveryFeeQuote quoteDeliveryFee(Merchant merchant, BigDecimal productAmount, String communityId) {
+        BigDecimal quoted = deliveryFeeCalculator.quote(merchant, productAmount, communityId);
         BigDecimal threshold = merchant.getFreeDeliveryThreshold();
-        if (threshold != null && subtotal.compareTo(threshold) >= 0) {
-            return BigDecimal.ZERO;
-        }
-        return fee;
+        boolean waived = isFreeDeliveryEnabled(merchant)
+                && quoted.compareTo(BigDecimal.ZERO) > 0
+                && threshold != null && productAmount.compareTo(threshold) >= 0;
+        BigDecimal charged = waived ? BigDecimal.ZERO : quoted;
+        return new DeliveryFeeQuote(quoted, charged, quoted.subtract(charged), waived);
+    }
+
+    /** 配送费报价结果：{@code quoted}=减免前原价（档位或默认值），{@code charged}=用户实付配送费。 */
+    private record DeliveryFeeQuote(BigDecimal quoted, BigDecimal charged, BigDecimal waiver, boolean waivedByThreshold) {
+    }
+
+    /**
+     * 满额减免是否生效：必须商家把开关打开（{@code free_delivery_enabled=true}）才按门槛免。
+     *
+     * <p>此前只看门槛，开关字段全仓只有写入、没有任何读取，等于形同虚设。线上实证：
+     * 商家「元序」(mch_386992df981000) 已把开关关掉、门槛 0.00 仍留着，结果每单都被免掉
+     * 0.01 元配送费（2026-11-06 四笔）。门槛为 0 时「满 0 元免运费」恒成立，
+     * 所以关开关必须优先于门槛判断。</p>
+     *
+     * <p>{@code null}（历史数据从未设置过）按未开启处理：现网仅 1 家 {@code null+有门槛}
+     * 且其配送费本就是 0.00，行为不变。</p>
+     */
+    private boolean isFreeDeliveryEnabled(Merchant merchant) {
+        return Boolean.TRUE.equals(merchant.getFreeDeliveryEnabled());
+    }
+
+    /** 减免承担方按商家配置取；历史 null 仍按商家承担，与规范§7.6 现口径一致。 */
+    private String resolveSubsidySponsor(Merchant merchant) {
+        return StringUtils.hasText(merchant.getFreeDeliverySponsor())
+                ? merchant.getFreeDeliverySponsor() : "merchant";
+    }
+
+    /**
+     * 团购单判定（下单/试算入参阶段，商品尚未落 order_items）：整单商品分类均为「团购」。
+     * 与 {@link #isGroupBuyOrder(List)}（支付后按 OrderItem 判定履约路由）同一条业务规则，
+     * 只是取数阶段不同；条目14 要求试算与下单共用，避免「预览免、实收」。
+     */
+    private static boolean isGroupBuyCart(List<PreparedItem> preparedItems) {
+        return !preparedItems.isEmpty() && preparedItems.stream()
+                .allMatch(item -> "团购".equals(item.product().getCategory()));
     }
 
     /**
@@ -1908,6 +1995,7 @@ public class OrderService {
         return switch (request.getPaymentMethod()) {
             case "property_coin" -> {
                 requireCoinRules(company);
+                propertyCoinService.assertUseConditionSatisfied(resident);
                 propertyCoinMallRuleService.assertCoinAllowed(company, payable, payable, availableCoin);
                 yield new PaymentBreakdown(0, payable, BigDecimal.ZERO);
             }
@@ -1941,6 +2029,7 @@ public class OrderService {
                 }
                 if (coinUsed.compareTo(BigDecimal.ZERO) > 0) {
                     requireCoinRules(company);
+                    propertyCoinService.assertUseConditionSatisfied(resident);
                     // 使用规则服务归一化后的金额，避免 10.005 这类超出 2 位小数的输入绕过余额/比例校验。
                     coinUsed = propertyCoinMallRuleService.assertCoinAllowed(
                             company, payable, coinUsed, availableCoin);
@@ -2185,10 +2274,8 @@ public class OrderService {
     }
 
     private void assertCanManageOrder(Order order) {
-        if (roleGuard.isMerchant()) {
-            if (!isOwnMerchantOrder(order)) {
-                throw new BizException(ErrorCode.PERMISSION_DENIED);
-            }
+        // 商家侧操作权认「名下确有该店铺」，不认 residents.role —— 见 requireMerchantWorkspace() 说明。
+        if (isOwnMerchantOrder(order)) {
             return;
         }
         if (roleGuard.isCourier()) {
@@ -2203,17 +2290,40 @@ public class OrderService {
                 && UserContext.currentUserId().equals(order.getResidentId());
     }
 
-    private boolean isOwnMerchantOrder(Order order) {
-        if (!roleGuard.isMerchant()) {
-            return false;
+    /**
+     * 商家侧操作门：认「名下有可用店铺」，而不是 {@code residents.role='merchant'}。
+     *
+     * <p>一级代理载体是审核通过时代建的（{@code AdminDistributorApplicationService}），
+     * 申请人的 role 并不会被改成 merchant，其登录态一直是 resident；
+     * 而订单主体（{@code orders.merchant_id}）就是这个代理载体。只卡角色会让
+     * 文档 §107.4.1「一级代理商可直接使用既有商家履约接口」落空——
+     * 现网 6 笔在途代销单全部是 30 分钟超时兜底改派出来的，没有一笔是代理自己选的履约方式。</p>
+     *
+     * <p>放宽后仍然安全：真正的边界是店铺归属（{@code merchants.resident_id}，
+     * 全项目唯一口径见 {@code MerchantSupport.isOwnedBy}），普通住户名下没有店铺，越不过去。</p>
+     */
+    private void requireMerchantWorkspace() {
+        if (roleGuard.isMerchant()) {
+            return;
         }
+        Resident user = residentRepository.findById(UserContext.currentUserId()).orElse(null);
+        if (user == null) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+        boolean ownsShop = merchantRepository.findByResidentId(user.getId()).stream()
+                .anyMatch(m -> "approved".equals(m.getAuditStatus()) && "active".equals(m.getStatus()));
+        if (!ownsShop) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+    }
+
+    private boolean isOwnMerchantOrder(Order order) {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
-        if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
+        if (merchantUser == null) {
             return false;
         }
         return merchantRepository.findById(order.getMerchantId())
-                .map(merchant -> merchantUser.getPhone().equals(merchant.getContactPhone())
-                        && merchantUser.getPropertyCompanyId().equals(merchant.getPropertyCompanyId()))
+                .map(merchant -> MerchantSupport.isOwnedBy(merchant, merchantUser))
                 .orElse(false);
     }
 
@@ -2243,13 +2353,7 @@ public class OrderService {
     private Merchant resolveOwnedMerchant() {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     private Order getOrderForUpdate(String id) {
@@ -2283,7 +2387,7 @@ public class OrderService {
     private Map<String, Merchant> loadMerchantMap(List<Order> orders) {
         List<String> merchantIds = orders.stream().map(Order::getMerchantId).distinct().toList();
         if (merchantIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity()));

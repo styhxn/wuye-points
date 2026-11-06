@@ -152,9 +152,7 @@ public class CommunityServiceService {
         service.setId(idGenerator.generateId("svc"));
         applyCreateFields(service, request);
         service.setProviderId(provider.getId());
-        // 2026-10-20 负责人标签化：个体负责人身份由 individual_leaders 表 active 记录判定，
-        // providerType 仍按「有效角色」记录，保持 individual_leader 类型不丢失
-        service.setProviderType(resolveProviderType(leaderIdentityGuard.currentEffectiveRole()));
+        service.setProviderType(resolveProviderType(provider));
         service.setPropertyCompanyId(provider.getPropertyCompanyId());
         service.setStatus("active");
         if (service.getRankOrder() == null) {
@@ -403,8 +401,8 @@ public class CommunityServiceService {
             throw new BizException(ErrorCode.PARAM_INVALID, "在线支付未开通，请使用物业币或积分支付");
         }
         closeStalePendingSubscriptions(service.getId(), resident.getId());
-        if (serviceSubscriptionRepository.findByServiceIdAndResidentIdAndStatus(
-                service.getId(), resident.getId(), "pending_payment") != null) {
+        if (!serviceSubscriptionRepository.findAllByServiceIdAndResidentIdAndStatus(
+                service.getId(), resident.getId(), "pending_payment").isEmpty()) {
             throw new BizException(ErrorCode.ORDER_CONFLICT, "订阅支付处理中，请勿重复提交");
         }
         executePaymentBreakdown(resident, service.getId(), amount, breakdown, "服务订阅");
@@ -468,18 +466,37 @@ public class CommunityServiceService {
      * 让用户可立即重新订阅。兜底于 {@code PendingPaymentScheduler}（30 分钟）。
      */
     private void closeStalePendingSubscriptions(String serviceId, String residentId) {
-        ServiceSubscription pending = serviceSubscriptionRepository
-                .findByServiceIdAndResidentIdAndStatus(serviceId, residentId, "pending_payment");
-        if (pending == null || pending.getCreatedAt() == null
-                || !pending.getCreatedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES))) {
+        List<ServiceSubscription> pendings = serviceSubscriptionRepository
+                .findAllByServiceIdAndResidentIdAndStatus(serviceId, residentId, "pending_payment");
+        if (pendings.isEmpty()) {
             return;
         }
-        pending.setStatus("cancelled");
-        serviceSubscriptionRepository.save(pending);
-        closePendingRecords(PaymentBizType.SERVICE_SUBSCRIPTION, pending.getId(),
-                "重新发起支付，原订阅作废");
-        log.info("[服务订阅] 作废超时支付订阅 serviceId={} residentId={} subscriptionId={}",
-                serviceId, residentId, pending.getId());
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(STALE_PENDING_MINUTES);
+        for (ServiceSubscription pending : pendings) {
+            if (pending.getCreatedAt() == null || !pending.getCreatedAt().isBefore(cutoff)) {
+                continue;
+            }
+            pending.setStatus("cancelled");
+            serviceSubscriptionRepository.save(pending);
+            closePendingRecords(PaymentBizType.SERVICE_SUBSCRIPTION, pending.getId(),
+                    "重新发起支付，原订阅作废");
+            log.info("[服务订阅] 作废超时支付订阅 serviceId={} residentId={} subscriptionId={}",
+                    serviceId, residentId, pending.getId());
+        }
+    }
+
+    /**
+     * 到期兜底：把已过 end_date 的 active 服务订阅批量置 expired。
+     * 列表侧的 refreshSubscriptionStatus 在 readOnly 事务里只改内存不落库，必须由这里补上，
+     * 否则 active 行会一直累积，取消订阅时同键命中多行。
+     */
+    @Transactional
+    public int expireOverdueSubscriptions() {
+        int expired = serviceSubscriptionRepository.expireOverdue(LocalDate.now());
+        if (expired > 0) {
+            log.info("[服务订阅到期] 置 expired {} 条", expired);
+        }
+        return expired;
     }
 
     /**
@@ -523,14 +540,19 @@ public class CommunityServiceService {
         Resident resident = getActiveResident(UserContext.currentUserId());
         CommunityService service = getReadableService(id, resident);
 
-        ServiceSubscription subscription = serviceSubscriptionRepository
-                .findByServiceIdAndResidentIdAndStatus(service.getId(), resident.getId(), "active");
-        if (subscription == null) {
+        // 同一 (service, resident) 可能有多条 active（过期行未被置 expired 的历史脏数据），
+        // 用单实体查询会抛 IncorrectResultSize 变成 500，这里按列表全部取消。
+        List<ServiceSubscription> actives = serviceSubscriptionRepository
+                .findAllByServiceIdAndResidentIdAndStatus(service.getId(), resident.getId(), "active");
+        if (actives.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_INVALID, "未找到有效订阅");
         }
-
-        subscription.setStatus("cancelled");
-        serviceSubscriptionRepository.save(subscription);
+        actives.forEach(subscription -> {
+            subscription.setStatus("cancelled");
+            subscription.setAutoRenew(false);
+        });
+        serviceSubscriptionRepository.saveAll(actives);
+        ServiceSubscription subscription = actives.get(0);
 
         return SubscribeServiceResponse.builder()
                 .id(subscription.getId())
@@ -539,8 +561,8 @@ public class CommunityServiceService {
                 .residentId(resident.getId())
                 .subType(subscription.getSubType())
                 .amount(subscription.getAmount())
-                .startDate(subscription.getStartDate().toString())
-                .endDate(subscription.getEndDate().toString())
+                .startDate(subscription.getStartDate() == null ? null : subscription.getStartDate().toString())
+                .endDate(subscription.getEndDate() == null ? null : subscription.getEndDate().toString())
                 .autoRenew(false)
                 .status("cancelled")
                 .createdAt(DateTimeUtil.toIsoUtc(subscription.getCreatedAt()))
@@ -747,15 +769,25 @@ public class CommunityServiceService {
         }
     }
 
-    private String resolveProviderType(String role) {
-        if ("merchant".equals(role)) {
+    /**
+     * 服务提供者类型：按「能以什么身份提供服务」判定，而不是账号的多身份优先级。
+     *
+     * <p>2026-11-06 前端问题：统筹同时又是个体负责人的人发布服务，管理端「提供者」显示「居民」。
+     * 原实现取 {@code currentEffectiveRole()}，其固定优先级 coordinator &gt; sector_leader &gt;
+     * individual_leader 会把个体负责人身份遮蔽，再落到默认分支变成 resident。
+     * 统筹/板块负责人/楼长属于管理身份，不构成服务提供者类型，故此处只看
+     * 商家、技工与个体负责人三种可提供方。</p>
+     */
+    private String resolveProviderType(Resident provider) {
+        if ("merchant".equals(provider.getRole())) {
             return "merchant";
         }
-        if ("individual_leader".equals(role)) {
-            return "individual_leader";
-        }
-        if ("technician".equals(role)) {
+        if ("technician".equals(provider.getRole())) {
             return "technician";
+        }
+        if (leaderIdentityGuard.activeIndividualLeader(
+                provider.getId(), provider.getPropertyCompanyId()).isPresent()) {
+            return "individual_leader";
         }
         return "resident";
     }
@@ -829,6 +861,7 @@ public class CommunityServiceService {
                     resident, breakdown.pointUsed(), "manual", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.assertUseConditionSatisfied(resident);
             propertyCoinService.spendCoins(
                     resident, breakdown.coinUsed(), "manual", referenceId, remark, null, useFamilyPool);
         }
@@ -865,11 +898,14 @@ public class CommunityServiceService {
         if (!StringUtils.hasText(value)) {
             return null;
         }
-        try {
-            return LocalDateTime.ofInstant(Instant.parse(value), ZONE_SHANGHAI);
-        } catch (Exception ex) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "serviceTime格式不正确");
+        // 条目29：小程序发的是不带偏移的 ISO 本地时间（2026-11-05T14:00:00），
+        // 之前只吃 Instant.parse，正常提交也会被判「格式不正确」。
+        LocalDateTime parsed = DateTimeUtil.parseApiDateTime(value, false);
+        if (parsed == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID,
+                    "serviceTime格式不正确，支持 yyyy-MM-ddTHH:mm:ss / yyyy-MM-dd HH:mm:ss / 带时区偏移的 ISO8601");
         }
+        return parsed;
     }
 
     private Map<String, Resident> loadProviders(List<String> providerIds) {

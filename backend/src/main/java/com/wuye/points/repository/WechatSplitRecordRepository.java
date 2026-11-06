@@ -28,6 +28,9 @@ public interface WechatSplitRecordRepository extends JpaRepository<WechatSplitRe
 
     List<WechatSplitRecord> findByOrderIdInAndStatusIn(java.util.Collection<String> orderIds, List<String> statuses);
 
+    /** 取指定订单的全部分账流水（含失败/待冻结），用于「我的分账所得」判定到账状态。 */
+    List<WechatSplitRecord> findByOrderIdIn(java.util.Collection<String> orderIds);
+
     List<WechatSplitRecord> findByGroupNo(String groupNo);
 
     boolean existsByOrderIdAndOwnerType(String orderId, String ownerType);

@@ -49,6 +49,10 @@ public class ApplymentDetailResponse {
     @Schema(description = "商家小程序/公众号 AppID")
     private String salesSubAppId;
 
+    @Schema(description = "平台小程序 AppID（服务商侧）：小程序场景可直接填入 salesAppId；未配置服务商支付时为空",
+            example = "wxf7230afd38275659")
+    private String platformAppId;
+
     @Schema(description = "场景截图 media_id 列表")
     private List<String> salesPics;
 
@@ -123,6 +127,9 @@ public class ApplymentDetailResponse {
 
     @Schema(description = "超级管理员签约链接（待签约阶段返回，前端转二维码给超管扫）")
     private String signUrl;
+
+    @Schema(description = "签约链接的二维码图片URL（服务端生成，待签约阶段返回；生成失败时为 null，前端退回复制链接）")
+    private String signQrCodeUrl;
 
     @Schema(description = "微信驳回原因")
     private String rejectReason;

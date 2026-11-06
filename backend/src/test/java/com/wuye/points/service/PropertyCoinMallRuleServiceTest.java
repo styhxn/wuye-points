@@ -81,4 +81,25 @@ class PropertyCoinMallRuleServiceTest {
                 company(true, "0.5", "0.01"), new BigDecimal("100"), new BigDecimal("40"), new BigDecimal("50"));
         assertEquals(0, new BigDecimal("40.00").compareTo(used));
     }
+
+    @Test
+    @DisplayName("使用条件不满足：试算抵扣归零并给出原因，与支付拒绝口径一致")
+    void preview_useConditionUnsatisfied() {
+        PropertyCoinMallRuleService.CoinAllowance allowance = service.previewCoinAllowance(
+                company(true, "1.0", "0.01"), new BigDecimal("100"), new BigDecimal("50"),
+                new BigDecimal("100"), false);
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(allowance.coinUsed()));
+        assertEquals("未满足物业币使用条件", allowance.reasonIfCapped());
+    }
+
+    @Test
+    @DisplayName("使用条件满足：试算沿用商城比例与余额上限")
+    void preview_useConditionSatisfied() {
+        PropertyCoinMallRuleService.CoinAllowance allowance = service.previewCoinAllowance(
+                company(true, "0.5", "0.01"), new BigDecimal("100"), new BigDecimal("50"),
+                new BigDecimal("100"), true);
+
+        assertEquals(0, new BigDecimal("50.00").compareTo(allowance.coinUsed()));
+    }
 }

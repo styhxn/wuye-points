@@ -11,12 +11,14 @@ import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantPropertyConfig;
 import com.wuye.points.entity.Product;
 import com.wuye.points.util.DateTimeUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.List;
 
+@Slf4j
 @Component
 public class MerchantConverter {
 
@@ -172,13 +174,32 @@ public class MerchantConverter {
         }
     }
 
+    /**
+     * 解析配送费档位 JSON。
+     *
+     * <p>容错两点，否则档位会在读取侧静默变空、配置永远不生效（本次「档位不生效」的机制之一）：</p>
+     * <ul>
+     *   <li>H2（测试库）的 {@code json} 列会把整段数组再包一层字符串返回，MySQL 不会，两种形态都要能读；</li>
+     *   <li>真解析失败时打 WARN，而不是无声返回空列表。</li>
+     * </ul>
+     */
     public List<DeliveryFeeTier> parseDeliveryFeeTiers(String json) {
         if (json == null || json.isBlank()) {
             return Collections.emptyList();
         }
+        String payload = json.trim();
+        if (payload.startsWith("\"") && payload.endsWith("\"")) {
+            try {
+                payload = objectMapper.readValue(payload, String.class);
+            } catch (JsonProcessingException e) {
+                log.warn("[配送费档位] 外层字符串解包失败，按未配置处理 raw={}", json, e);
+                return Collections.emptyList();
+            }
+        }
         try {
-            return objectMapper.readValue(json, TIER_LIST);
+            return objectMapper.readValue(payload, TIER_LIST);
         } catch (JsonProcessingException e) {
+            log.warn("[配送费档位] JSON 解析失败，按未配置处理 raw={}", json, e);
             return Collections.emptyList();
         }
     }

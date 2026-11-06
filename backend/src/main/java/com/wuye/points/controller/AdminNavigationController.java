@@ -30,8 +30,9 @@ public class AdminNavigationController {
     @Operation(summary = "导航项列表", description = "Roles: property_admin, platform_admin")
     @GetMapping
     public ApiResponse<List<NavigationItem>> list(
-            @Parameter(description = "物业公司ID（platform_admin 可传）") @RequestParam(required = false) String propertyCompanyId) {
-        return ApiResponse.success(adminNavigationService.list(propertyCompanyId));
+            @Parameter(description = "物业公司ID（platform_admin 可传）") @RequestParam(required = false) String propertyCompanyId,
+            @Parameter(description = "模块过滤：home/service/activity/resident_merchant") @RequestParam(required = false) String module) {
+        return ApiResponse.success(adminNavigationService.list(propertyCompanyId, module));
     }
 
     @Operation(summary = "新增导航项", description = "Roles: property_admin, platform_admin")

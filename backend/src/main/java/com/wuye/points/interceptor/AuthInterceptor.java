@@ -131,10 +131,19 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         // 匹配 /{resource}/{id} 模式（排除子路径）
         if (path.startsWith("/announcements/") || path.startsWith("/services/")
-                || path.startsWith("/activity-groups/") || path.startsWith("/special-offers/")
-                || path.startsWith("/property-companies/")) {
+                || path.startsWith("/activity-groups/") || path.startsWith("/special-offers/")) {
             String suffix = path.substring(path.indexOf('/', 1) + 1);
             return !suffix.contains("/");
+        }
+        // 物业公司额外放开一段：注册页第二步「所属小区」调 GET /property-companies/{id}/communities，
+        // 调用方同样是未登录住户；该路径的公开档只回小区 id/name/address（见 PropertyCompanyService 分档）。
+        if (path.startsWith("/property-companies/")) {
+            String suffix = path.substring("/property-companies/".length());
+            if (!suffix.contains("/")) {
+                return !suffix.isEmpty();
+            }
+            String[] segments = suffix.split("/");
+            return segments.length == 2 && "communities".equals(segments[1]);
         }
         return false;
     }

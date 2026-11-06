@@ -26,6 +26,16 @@ public class SellerWalletResponse {
     @Schema(description = "在途金额（待审核+已通过待打款）", example = "100.00")
     private BigDecimal pendingAmount;
 
-    @Schema(description = "可提现余额（累计收益 - 已提现 - 在途）", example = "650.00")
+    @Schema(description = "可提现余额（账号统一收益账户：楼长分成 + 业主卖货 + 名下商家，"
+            + "扣全部角色已提现/在途；与 POST /resident-merchants/seller-wallet/withdrawals 校验同源）",
+            example = "650.00")
     private BigDecimal withdrawableAmount;
+
+    @Schema(description = "提现手续费率（物业公司覆盖值优先，未配置取平台默认，手续费开关关闭时为 0）",
+            example = "0.0060")
+    private BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
 }

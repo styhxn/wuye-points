@@ -1,5 +1,6 @@
 package com.wuye.points.service;
 
+import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.admin.buildingleader.AppointBuildingLeaderRequest;
 import com.wuye.points.dto.admin.buildingleader.BuildingLeaderDetailResponse;
 import com.wuye.points.dto.admin.buildingleader.BuildingLeaderListItemResponse;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -117,6 +119,38 @@ public class AdminBuildingLeaderService {
     }
 
     /**
+     * 任命目标解析：residentId 优先，其次按手机号在当前物业内定位（条目21）。
+     * 手机号解析带物业约束，避免跨物业同名手机号被误任命。
+     */
+    private Resident resolveAppointTarget(AppointBuildingLeaderRequest request, String scopedPropertyCompanyId) {
+        if (StringUtils.hasText(request.getResidentId())) {
+            adminSupport.validateIdPrefix(request.getResidentId(), "res_");
+            return residentRepository.findById(request.getResidentId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        }
+        if (!StringUtils.hasText(request.getPhone())) {
+            throw new BizException(ErrorCode.PARAM_MISSING, "residentId与phone至少传一个");
+        }
+        String phone = request.getPhone().trim();
+        if (StringUtils.hasText(scopedPropertyCompanyId)) {
+            return residentRepository.findByPhoneAndPropertyCompanyId(phone, scopedPropertyCompanyId)
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND,
+                            "该手机号在本物业公司下没有对应住户"));
+        }
+        String currentPropertyCompanyId = UserContext.currentPropertyCompanyId();
+        if (StringUtils.hasText(currentPropertyCompanyId)) {
+            Resident scoped = residentRepository
+                    .findByPhoneAndPropertyCompanyId(phone, currentPropertyCompanyId).orElse(null);
+            if (scoped != null) {
+                return scoped;
+            }
+        }
+        // 平台管理员无固定物业：手机号全站唯一时直接命中，后续同物业校验仍然生效
+        return residentRepository.findByPhone(phone)
+                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "该手机号没有对应住户"));
+    }
+
+    /**
      * 指定单元楼长核心逻辑（供管理端与物业经理工作台复用，权限校验由调用方完成）。
      *
      * @param scopedPropertyCompanyId 非空时限定目标住户必须属于该物业公司（物业经理工作台传入）；
@@ -125,10 +159,9 @@ public class AdminBuildingLeaderService {
     @Transactional
     public BuildingLeaderDetailResponse appointBuildingLeaderForScope(
             AppointBuildingLeaderRequest request, String scopedPropertyCompanyId) {
-        adminSupport.validateIdPrefix(request.getResidentId(), "res_");
-
-        Resident resident = residentRepository.findById(request.getResidentId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+        // 条目21：物业经理工作台上只有姓名/手机号可选，强迫前端持有 res_xxx 住户ID
+        // 才会出现「要填住户id不符合逻辑」。residentId 与 phone 二选一，手机号按物业定位。
+        Resident resident = resolveAppointTarget(request, scopedPropertyCompanyId);
         if (StringUtils.hasText(scopedPropertyCompanyId)) {
             if (!scopedPropertyCompanyId.equals(resident.getPropertyCompanyId())) {
                 throw new BizException(ErrorCode.PERMISSION_DENIED, "该住户不属于当前物业公司");
@@ -252,7 +285,7 @@ public class AdminBuildingLeaderService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, r -> r, (a, b) -> a));
@@ -260,7 +293,7 @@ public class AdminBuildingLeaderService {
 
     private Map<String, PropertyCompany> loadCompanies(Set<String> ids) {
         if (ids.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return propertyCompanyRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(PropertyCompany::getId, c -> c, (a, b) -> a));
@@ -268,7 +301,7 @@ public class AdminBuildingLeaderService {
 
     private Map<String, Community> loadCommunities(Set<String> ids) {
         if (ids.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return communityRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(Community::getId, c -> c, (a, b) -> a));
@@ -276,7 +309,7 @@ public class AdminBuildingLeaderService {
 
     private Map<String, BigDecimal> loadEarnings(List<String> leaderIds) {
         if (leaderIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         Map<String, BigDecimal> result = new HashMap<>();
         for (Object[] row : distributionRecordRepository.sumBuildingLeaderShareGrouped(leaderIds)) {

@@ -36,6 +36,14 @@ public class DistributorIdentityResponse {
     @Schema(description = "物业币应收可结算余额（已开通时非空）")
     private BigDecimal coinAvailableAmount;
 
+    @Schema(description = "商家现金提现 / 物业币兑换手续费率（物业公司覆盖值优先，未配置取 0.0060）",
+            example = "0.0060")
+    private BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
+
     @Schema(description = "累计营收（已开通时非空）")
     private BigDecimal totalRevenue;
 

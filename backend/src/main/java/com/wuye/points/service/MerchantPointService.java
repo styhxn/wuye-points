@@ -35,10 +35,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Set;
 
 @Slf4j
@@ -61,12 +63,17 @@ public class MerchantPointService {
     public PurchasePointResponse purchase(PurchasePointRequest request) {
         Merchant merchant = merchantSupport.requireCurrentMerchant();
 
+        // 条目17：应付金额由后端按商家积分兑换比折算（1元 = rate 积分），不接受前端提交值。
+        BigDecimal exchangeRate = resolveExchangeRate(merchant.getId(), merchant.getPropertyCompanyId());
+        BigDecimal payAmount = BigDecimal.valueOf(request.getPointAmount())
+                .divide(exchangeRate, 2, RoundingMode.HALF_UP);
+
         MerchantPointPurchase purchase = new MerchantPointPurchase();
         purchase.setId(idGenerator.generateId("mpp"));
         purchase.setMerchantId(merchant.getId());
         purchase.setPropertyCompanyId(merchant.getPropertyCompanyId());
         purchase.setPointAmount(request.getPointAmount());
-        purchase.setPayAmount(request.getPayAmount());
+        purchase.setPayAmount(payAmount);
         purchase.setAuditStatus("pending");
         purchase.setRemainingPoints(0);
         merchantPointPurchaseRepository.save(purchase);
@@ -76,6 +83,7 @@ public class MerchantPointService {
                 .merchantId(purchase.getMerchantId())
                 .pointAmount(purchase.getPointAmount())
                 .payAmount(purchase.getPayAmount())
+                .exchangeRate(exchangeRate)
                 .status(purchase.getAuditStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(purchase.getCreatedAt()))
                 .build();
@@ -118,31 +126,38 @@ public class MerchantPointService {
     @Transactional
     public GrantPointResponse grant(GrantPointRequest request) {
         Merchant merchant = merchantSupport.requireCurrentMerchant();
-        if (!request.getPurchaseId().startsWith("mpp_")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "purchaseId格式不正确");
-        }
-        if (!request.getResidentId().startsWith("res_")) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "residentId格式不正确");
+        if (!StringUtils.hasText(request.getPhone()) && !StringUtils.hasText(request.getResidentId())) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "phone与residentId至少传一个");
         }
 
-        MerchantPointPurchase purchase = merchantPointPurchaseRepository.findById(request.getPurchaseId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "购买记录不存在"));
-        if (!merchant.getId().equals(purchase.getMerchantId())) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED);
-        }
-        if (!"approved".equals(purchase.getAuditStatus())) {
-            throw new BizException(ErrorCode.MERCHANT_POINT_PURCHASE_AUDITING);
+        // 条目18：住户由手机号或住户ID定位，手机号按「手机号 + 商家所属物业」解析。
+        Resident resident;
+        if (StringUtils.hasText(request.getPhone())) {
+            resident = residentRepository
+                    .findByPhoneAndPropertyCompanyId(request.getPhone(), merchant.getPropertyCompanyId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND, "该手机号在本物业下无对应住户"));
+        } else {
+            if (!request.getResidentId().startsWith("res_")) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "residentId格式不正确");
+            }
+            resident = residentRepository.findById(request.getResidentId())
+                    .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
+            if (!merchant.getPropertyCompanyId().equals(resident.getPropertyCompanyId())) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "住户与商家不属于同一物业公司");
+            }
         }
 
-        int remaining = purchase.getRemainingPoints() != null ? purchase.getRemainingPoints() : 0;
-        if (remaining < request.getPointAmount()) {
+        int pointAmount = request.getPointAmount();
+        // 购买记录不再要求前端选择：显式传 purchaseId 时只扣该批次，否则按时间顺序（FIFO）跨批次扣减。
+        List<MerchantPointPurchase> batches = StringUtils.hasText(request.getPurchaseId())
+                ? List.of(loadDesignatedPurchase(merchant, request.getPurchaseId()))
+                : merchantPointPurchaseRepository.findApprovedWithRemainingForUpdate(merchant.getId());
+
+        int availableTotal = batches.stream()
+                .mapToInt(purchase -> purchase.getRemainingPoints() != null ? purchase.getRemainingPoints() : 0)
+                .sum();
+        if (availableTotal < pointAmount) {
             throw new BizException(ErrorCode.MERCHANT_POINT_INSUFFICIENT);
-        }
-
-        Resident resident = residentRepository.findById(request.getResidentId())
-                .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!merchant.getPropertyCompanyId().equals(resident.getPropertyCompanyId())) {
-            throw new BizException(ErrorCode.PARAM_INVALID, "住户与商家不属于同一物业公司");
         }
 
         BigDecimal exchangeRate = resolveExchangeRate(merchant.getId(), merchant.getPropertyCompanyId());
@@ -150,25 +165,41 @@ public class MerchantPointService {
                 ? request.getDescription()
                 : "商家线下消费返积分";
 
-        purchase.setRemainingPoints(remaining - request.getPointAmount());
-        merchantPointPurchaseRepository.save(purchase);
+        int pending = pointAmount;
+        String primaryPurchaseId = null;
+        for (MerchantPointPurchase purchase : batches) {
+            if (pending <= 0) {
+                break;
+            }
+            int available = purchase.getRemainingPoints() != null ? purchase.getRemainingPoints() : 0;
+            if (available <= 0) {
+                continue;
+            }
+            int deduct = Math.min(available, pending);
+            purchase.setRemainingPoints(available - deduct);
+            merchantPointPurchaseRepository.save(purchase);
+            pending -= deduct;
+            if (primaryPurchaseId == null) {
+                primaryPurchaseId = purchase.getId();
+            }
+        }
 
         PointRecord pointRecord = pointService.earnPoints(
                 resident,
-                request.getPointAmount(),
+                pointAmount,
                 "merchant_grant",
-                purchase.getId(),
+                primaryPurchaseId,
                 description,
                 UserContext.currentUserId());
 
         MerchantPointGrant grant = new MerchantPointGrant();
         grant.setId(idGenerator.generateId("mpg"));
         grant.setMerchantId(merchant.getId());
-        grant.setPurchaseId(purchase.getId());
+        grant.setPurchaseId(primaryPurchaseId);
         grant.setResidentId(resident.getId());
         grant.setFamilyId(resident.getFamilyId());
         grant.setPropertyCompanyId(merchant.getPropertyCompanyId());
-        grant.setPointAmount(request.getPointAmount());
+        grant.setPointAmount(pointAmount);
         grant.setExchangeRate(exchangeRate);
         grant.setDescription(description);
         merchantPointGrantRepository.save(grant);
@@ -176,14 +207,31 @@ public class MerchantPointService {
         return GrantPointResponse.builder()
                 .id(grant.getId())
                 .merchantId(merchant.getId())
-                .purchaseId(purchase.getId())
+                .purchaseId(primaryPurchaseId)
                 .residentId(resident.getId())
-                .pointAmount(request.getPointAmount())
+                .pointAmount(pointAmount)
                 .exchangeRate(exchangeRate)
-                .purchaseRemainingPoints(purchase.getRemainingPoints())
+                .purchaseRemainingPoints(
+                        (int) merchantPointPurchaseRepository.sumRemainingPointsByMerchantId(merchant.getId()))
                 .residentBalanceAfter(pointRecord.getBalance())
                 .createdAt(DateTimeUtil.toIsoUtc(grant.getCreatedAt()))
                 .build();
+    }
+
+    /** 显式指定批次发放：校验归属与审核状态，与 FIFO 路径共用同一套前置条件。 */
+    private MerchantPointPurchase loadDesignatedPurchase(Merchant merchant, String purchaseId) {
+        if (!purchaseId.startsWith("mpp_")) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "purchaseId格式不正确");
+        }
+        MerchantPointPurchase purchase = merchantPointPurchaseRepository.findById(purchaseId)
+                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND, "购买记录不存在"));
+        if (!merchant.getId().equals(purchase.getMerchantId())) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED);
+        }
+        if (!"approved".equals(purchase.getAuditStatus())) {
+            throw new BizException(ErrorCode.MERCHANT_POINT_PURCHASE_AUDITING);
+        }
+        return purchase;
     }
 
     private PurchaseRecordItemResponse toPurchaseRecordItem(MerchantPointPurchase purchase) {

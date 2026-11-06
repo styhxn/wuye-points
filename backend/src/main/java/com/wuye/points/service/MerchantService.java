@@ -27,9 +27,12 @@ import com.wuye.points.repository.ProductRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.MerchantSpecifications;
+import com.wuye.points.util.LeaderIdentityGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -44,6 +47,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MerchantService {
@@ -62,9 +66,11 @@ public class MerchantService {
     private final IndividualLeaderRepository individualLeaderRepository;
     private final MerchantConverter merchantConverter;
     private final MerchantCategoryService merchantCategoryService;
+    private final LeaderIdentityGuard leaderIdentityGuard;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final WithdrawableService withdrawableService;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final UnifiedEarningsService unifiedEarningsService;
     private final OrderRepository orderRepository;
     private final MerchantPointPurchaseRepository merchantPointPurchaseRepository;
@@ -108,9 +114,17 @@ public class MerchantService {
 
         Map<String, MerchantPropertyConfig> configMap = loadConfigMap(
                 merchantPage.getContent(), scopedPropertyCompanyId);
+        boolean canSeeCommission = canViewCommissionRates();
         List<MerchantListItemResponse> list = merchantPage.getContent().stream()
-                .map(merchant -> merchantConverter.toListItem(
-                        merchant, configMap.get(merchant.getId()), includeMemberInfo))
+                .map(merchant -> {
+                    MerchantListItemResponse item = merchantConverter.toListItem(
+                            merchant, configMap.get(merchant.getId()), includeMemberInfo);
+                    if (canSeeCommission) {
+                        MerchantPropertyConfig config = configMap.get(merchant.getId());
+                        item.setCommissionRate(config != null ? config.getCommissionRate() : null);
+                    }
+                    return item;
+                })
                 .toList();
 
         return PageResponse.of(list, page, pageSize, merchantPage.getTotalElements());
@@ -163,7 +177,11 @@ public class MerchantService {
                 merchant.getId(), "active");
         boolean includeMemberInfo = UserContext.currentUserId() != null;
 
-        return merchantConverter.toDetail(merchant, config, products, includeMemberInfo);
+        MerchantDetailResponse detail = merchantConverter.toDetail(merchant, config, products, includeMemberInfo);
+        if (canViewCommissionRates()) {
+            detail.setCommissionRate(config != null ? config.getCommissionRate() : null);
+        }
+        return detail;
     }
 
     @Transactional
@@ -292,6 +310,7 @@ public class MerchantService {
         merchant.setStatus("active");
         merchant.setMerchantType("canteen");
         merchant.setIsCanteenMainMerchant(Boolean.TRUE.equals(request.getIsMain()));
+        warnIfContactPhoneOwnedByAccount(request.getContactPhone(), request.getPropertyCompanyId());
         merchantRepository.save(merchant);
 
         MerchantPropertyConfig config = new MerchantPropertyConfig();
@@ -306,6 +325,20 @@ public class MerchantService {
         merchantPropertyConfigRepository.save(config);
 
         return merchantConverter.toDetail(merchant, config, List.of(), true);
+    }
+
+    /**
+     * 管理端建店时若把「已属于某个住户账号」的手机号填成联系人电话，这家店不会绑定 resident_id，
+     * 而店铺归属解析只认 resident_id，于是这家店不会有账号能自助管理（也不会再顶掉别人）。
+     * 这里只留痕提醒，不阻断——联系人电话本身允许复用，只是别指望它代表归属。
+     */
+    private void warnIfContactPhoneOwnedByAccount(String contactPhone, String propertyCompanyId) {
+        if (!StringUtils.hasText(contactPhone) || !StringUtils.hasText(propertyCompanyId)) {
+            return;
+        }
+        residentRepository.findByPhoneAndPropertyCompanyId(contactPhone, propertyCompanyId)
+                .ifPresent(owner -> log.warn("建店手机号冲突：联系人电话 {} 已属于住户账号 {}，新店未绑定 resident_id，"
+                        + "该账号登录后仍进入自己原有的店铺", contactPhone, owner.getId()));
     }
 
     @Transactional
@@ -429,6 +462,9 @@ public class MerchantService {
         response.setProfitBalance(shopWithdrawable);
         response.setProfitScope("shop");
         response.setWithdrawableBlocked(withdrawable.withdrawalBlocked());
+        response.setFeeRate(roleWithdrawableService
+                .merchantWithdrawalFeeRateForCompany(merchant.getPropertyCompanyId()));
+        response.setWithdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE);
         MerchantCoinReceivableService.MerchantIncome incomeSplit =
                 merchantCoinReceivableService.calc(merchant);
         boolean internal = merchantCoinReceivableService.isInternalEarningsMerchant(merchant);
@@ -449,19 +485,13 @@ public class MerchantService {
     }
 
     /**
-     * 解析当前登录用户的店铺：按登录住户手机号 + 物业公司匹配（不限角色）。
+     * 解析当前登录用户的店铺：先按 resident_id 归属，再退回未绑定店的手机号兜底（见 {@link MerchantSupport#findOwnedMerchant}）。
      * 组长（activity_leader）→ merchant_source=group_leader 的店；技工（technician）→ 技工店。
      */
     private Merchant resolveOwnedMerchant() {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     private void assertCanViewMerchant(Merchant merchant) {
@@ -502,18 +532,8 @@ public class MerchantService {
             return false;
         }
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
-        if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
-            return false;
-        }
-        if (!StringUtils.hasText(merchant.getContactPhone())) {
-            return false;
-        }
-        String userPc = merchantUser.getPropertyCompanyId();
-        String merchantPc = merchant.getPropertyCompanyId();
-        if (userPc == null || merchantPc == null || !userPc.equals(merchantPc)) {
-            return false;
-        }
-        return merchantUser.getPhone().equals(merchant.getContactPhone());
+        // 归属只认 resident_id；只有历史未绑定住户的店才退回手机号比对（2026-11-05 修复同号顶替）
+        return MerchantSupport.isOwnedBy(merchant, merchantUser);
     }
 
     /**
@@ -569,39 +589,59 @@ public class MerchantService {
      * 校验多档配送费：空数组合法（清空全部档位）；非空时至少一个 enabled=true，
      * minKm ≥ 0，maxKm > minKm（可为空=不限），区间不重叠且按 minKm 升序。
      */
+    /** 档位维度：金额区间与距离区间可混配，互不干涉；数组顺序即匹配优先级。 */
+    private static final Set<String> TIER_METRICS = Set.of("amount", "km");
+
     private void validateDeliveryFeeTiers(List<DeliveryFeeTier> tiers) {
         if (tiers.isEmpty()) {
             return;
         }
-        List<DeliveryFeeTier> enabledTiers = tiers.stream()
-                .filter(t -> !Boolean.FALSE.equals(t.getEnabled()))
-                .toList();
-        if (enabledTiers.isEmpty()) {
+        if (tiers.stream().noneMatch(DeliveryFeeTier::isEnabled)) {
             throw new BizException(ErrorCode.PARAM_INVALID, "deliveryFeeTiers至少需要一个 enabled=true 的档位");
         }
-        BigDecimal prevMax = null;
-        BigDecimal prevMin = null;
         for (DeliveryFeeTier tier : tiers) {
-            BigDecimal minKm = tier.getMinKm() != null ? tier.getMinKm() : BigDecimal.ZERO;
-            BigDecimal maxKm = tier.getMaxKm();
-            if (minKm.compareTo(BigDecimal.ZERO) < 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "minKm不能为负数");
+            String metric = tier.resolvedMetric();
+            if (!TIER_METRICS.contains(metric)) {
+                throw new BizException(ErrorCode.PARAM_INVALID,
+                        "metric只支持 amount（按订单商品金额）或 km（按商家到小区距离），实际=" + metric);
             }
-            if (maxKm != null && maxKm.compareTo(minKm) <= 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "maxKm必须大于minKm");
+            BigDecimal min = tier.resolvedMin();
+            BigDecimal max = tier.resolvedMax();
+            if (min.compareTo(BigDecimal.ZERO) < 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "min不能为负数");
+            }
+            if (max != null && max.compareTo(min) <= 0) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "max必须大于min（留空表示不限上限）");
             }
             if (tier.getFee() == null || tier.getFee().compareTo(BigDecimal.ZERO) < 0) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "fee不能为空且不能为负数");
             }
-            if (prevMax != null && minKm.compareTo(prevMax) < 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "配送费档位区间不得重叠，且需按minKm升序");
-            }
-            if (prevMin != null && minKm.compareTo(prevMin) < 0) {
-                throw new BizException(ErrorCode.PARAM_INVALID, "配送费档位需按minKm升序");
-            }
-            prevMin = minKm;
-            prevMax = maxKm != null ? maxKm : prevMax;
         }
+        // 同维度内区间不得重叠：否则同一笔订单会命中两档，收哪档取决于数组顺序，商家无法预期。
+        // 区间口径为「含下界、不含上界」，所以 0-20 与 20-50 相邻不算重叠。
+        for (String metric : TIER_METRICS) {
+            List<DeliveryFeeTier> sameMetric = tiers.stream()
+                    .filter(tier -> metric.equals(tier.resolvedMetric()))
+                    .toList();
+            for (int i = 0; i < sameMetric.size(); i++) {
+                for (int j = i + 1; j < sameMetric.size(); j++) {
+                    if (overlaps(sameMetric.get(i), sameMetric.get(j))) {
+                        throw new BizException(ErrorCode.PARAM_INVALID,
+                                "同一维度（" + metric + "）的配送费档位区间不得重叠，请检查相邻档位边界");
+                    }
+                }
+            }
+        }
+    }
+
+    /** 区间「含下界不含上界」，上界为空即 +∞：两区间相交 ⟺ a.min &lt; b.max 且 b.min &lt; a.max。 */
+    private boolean overlaps(DeliveryFeeTier left, DeliveryFeeTier right) {
+        return belowUpper(right.resolvedMin(), left.resolvedMax())
+                && belowUpper(left.resolvedMin(), right.resolvedMax());
+    }
+
+    private boolean belowUpper(BigDecimal value, BigDecimal upper) {
+        return upper == null || value.compareTo(upper) < 0;
     }
 
     private MerchantDetailResponse toDetail(Merchant merchant) {
@@ -615,6 +655,22 @@ public class MerchantService {
 
     private boolean isAdminUser() {
         return roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin();
+    }
+
+    /**
+     * 平台抽佣比例属经营敏感参数：只有管理侧（平台/物业管理员）与在职负责人标签
+     * （统筹 / 板块负责人 / 个体负责人）能看到；住户端与未登录调用方该键缺失。
+     */
+    private boolean canViewCommissionRates() {
+        if (isAdminUser()) {
+            return true;
+        }
+        if (!StringUtils.hasText(UserContext.currentUserId())) {
+            return false;
+        }
+        return leaderIdentityGuard.isCurrentCoordinator()
+                || leaderIdentityGuard.isCurrentSectorLeader()
+                || leaderIdentityGuard.isCurrentIndividualLeader();
     }
 
     private String resolveBrowsePropertyCompanyId(String propertyCompanyId) {

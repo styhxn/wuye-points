@@ -49,6 +49,10 @@ public class FileService {
             "service", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 6, true),
             "activity", new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true),
             "product", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), 20, true),
+            // C 端社区论坛发帖图与楼长公告封面用 community（App 侧每帖最多 9 张）：
+            // 历史白名单漏了这一类，导致论坛/楼长图片 100% 报「category值无效」。
+            // 累计数量不设上限——帖子图片随时间累积，设上限会让老用户某天突然发不出图。
+            "community", new CategoryRule(5 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp"), null, true),
             // 配送凭证独立分类：10MB、支持 mp4、不设累计数量上限（每笔最多 5 张由业务 DTO 限制）
             CATEGORY_DELIVERY_PROOF,
             new CategoryRule(10 * 1024 * 1024L, Set.of("jpg", "jpeg", "png", "webp", "mp4"), null, true),

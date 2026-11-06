@@ -118,6 +118,14 @@ public class Resident extends BaseEntity {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    /**
+     * 注销申请冷静期到期时间（status=pending_deletion 期间有值）。
+     * 整改清单条目9/10：原先用 deletedAt 兼作冷静期时间，导致账号被登录拦截器判成「已删除/被禁用」、
+     * 管理端审核也查不到人；deletedAt 恢复为「真正注销才写」，冷静期只读这一列。
+     */
+    @Column(name = "deletion_expires_at")
+    private LocalDateTime deletionExpiresAt;
+
     /** 是否准时缴费用户 */
     @Column(name = "on_time_payment_badge")
     private Boolean onTimePaymentBadge;

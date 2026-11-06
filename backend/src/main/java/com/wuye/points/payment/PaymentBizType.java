@@ -32,6 +32,9 @@ public final class PaymentBizType {
     /** 商家广告位购买 */
     public static final String AD_PURCHASE = "ad_purchase";
 
+    /** 商家扫码付款（收银台输金额，无商品订单） */
+    public static final String SCAN_PAY = "scan_pay";
+
     private PaymentBizType() {
     }
 }

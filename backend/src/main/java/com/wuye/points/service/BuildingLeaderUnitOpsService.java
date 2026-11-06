@@ -40,6 +40,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -314,7 +315,7 @@ public class BuildingLeaderUnitOpsService {
                 .distinct()
                 .toList();
         if (merchantIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity(), (a, b) -> a));

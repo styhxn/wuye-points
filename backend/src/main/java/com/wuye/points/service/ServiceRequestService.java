@@ -41,6 +41,7 @@ import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.ResidentAddressUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -52,6 +53,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -684,6 +686,7 @@ public class ServiceRequestService {
                     resident, breakdown.pointUsed(), "service_request", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.assertUseConditionSatisfied(resident);
             propertyCoinService.spendCoins(
                     resident, breakdown.coinUsed(), "service_request", referenceId, remark, null, useFamilyPool);
         }
@@ -714,7 +717,11 @@ public class ServiceRequestService {
                 .orElseThrow(() -> new BizException(ErrorCode.SERVICE_NOT_FOUND, "暂无可关联的社区服务"));
     }
 
+    /** 服务单的服务方账号：优先权威归属 resident_id，历史未绑定的店才退回手机号反查。 */
     private String resolveMerchantProviderResidentId(Merchant merchant) {
+        if (StringUtils.hasText(merchant.getResidentId())) {
+            return merchant.getResidentId();
+        }
         if (!StringUtils.hasText(merchant.getContactPhone())) {
             return null;
         }
@@ -743,7 +750,7 @@ public class ServiceRequestService {
     private Map<String, String> loadCategoryNames(List<String> ids) {
         List<String> filtered = ids.stream().filter(Objects::nonNull).distinct().toList();
         if (filtered.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         Map<String, String> map = new HashMap<>();
         serviceCategoryDictRepository.findAllById(filtered)
@@ -754,7 +761,7 @@ public class ServiceRequestService {
     private Map<String, String> loadMerchantNames(List<String> ids) {
         List<String> filtered = ids.stream().filter(Objects::nonNull).distinct().toList();
         if (filtered.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         Map<String, String> map = new HashMap<>();
         merchantRepository.findAllById(filtered).forEach(m -> map.put(m.getId(), m.getName()));
@@ -778,13 +785,13 @@ public class ServiceRequestService {
         if (!StringUtils.hasText(merchantUser.getPhone())) {
             throw new BizException(ErrorCode.MERCHANT_NOT_FOUND, "当前账号未绑定手机号，无法识别商家");
         }
-        Optional<Merchant> byPhoneAndCompany = merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId());
-        Merchant merchant = byPhoneAndCompany.orElseGet(() -> merchantRepository
-                .findFirstByContactPhoneOrderByCreatedAtDesc(merchantUser.getPhone())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND,
-                        "未找到与当前账号手机号关联的商家，请确认 merchants.contact_phone 已配置")));
+        // 先按 resident_id 归属，再退回未绑定店的手机号兜底；跨物业的历史店再全局手机号兜底
+        Merchant merchant = MerchantSupport.findOwnedMerchant(merchantRepository, merchantUser)
+                .orElseGet(() -> merchantRepository
+                        .findFirstByContactPhoneOrderByCreatedAtDesc(merchantUser.getPhone())
+                        .filter(m -> !StringUtils.hasText(m.getResidentId()))
+                        .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND,
+                                "未找到与当前账号手机号关联的商家，请确认 merchants.contact_phone 已配置")));
 
         // 强制校验商家资质，未通过审核或状态异常不能接单
         if (!"approved".equals(merchant.getAuditStatus())) {

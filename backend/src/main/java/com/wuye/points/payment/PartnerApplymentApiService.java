@@ -85,13 +85,18 @@ public class PartnerApplymentApiService {
     /**
      * 查询支持对公/个人业务的银行列表（进件「开户银行」下拉数据源）。
      *
+     * <p>微信侧 {@code limit} 为必填且非 0 正整数，全量约 4400+ 条，需由调用方分页拉全。
+     * 官方提示：该数据是微信后端缓存快照，需定期淘汰更新；银行别名字段仅用于展示与检索支行。</p>
+     *
      * @param bankAccountType BANK_ACCOUNT_TYPE_CORPORATE / BANK_ACCOUNT_TYPE_PERSONAL
+     * @param offset          起始偏移，从 0 开始
+     * @param limit           本次最大查询条数
      */
-    public JSONObject listBanks(String bankAccountType) {
+    public JSONObject listBanks(String bankAccountType, int offset, int limit) {
         String path = "BANK_ACCOUNT_TYPE_PERSONAL".equals(bankAccountType)
                 ? "personal-banking" : "corporate-banking";
         String resp = httpClient.get(props.getGateway()
-                + "/v3/capital/capitallhh/banks/" + path + "?offset=0&limit=100");
+                + "/v3/capital/capitallhh/banks/" + path + "?offset=" + offset + "&limit=" + limit);
         return JSONUtil.parseObj(resp);
     }
 

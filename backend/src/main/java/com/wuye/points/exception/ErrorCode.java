@@ -86,6 +86,7 @@ public enum ErrorCode {
     ACTIVITY_LEADER_CANNOT_LEAVE(90011, "组长不能退出活动组", 400),
     MESSAGE_NOT_FOUND(90012, "消息不存在", 404),
     NEIGHBOR_CONTACT_LIMIT_EXCEEDED(90013, "今日邻居私聊次数已达上限", 400),
+    NEIGHBOR_BLOCKED(90016, "对方已屏蔽你，无法发送消息", 400),
 
     // 统筹/板块/个体 91xxx
     COORDINATOR_NOT_FOUND(91001, "统筹不存在", 404),
@@ -221,6 +222,7 @@ public enum ErrorCode {
     COIN_EXCEED_MAX_RATIO(96032, "超过物业币商城最大占比", 400),
     PREVIEW_EXPIRED(96033, "预览快照已过期", 400),
     CONSULTATION_APPOINTMENT_UNAVAILABLE(96034, "咨询预约不可用", 400),
+    COIN_USE_CONDITION_NOT_SATISFIED(96035, "未满足物业币使用条件", 400),
 
     // 角色账号 97xxx 扩展
     // 原用 97010/97011，但《API接口文档》把这两个号段标给了「订单已完成分账」「配送已完成结算」
@@ -279,6 +281,7 @@ public enum ErrorCode {
     RECOVERY_NOT_FOUND(99013, "待追回台账记录不存在", 404),
     SPLIT_REVERSE_INCOMPLETE(99014, "订单分账尚未全部回退完成，暂不能发起退款", 409),
     REFUND_NOT_ENABLED(99015, "当前未开放用户主动申请退款，如有问题请联系物业", 400),
+    TRANSFER_OPENID_MISSING(99017, "当前账号未绑定微信身份（无 openid），请在小程序重新登录后再试", 400),
 
     // 优惠券 60xxx
     COUPON_TEMPLATE_NOT_FOUND(60040, "优惠券模板不存在", 404),

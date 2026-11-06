@@ -57,6 +57,8 @@ class MerchantServiceTotalRevenueTest {
     @Mock
     private MerchantConverter merchantConverter;
     @Mock
+    private RoleWithdrawableService roleWithdrawableService;
+    @Mock
     private RoleGuard roleGuard;
     @Mock
     private SnowflakeIdGenerator idGenerator;
@@ -129,11 +131,14 @@ class MerchantServiceTotalRevenueTest {
                 new MerchantCoinReceivableService.MerchantIncome(
                         new BigDecimal("12500.00"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of()));
+        when(roleWithdrawableService.merchantWithdrawalFeeRateForCompany("pc_001"))
+                .thenReturn(new BigDecimal("0.0060"));
 
         MerchantDetailResponse result = merchantService.getMyMerchant();
 
         assertEquals(new BigDecimal("12500.00"), result.getTotalRevenue());
         assertEquals(128L, result.getTotalOrders());
         assertEquals(5000, result.getPointBalance());
+        assertEquals(new BigDecimal("0.0060"), result.getFeeRate());
     }
 }

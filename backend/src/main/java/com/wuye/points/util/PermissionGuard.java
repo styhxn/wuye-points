@@ -329,20 +329,26 @@ public class PermissionGuard {
                         .forEach(codes::add);
             }
         }
+        Set<String> explicitlyGranted = new HashSet<>();
         userPermissionRepository.findByResidentIdAndPropertyCompanyId(userId, propertyCompanyId)
                 .forEach(override -> permissionRepository.findById(override.getPermissionId())
                         .ifPresent(p -> {
                             if (Boolean.TRUE.equals(override.getGranted())) {
                                 codes.add(p.getCode());
+                                explicitlyGranted.add(p.getCode());
                             } else {
                                 codes.remove(p.getCode());
                             }
                         }));
         // 下发给管理端的有效权限必须与接口可放行范围一致，避免“菜单有、接口 403”。
+        // 领导专属码：标签身份一律不下发（requirePermission 直接拒绝）；物业操作员默认剥夺，
+        // 但 hasPermission 认用户级授权，所以权限配置里显式授予过的必须照实下发，
+        // 否则接口已放行、菜单看不到，表现就是“赋予了也不生效”。
         boolean basePropertyAdmin = "property_admin".equals(normalizeBaseRole(resident.getRole()));
         boolean operatorAccount = isOperatorAccount(resident);
         codes.removeIf(code -> PLATFORM_ONLY_CODES.contains(code)
-                || (!basePropertyAdmin || operatorAccount) && PROPERTY_LEADER_ONLY_CODES.contains(code));
+                || ((!basePropertyAdmin || (operatorAccount && !explicitlyGranted.contains(code)))
+                    && PROPERTY_LEADER_ONLY_CODES.contains(code)));
         return codes;
     }
 
@@ -353,7 +359,36 @@ public class PermissionGuard {
         return code.replace(':', '.');
     }
 
+    /**
+     * 当前账号是否为「物业领导」。
+     *
+     * <p>整改清单条目37：现行模型下物业领导的登录态是 {@code role=property_admin} +
+     * {@code residents.property_sub_role=property_leader}，JWT 的 role 里根本不会出现
+     * {@code property_leader}，此前只比对 JWT 字符串导致「仅平台管理员或物业领导可用」
+     * 的板块把物业领导自己挡在门外。口径与
+     * {@code AdminPropertyOperatorService#requirePropertyLeaderOrAdmin} 保持一致：
+     * 兼容历史 role=property_leader，子角色为空的老 property_admin 主账号按领导放行，
+     * property_operator 一律不是领导。</p>
+     */
     public boolean isCurrentPropertyLeader() {
-        return "property_leader".equals(UserContext.currentRole());
+        String role = UserContext.currentRole();
+        if ("property_leader".equals(role)) {
+            return true;
+        }
+        if ("property_operator".equals(role)) {
+            return false;
+        }
+        if (!"property_admin".equals(RoleGuard.normalizeRole(role))) {
+            return false;
+        }
+        Resident resident = residentRepository.findById(UserContext.currentUserId()).orElse(null);
+        if (resident == null) {
+            return false;
+        }
+        if ("property_operator".equals(resident.getRole())) {
+            return false;
+        }
+        String subRole = resident.getPropertySubRole();
+        return !StringUtils.hasText(subRole) || "property_leader".equals(subRole);
     }
 }

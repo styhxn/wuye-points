@@ -45,6 +45,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -621,7 +622,7 @@ public class DirectedMessageService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, r -> r));

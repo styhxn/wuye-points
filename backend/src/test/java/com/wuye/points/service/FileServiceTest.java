@@ -134,6 +134,22 @@ class FileServiceTest {
                 () -> fileService.upload(file, "withdrawal_proof"));
     }
 
+    @Test
+    @DisplayName("社区论坛/楼长公告图片 category=community 必须放行（白名单曾漏掉此类，App 侧必报 category值无效）")
+    void communityCategory_isAccepted() {
+        FileService fileService = newFileService();
+        when(fileRepository.countByUploaderIdAndCategory(anyString(), anyString())).thenReturn(99L);
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "post.png", "image/png", new byte[]{1, 2, 3});
+
+        UploadFileResponse response = fileService.upload(file, "community");
+
+        assertEquals("community", response.getCategory());
+        // 论坛图片随帖子长期累积，不能设累计数量上限，否则老用户某天突然发不出图
+        org.mockito.Mockito.verify(fileRepository, org.mockito.Mockito.never())
+                .countByUploaderIdAndCategory(anyString(), anyString());
+    }
+
     private FileService newFileService() {
         UserContext.set(UserContext.builder()
                 .userId("res_courier01")

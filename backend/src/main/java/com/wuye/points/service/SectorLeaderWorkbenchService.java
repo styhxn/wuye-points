@@ -34,6 +34,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +57,7 @@ public class SectorLeaderWorkbenchService {
     private final PriceApprovalRepository priceApprovalRepository;
     private final PriceApprovalService priceApprovalService;
     private final DistributionConverter distributionConverter;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final RoleGuard roleGuard;
 
     @Transactional(readOnly = true)
@@ -88,6 +90,10 @@ public class SectorLeaderWorkbenchService {
             activeOfferCount = distributionRecordRepository.sumSectorLeaderShareBySectorLeaderId(leader.getId()) != null ? 0 : 0;
         }
 
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService.forShareLedgerRole(
+                RoleWithdrawableService.ShareLedgerRole.SECTOR_LEADER,
+                leader.getId(), leader.getPropertyCompanyId());
+
         return SectorLeaderMyResponse.builder()
                 .id(leader.getId())
                 .residentName(resident != null ? resident.getName() : null)
@@ -101,7 +107,11 @@ public class SectorLeaderWorkbenchService {
                 .individualLeaderCount(individualLeaderCount)
                 .merchantCount(merchantCount)
                 .activeSpecialOfferCount(activeOfferCount)
-                .totalEarnings(distributionRecordRepository.sumSectorLeaderShareBySectorLeaderId(leader.getId()))
+                .totalEarnings(balance.creditedAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
+                .pendingWithdrawalAmount(balance.pendingWithdrawalAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .status(leader.getStatus())
                 .build();
     }
@@ -313,7 +323,7 @@ public class SectorLeaderWorkbenchService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (merchantIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity()));

@@ -67,6 +67,20 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleDataIntegrityViolation_lengthOverflowGetsReadableMessage() {
+        // 回归：2026-11-05 进件保存 409 实为 bank_account_type varchar(20) 存不下 27 字符枚举，
+        // 却被统一文案伪装成「数据冲突，请刷新后重试」，商家无从下手。
+        ResponseEntity<?> resp = handler.handleDataIntegrityViolation(
+                new DataIntegrityViolationException(
+                        "could not execute statement [Data truncation: Data too long for column 'bank_account_type' at row 1]"),
+                new MockHttpServletRequest("POST", "/api/v1/merchants/my/applyment"));
+        assertEquals(HttpStatus.CONFLICT, resp.getStatusCode());
+        assertEquals(70003, ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getCode());
+        assertEquals("提交内容超出字段长度限制，请检查填写内容后重试",
+                ((com.wuye.points.dto.common.ApiResponse<Object>) resp.getBody()).getMessage());
+    }
+
+    @Test
     void handleMaxUploadSize_maps413WithReadableMessage() {
         // 回归：应用层挡下的超大文件必须回 413 JSON，而不是 500「内部服务异常」让前端解析不出原因
         ResponseEntity<?> resp = handler.handleMaxUploadSize(

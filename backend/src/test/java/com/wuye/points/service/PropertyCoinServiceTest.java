@@ -159,6 +159,49 @@ class PropertyCoinServiceTest {
     }
 
     @Test
+    @DisplayName("recharge: 取消支付后再次充值，先作废旧的待支付流水再新建（条目11）")
+    void recharge_closesStalePendingThenCreatesNewIntent() {
+        when(payChannel.isEnabled()).thenReturn(true);
+        when(payChannel.isDirectEnabled()).thenReturn(true);
+        PaymentRecord stale = paymentRecord("pr_old", "wxo_old", "100");
+        when(paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
+                PaymentBizType.COIN_RECHARGE, "res_1", "pending")).thenReturn(List.of(stale));
+        PaymentRecord record = paymentRecord("pr_1", "wxo_1", "100");
+        when(payChannel.createIntent(eq(PaymentBizType.COIN_RECHARGE), eq("res_1"), eq("res_1"),
+                eq("pc_1"), eq("wechat"), any(), eq(0), any(), any())).thenReturn(record);
+        when(payChannel.miniPay(eq(record), eq("openid_1"), eq("物业币充值"))).thenReturn(new WechatJsPayParams());
+
+        RechargeCoinRequest request = new RechargeCoinRequest();
+        request.setAmount(new BigDecimal("100"));
+        RechargeCoinResponse response = propertyCoinService.recharge(request);
+
+        assertEquals("pr_1", response.getPaymentRecordId());
+        verify(payChannel).closeForRetry(eq(stale), eq("物业币充值"), anyString());
+        verify(coinRecordRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("recharge: 旧流水其实已支付成功时不再新建，提示稍后再充")
+    void recharge_whenStaleAlreadyPaid_doesNotCreateNewIntent() {
+        when(payChannel.isEnabled()).thenReturn(true);
+        when(payChannel.isDirectEnabled()).thenReturn(true);
+        PaymentRecord stale = paymentRecord("pr_old", "wxo_old", "100");
+        when(paymentRecordRepository.findByBizTypeAndResidentIdAndStatus(
+                PaymentBizType.COIN_RECHARGE, "res_1", "pending")).thenReturn(List.of(stale));
+        org.mockito.Mockito.doThrow(new BizException(ErrorCode.ORDER_CONFLICT,
+                        "上一笔充值已支付成功，正在到账，请稍后再发起新的充值"))
+                .when(payChannel).closeForRetry(eq(stale), anyString(), anyString());
+
+        RechargeCoinRequest request = new RechargeCoinRequest();
+        request.setAmount(new BigDecimal("100"));
+        BizException ex = assertThrows(BizException.class, () -> propertyCoinService.recharge(request));
+
+        assertEquals(ErrorCode.ORDER_CONFLICT.getCode(), ex.getCode());
+        verify(payChannel, never()).createIntent(anyString(), anyString(), anyString(), anyString(),
+                anyString(), any(), any(Integer.class), any(), any());
+    }
+
+    @Test
     @DisplayName("completeChannelPayment: 同一支付流水重复投递只入账一次")
     void completeChannelPayment_isIdempotent() {
         PaymentRecord record = paymentRecord("pr_1", "wxo_1", "100");

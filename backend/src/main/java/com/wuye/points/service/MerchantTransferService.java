@@ -8,6 +8,7 @@ import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
 import com.wuye.points.payment.EcommerceSplitProperties;
 import com.wuye.points.payment.EcommerceTransferApiService;
+import com.wuye.points.payment.SplitReceiverPrincipalResolver;
 import com.wuye.points.payment.WechatCertManager;
 import com.wuye.points.payment.WechatNotifyService;
 import com.wuye.points.payment.WechatPayProperties;
@@ -57,6 +58,7 @@ public class MerchantTransferService {
 
     private final MerchantTransferRepository transferRepository;
     private final MerchantTransferAccountRepository accountRepository;
+    private final SplitReceiverPrincipalResolver principalResolver;
     private final DistributionRecordRepository distributionRecordRepository;
     private final EcommerceTransferApiService transferApiService;
     private final EcommerceSplitProperties ecommerceProps;
@@ -95,10 +97,23 @@ public class MerchantTransferService {
         if (transferRepository.existsByBizIdAndOwnerType(dist.getOrderId(), ownerType)) {
             return; // 幂等：已生成过该角色计划
         }
+        // 收款账号以 (ownerType, 住户ID, channel) 绑定；而分成记录里的角色列存的是身份表主键
+        // （coo_/sl_/il_），必须映射回 residents.id，否则永远查不到账号、转账卡在 pending。
+        // PROPERTY 的 ownerId 本来就是物业公司 ID，不做映射。
+        String payoutOwnerId = ownerId;
+        if (!"PROPERTY".equals(ownerType)) {
+            String residentId = principalResolver.resolveResidentId(ownerType, ownerId);
+            if (StringUtils.hasText(residentId)) {
+                payoutOwnerId = residentId;
+            } else {
+                log.warn("[转账] 身份主键→住户映射失败，按原值落库待人工处理 ownerType={} ownerId={}",
+                        ownerType, ownerId);
+            }
+        }
         MerchantTransfer t = new MerchantTransfer();
         t.setId(idGenerator.generateId("mt"));
         t.setOwnerType(ownerType);
-        t.setOwnerId(ownerId);
+        t.setOwnerId(payoutOwnerId);
         t.setBizId(dist.getOrderId());
         t.setAmount(money(amount));
         t.setChannel(ecommerceProps.getTransferChannel());
@@ -106,7 +121,7 @@ public class MerchantTransferService {
         t.setRetryCount(0);
         transferRepository.save(t);
         log.info("[转账] 生成转账计划 orderId={} ownerType={} ownerId={} amount={}",
-                dist.getOrderId(), ownerType, ownerId, amount);
+                dist.getOrderId(), ownerType, payoutOwnerId, amount);
     }
 
     // ---------------------------------------------------------------------
@@ -152,6 +167,7 @@ public class MerchantTransferService {
             transferRepository.save(t);
             return;
         }
+        String channel = StringUtils.hasText(account.getChannel()) ? account.getChannel() : t.getChannel();
         int fen = fen(t.getAmount());
         if (fen <= 0) {
             t.setStatus("failed");
@@ -161,7 +177,7 @@ public class MerchantTransferService {
         }
         try {
             String billId;
-            if ("zero".equals(t.getChannel())) {
+            if ("zero".equals(channel)) {
                 billId = transferApiService.transferToZero(t.getId(), account.getOpenid(), fen,
                         "物业积分内部结算", null);
             } else {
@@ -184,8 +200,9 @@ public class MerchantTransferService {
             }
             t.setWxTransferBillId(billId);
             t.setWxBatchId(billId);
+            t.setChannel(channel);
             t.setStatus("processing");
-            t.setPayeeAccount(maskPayee(t.getChannel(), account));
+            t.setPayeeAccount(maskPayee(channel, account));
             t.setFailReason(null);
             transferRepository.save(t);
         } catch (Exception e) {
@@ -251,9 +268,20 @@ public class MerchantTransferService {
     // 辅助
     // ---------------------------------------------------------------------
 
+    /**
+     * 取收款账号：优先配置渠道；配置渠道未绑定时回退微信零钱。
+     *
+     * <p>「进件成功默认收款渠道 = 微信零钱」：进件完成即写 zero 行，配置渠道（默认 zero）无绑定时
+     * 也能出款；银行卡绑定是独立行，保留不删，仅默认渠道为零钱。</p>
+     */
     private MerchantTransferAccount resolveAccount(MerchantTransfer t) {
-        return accountRepository.findByOwnerTypeAndOwnerIdAndChannel(
+        MerchantTransferAccount configured = accountRepository.findByOwnerTypeAndOwnerIdAndChannel(
                 t.getOwnerType(), t.getOwnerId(), t.getChannel()).orElse(null);
+        if (configured != null || "zero".equals(t.getChannel())) {
+            return configured;
+        }
+        return accountRepository.findByOwnerTypeAndOwnerIdAndChannel(
+                t.getOwnerType(), t.getOwnerId(), "zero").orElse(null);
     }
 
     private static String maskPayee(String channel, MerchantTransferAccount account) {

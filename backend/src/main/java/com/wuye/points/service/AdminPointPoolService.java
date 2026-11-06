@@ -32,6 +32,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -301,7 +302,7 @@ public class AdminPointPoolService {
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
         if (operatorIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         Map<String, String> names = new HashMap<>();
         residentRepository.findAllById(operatorIds).forEach(resident ->

@@ -3,6 +3,7 @@ package com.wuye.points.service;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.common.PageResponse;
 import com.wuye.points.dto.message.BroadcastMessageRequest;
+import com.wuye.points.dto.message.BlockedNeighborItemResponse;
 import com.wuye.points.dto.message.ConversationItemResponse;
 import com.wuye.points.dto.message.CreateMessageRequest;
 import com.wuye.points.dto.message.MarkMessageReadResponse;
@@ -60,7 +61,12 @@ import java.util.stream.Collectors;
 public class MessageService {
 
     private static final ZoneId ZONE_SHANGHAI = ZoneId.of("Asia/Shanghai");
-    private static final int DEFAULT_NEIGHBOR_DAILY_LIMIT = 2;
+    /**
+     * 邻居私聊每日限额兜底值。与 property_companies.neighbor_daily_contact_limit 的库默认值一致取 3
+     * （此前代码写 2、库默认 3、文档写 3，三处不一致会让未配置该列的物业少算一次）。
+     * 口径（整改清单条目27，老板 2026-11-05 定）：当天私聊<b>总次数</b>，跨所有邻居合并计数。
+     */
+    private static final int DEFAULT_NEIGHBOR_DAILY_LIMIT = 3;
     private static final Set<String> SORTABLE_FIELDS = Set.of("createdAt");
     private static final Set<String> CONVERSATION_TYPES = Set.of(
             "neighbor", "official", "service_request", "merchant_ad");
@@ -181,6 +187,16 @@ public class MessageService {
             }
         }
 
+        // 条目27/28：住户之间的私聊同样受「单向屏蔽」和「当天总量限额」约束。
+        // 必须覆盖本接口——前端在 /messages/neighbor-chat 撞上 90013 后会自动改走这里，
+        // 造成「超限后依旧能发送」。商家/物业/官方/群发消息不计住户额度。
+        if ("private".equals(request.getChatType()) && receiver != null
+                && "resident".equals(RoleGuard.normalizeRole(sender.getRole()))
+                && "resident".equals(RoleGuard.normalizeRole(receiver.getRole()))) {
+            assertNotBlockedByReceiver(sender.getId(), receiver.getId());
+            consumeNeighborDailyQuota(sender);
+        }
+
         Message message = buildMessage(
                 sender.getId(),
                 request.getToId(),
@@ -280,16 +296,10 @@ public class MessageService {
         assertSameProperty(sender.getPropertyCompanyId(), receiver.getPropertyCompanyId());
 
         int dailyLimit = resolveDailyLimit(sender.getPropertyCompanyId());
-        NeighborContactLimit limitRecord = getOrCreateLimitRecord(sender);
-        int usedToday = defaultCount(limitRecord.getContactCount());
-        if (usedToday >= dailyLimit) {
-            throw new BizException(
-                    ErrorCode.NEIGHBOR_CONTACT_LIMIT_EXCEEDED,
-                    "今日邻居私聊次数已达上限（" + dailyLimit + "次/天）");
-        }
-
-        limitRecord.setContactCount(usedToday + 1);
-        neighborContactLimitRepository.save(limitRecord);
+        // 条目28：收件人已屏蔽发件人时，私聊必须被挡住（此前 neighbor_blocks 只写不读）
+        assertNotBlockedByReceiver(sender.getId(), receiver.getId());
+        // 条目27：当天总量限额（跨所有邻居合并计数）
+        NeighborContactLimit limitRecord = consumeNeighborDailyQuota(sender);
 
         Message message = buildMessage(
                 sender.getId(),
@@ -342,6 +352,12 @@ public class MessageService {
                 .stream().map(com.wuye.points.entity.BuildingLeader::getResidentId)
                 .collect(Collectors.toSet());
 
+        // 条目28：邻居列表要如实下发屏蔽状态（此前恒为 not_chatted，重登后看不出谁被拉黑）
+        Set<String> blockedIds = neighborBlockRepository
+                .findByBlockerIdOrderByBlockedAtDesc(currentResident.getId()).stream()
+                .map(NeighborBlock::getBlockedId)
+                .collect(Collectors.toSet());
+
         List<NeighborSearchResponse> results = neighbors.stream()
                 .filter(r -> !r.getId().equals(currentResident.getId()))
                 .filter(r -> {
@@ -372,7 +388,8 @@ public class MessageService {
                         .unit(r.getUnit())
                         .room(r.getRoom())
                         .communityName(null)
-                        .chatStatus("not_chatted")
+                        .chatStatus(blockedIds.contains(r.getId()) ? "blocked" : "not_chatted")
+                        .isBlocked(blockedIds.contains(r.getId()))
                         .isBuildingLeader(unitLeaderIds.contains(r.getId()))
                         .isUnitLeader(unitLeaderIds.contains(r.getId()))
                         .build())
@@ -460,6 +477,36 @@ public class MessageService {
                 .blockedId(blockedId)
                 .message("已取消屏蔽该邻居")
                 .build();
+    }
+
+    /**
+     * 我的屏蔽名单（条目28：重新登录后拉黑失效）。
+     * 此前后端没有任何查询接口，前端 isBlocked 只从路由参数拿，重登就恢复不了屏蔽状态。
+     */
+    @Transactional(readOnly = true)
+    public List<BlockedNeighborItemResponse> listBlockedNeighbors() {
+        roleGuard.requireAnyRole("resident");
+        Resident currentResident = getActiveResident(UserContext.currentUserId());
+        List<NeighborBlock> blocks =
+                neighborBlockRepository.findByBlockerIdOrderByBlockedAtDesc(currentResident.getId());
+        if (blocks.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Resident> residentsById = residentRepository
+                .findAllById(blocks.stream().map(NeighborBlock::getBlockedId).distinct().toList()).stream()
+                .collect(Collectors.toMap(Resident::getId, Function.identity(), (a, b) -> a));
+        return blocks.stream().map(block -> {
+            Resident blocked = residentsById.get(block.getBlockedId());
+            return BlockedNeighborItemResponse.builder()
+                    .residentId(block.getBlockedId())
+                    .name(blocked != null ? blocked.getName() : null)
+                    .avatarUrl(blocked != null ? blocked.getAvatarUrl() : null)
+                    .building(blocked != null ? blocked.getBuilding() : null)
+                    .unit(blocked != null ? blocked.getUnit() : null)
+                    .room(blocked != null ? blocked.getRoom() : null)
+                    .blockedAt(DateTimeUtil.toIsoUtc(block.getBlockedAt()))
+                    .build();
+        }).toList();
     }
 
     @Transactional(readOnly = true)
@@ -920,6 +967,34 @@ public class MessageService {
                     record.setContactCount(0);
                     return record;
                 });
+    }
+
+    /**
+     * 条目27：邻居私聊每日限额（当天总量，跨所有邻居合并计数），发一条扣一次。
+     * 同一套扣减同时作用于 {@code /messages/neighbor-chat} 与 {@code /messages}
+     * ——后者此前不查限额，前端被 90013 挡掉后自动改走 /messages 就绕过了限制。
+     */
+    private NeighborContactLimit consumeNeighborDailyQuota(Resident sender) {
+        int dailyLimit = resolveDailyLimit(sender.getPropertyCompanyId());
+        NeighborContactLimit limitRecord = getOrCreateLimitRecord(sender);
+        int usedToday = defaultCount(limitRecord.getContactCount());
+        if (usedToday >= dailyLimit) {
+            throw new BizException(
+                    ErrorCode.NEIGHBOR_CONTACT_LIMIT_EXCEEDED,
+                    "今日邻居私聊次数已达上限（" + dailyLimit + "次/天）");
+        }
+        limitRecord.setContactCount(usedToday + 1);
+        return neighborContactLimitRepository.save(limitRecord);
+    }
+
+    /**
+     * 条目28：单向屏蔽语义——A 屏蔽 B 后，B 发给 A 被拒；A 仍可发给 B。
+     */
+    private void assertNotBlockedByReceiver(String fromId, String toId) {
+        if (StringUtils.hasText(toId)
+                && neighborBlockRepository.existsByBlockerIdAndBlockedId(toId, fromId)) {
+            throw new BizException(ErrorCode.NEIGHBOR_BLOCKED);
+        }
     }
 
     private int resolveUsedToday(String residentId) {

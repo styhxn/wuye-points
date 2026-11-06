@@ -29,6 +29,7 @@ public class BuildingLeaderWorkbenchService {
     private final ResidentRepository residentRepository;
     private final RoleGuard roleGuard;
     private final UnifiedEarningsService unifiedEarningsService;
+    private final RoleWithdrawableService roleWithdrawableService;
 
     @Transactional(readOnly = true)
     public BuildingLeaderMyResponse getMyInfo() {
@@ -41,10 +42,10 @@ public class BuildingLeaderWorkbenchService {
         // v8.21：楼长收益并入账号统一收益账户（楼长分成 + 业主卖货 + 名下商家），不再单列
         UnifiedEarningsService.UnifiedEarnings unified =
                 unifiedEarningsService.calc(leader.getResidentId());
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService.forBuildingLeader(
+                leader.getId(), leader.getResidentId(), leader.getPropertyCompanyId(), unified);
         BigDecimal totalEarning = unified.totalEarning();
         BigDecimal withdrawn = unified.withdrawnAmount();
-        BigDecimal pending = unified.pendingAmount();
-        BigDecimal withdrawable = unified.withdrawableAmount();
 
         Resident resident = residentRepository.findById(leader.getResidentId()).orElse(null);
         Community community = leader.getCommunityId() != null
@@ -62,8 +63,10 @@ public class BuildingLeaderWorkbenchService {
                 .status(leader.getStatus())
                 .totalEarning(totalEarning)
                 .withdrawnAmount(withdrawn)
-                .pendingAmount(pending)
-                .withdrawableAmount(withdrawable)
+                .pendingAmount(balance.pendingWithdrawalAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .build();
     }
 }

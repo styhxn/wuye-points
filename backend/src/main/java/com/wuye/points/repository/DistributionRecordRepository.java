@@ -27,6 +27,17 @@ public interface DistributionRecordRepository extends JpaRepository<Distribution
 
     List<DistributionRecord> findByOrderIdIn(java.util.Collection<String> orderIds);
 
+    /** 「我的分账所得」按身份批量取台账（各集合元素为该角色的身份表主键）。 */
+    List<DistributionRecord> findByCoordinatorIdIn(java.util.Collection<String> coordinatorIds);
+
+    List<DistributionRecord> findBySectorLeaderIdIn(java.util.Collection<String> sectorLeaderIds);
+
+    List<DistributionRecord> findByIndividualLeaderIdIn(java.util.Collection<String> individualLeaderIds);
+
+    List<DistributionRecord> findByBuildingLeaderIdIn(java.util.Collection<String> buildingLeaderIds);
+
+    List<DistributionRecord> findByManagerIdIn(java.util.Collection<String> managerIds);
+
     List<DistributionRecord> findByCoordinatorId(String coordinatorId);
 
     List<DistributionRecord> findBySectorLeaderId(String sectorLeaderId);

@@ -30,4 +30,7 @@ public interface IndividualLeaderRepository extends JpaRepository<IndividualLead
 
     Optional<IndividualLeader> findFirstByResidentIdAndPropertyCompanyIdAndStatusOrderByCreatedAtDesc(
             String residentId, String propertyCompanyId, String status);
+
+    /** 该住户的全部历史个体负责人身份（含已停用/跨物业），供「我的分账所得」聚合使用。 */
+    List<IndividualLeader> findAllByResidentId(String residentId);
 }

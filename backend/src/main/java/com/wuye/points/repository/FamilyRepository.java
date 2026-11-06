@@ -25,6 +25,10 @@ public interface FamilyRepository extends JpaRepository<Family, String> {
 
     long countByPropertyCompanyId(String propertyCompanyId);
 
+    /** 房号占用判定：同小区+楼栋+房号下的在册家庭（单元号在内存里比对，历史值可能为 null）。 */
+    List<Family> findByCommunityIdAndBuildingAndRoomAndStatusIn(
+            String communityId, String building, String room, List<String> statuses);
+
     /** 悲观锁查询（SELECT ... FOR UPDATE），用于并发扣减场景 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT f FROM Family f WHERE f.id = :id")

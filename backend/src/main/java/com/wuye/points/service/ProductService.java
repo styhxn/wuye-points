@@ -21,6 +21,7 @@ import com.wuye.points.repository.spec.ProductSpecifications;
 import com.wuye.points.util.DateTimeUtil;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -311,13 +313,7 @@ public class ProductService {
             return false;
         }
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
-        if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
-            return false;
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .isPresent();
+        return MerchantSupport.findOwnedMerchant(merchantRepository, merchantUser).isPresent();
     }
 
     private void assertMerchantCanSell(Merchant merchant) {
@@ -343,17 +339,12 @@ public class ProductService {
     private Merchant resolveOwnedMerchant() {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     /**
-     * 判断当前登录用户是否"拥有"该商家：通过登录住户的手机号 + 物业公司匹配商家登记的联系电话。
+     * 判断当前登录用户是否"拥有"该商家：有 {@code resident_id} 只认它，
+     * 历史未绑定住户的店才退回「手机号 + 物业公司」比对。
      * 不再限制角色必须为 merchant —— 活动组长（activity_leader）、个体负责人等以本人手机号注册的
      * 商家同样可管理自己的商品（改价/上下架/删除），避免因角色差异误报 403。
      */
@@ -362,18 +353,7 @@ public class ProductService {
             return false;
         }
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId()).orElse(null);
-        if (merchantUser == null || !StringUtils.hasText(merchantUser.getPhone())) {
-            return false;
-        }
-        if (!StringUtils.hasText(merchant.getContactPhone())) {
-            return false;
-        }
-        String userPc = merchantUser.getPropertyCompanyId();
-        String merchantPc = merchant.getPropertyCompanyId();
-        if (userPc == null || merchantPc == null || !userPc.equals(merchantPc)) {
-            return false;
-        }
-        return merchantUser.getPhone().equals(merchant.getContactPhone());
+        return MerchantSupport.isOwnedBy(merchant, merchantUser);
     }
 
     private String resolveBrowsePropertyCompanyId(String propertyCompanyId, String merchantId) {
@@ -456,7 +436,7 @@ public class ProductService {
                 .distinct()
                 .toList();
         if (merchantIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity()));

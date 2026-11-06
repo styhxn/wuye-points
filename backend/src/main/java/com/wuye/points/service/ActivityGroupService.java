@@ -45,6 +45,7 @@ import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.spec.ActivityGroupSpecifications;
 import com.wuye.points.util.DateTimeUtil;
+import com.wuye.points.util.PermissionGuard;
 import com.wuye.points.util.RoleGuard;
 import com.wuye.points.util.SnowflakeIdGenerator;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +64,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -92,6 +94,7 @@ public class ActivityGroupService {
     private final PointService pointService;
     private final PropertyCoinService propertyCoinService;
     private final RoleGuard roleGuard;
+    private final PermissionGuard permissionGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final PaymentRecordRepository paymentRecordRepository;
     private final PayChannel wechatPayService;
@@ -398,23 +401,48 @@ public class ActivityGroupService {
         return toDetail(group, leader);
     }
 
+    /**
+     * 活动组写权限（更新/解散）。
+     *
+     * <p>2026-11-06 前端问题：统筹在活动组页保存报「权限不足」。根因是这里先用
+     * {@code isLeaderRole()}（含 {@code role=resident}）把统筹当成「组长本人」，
+     * 不是本组组长就直接拒，权限码 {@code activity_group.manage} 根本没参与判断——
+     * 即使在权限管理里勾了该码也照样 403。现按身份分流：</p>
+     * <ul>
+     *   <li>平台/物业管理员：本物业范围内放行（沿用 assertSamePropertyOrPlatform）；</li>
+     *   <li>统筹：限本物业，且必须真正持有 activity_group.manage（预设或用户授权）；</li>
+     *   <li>组长类（含纯住户）：仍只能动本人担任组长的组。</li>
+     * </ul>
+     */
+    private void assertCanManageGroup(ActivityGroup group) {
+        if (roleGuard.isPlatformAdmin() || roleGuard.isPropertyAdmin()) {
+            roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
+            return;
+        }
+        if (roleGuard.isCoordinator()) {
+            assertSameProperty(UserContext.currentPropertyCompanyId(), group.getPropertyCompanyId());
+            permissionGuard.requirePermissionOrAdminAllowingCoordinator("activity_group.manage");
+            return;
+        }
+        if (roleGuard.isLeaderRole()) {
+            Resident operator = getActiveResident(UserContext.currentUserId());
+            assertSameProperty(operator.getPropertyCompanyId(), group.getPropertyCompanyId());
+            if (!operator.getId().equals(group.getLeaderId())) {
+                throw new BizException(ErrorCode.PERMISSION_DENIED);
+            }
+            return;
+        }
+        throw new BizException(ErrorCode.PERMISSION_DENIED);
+    }
+
     @Transactional
     public ActivityGroupDetailResponse updateActivityGroup(String id, UpdateActivityGroupRequest request) {
         validateActivityGroupId(id);
         ActivityGroup group = activityGroupRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
 
-        // 组长类角色（业主/活动组长/协调员/板块负责人/个体负责人）仅可更新本人担任组长的活动组
-        if (roleGuard.isLeaderRole()) {
-            Resident resident = getActiveResident(UserContext.currentUserId());
-            assertSameProperty(resident.getPropertyCompanyId(), group.getPropertyCompanyId());
-            if (!resident.getId().equals(group.getLeaderId())) {
-                throw new BizException(ErrorCode.PERMISSION_DENIED);
-            }
-        } else {
-            roleGuard.requireAnyRole("property_admin", "platform_admin");
-            roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
-        }
+        // 组长只能动本人担任组长的组；统筹按 activity_group.manage 权限码在本物业内管理
+        assertCanManageGroup(group);
 
         if (StringUtils.hasText(request.getName())) {
             group.setName(request.getName().trim());
@@ -477,7 +505,7 @@ public class ActivityGroupService {
     }
 
     /**
-     * 解散（硬删除）活动组。仅本组组长、物业管理员、平台管理员可操作，不可恢复。
+     * 解散（硬删除）活动组。仅本组组长、持有 activity_group.manage 的统筹、物业管理员、平台管理员可操作，不可恢复。
      * 由于 activity_group_subscriptions 未配置 ON DELETE CASCADE，需先显式删除订阅，
      * 再删除成员与价格档位（二者配置了 ON DELETE CASCADE，但显式删除更稳妥），最后删除组本身。
      */
@@ -487,18 +515,8 @@ public class ActivityGroupService {
         ActivityGroup group = activityGroupRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
 
-        // 组长类角色：仅本组组长可解散
-        if (roleGuard.isLeaderRole()) {
-            Resident operator = getActiveResident(UserContext.currentUserId());
-            assertSameProperty(operator.getPropertyCompanyId(), group.getPropertyCompanyId());
-            if (!operator.getId().equals(group.getLeaderId())) {
-                throw new BizException(ErrorCode.PERMISSION_DENIED);
-            }
-        } else if (roleGuard.isPropertyAdmin() || roleGuard.isPlatformAdmin()) {
-            roleGuard.assertSamePropertyOrPlatform(group.getPropertyCompanyId());
-        } else {
-            throw new BizException(ErrorCode.PERMISSION_DENIED);
-        }
+        // 组长只能解散本人担任组长的组；统筹按 activity_group.manage 权限码在本物业内解散
+        assertCanManageGroup(group);
 
         activityGroupSubscriptionRepository.deleteByGroupId(id);
         activityGroupMemberRepository.deleteByGroupId(id);
@@ -913,8 +931,11 @@ public class ActivityGroupService {
                                             String paymentMethod) {
         boolean useFamilyPool = StringUtils.hasText(resident.getFamilyId());
         switch (paymentMethod) {
-            case "property_coin" -> propertyCoinService.spendCoins(
-                    resident, amount, "manual", group.getId(), "活动组订阅", null, useFamilyPool);
+            case "property_coin" -> {
+                propertyCoinService.assertUseConditionSatisfied(resident);
+                propertyCoinService.spendCoins(
+                        resident, amount, "manual", group.getId(), "活动组订阅", null, useFamilyPool);
+            }
             case "point" -> {
                 BigDecimal rate = resolvePointToFeeRate(resident.getPropertyCompanyId());
                 int points = amount.divide(rate, 0, RoundingMode.UP).intValue();
@@ -958,6 +979,19 @@ public class ActivityGroupService {
         }
     }
 
+    /**
+     * 到期兜底：把已过 end_date 的 active 活动组订阅批量置 expired。
+     * {@link #refreshSubscriptionStatus} 在 readOnly 事务里只改内存不落库，需由这里补齐。
+     */
+    @Transactional
+    public int expireOverdueSubscriptions() {
+        int expired = activityGroupSubscriptionRepository.expireOverdue(LocalDate.now());
+        if (expired > 0) {
+            log.info("[活动组订阅到期] 置 expired {} 条", expired);
+        }
+        return expired;
+    }
+
     private ActivityGroup getReadableGroup(String id, Resident resident) {
         ActivityGroup group = activityGroupRepository.findById(id)
                 .orElseThrow(() -> new BizException(ErrorCode.ACTIVITY_GROUP_NOT_FOUND));
@@ -984,7 +1018,7 @@ public class ActivityGroupService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds.stream().distinct().toList()).stream()
                 .collect(Collectors.toMap(Resident::getId, Function.identity()));
@@ -992,7 +1026,7 @@ public class ActivityGroupService {
 
     private Map<String, Community> loadCommunities(List<String> communityIds) {
         if (communityIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return communityRepository.findAllById(communityIds.stream().distinct().toList()).stream()
                 .collect(Collectors.toMap(Community::getId, Function.identity()));
@@ -1000,7 +1034,7 @@ public class ActivityGroupService {
 
     private Map<String, ActivityGroup> loadGroups(List<String> groupIds) {
         if (groupIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return activityGroupRepository.findAllById(groupIds.stream().distinct().toList()).stream()
                 .collect(Collectors.toMap(ActivityGroup::getId, Function.identity()));
@@ -1008,7 +1042,7 @@ public class ActivityGroupService {
 
     private Map<String, ActivityGroupMember> loadMemberships(List<String> groupIds, String residentId) {
         if (groupIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return activityGroupMemberRepository
                 .findByGroupIdInAndResidentIdAndStatus(groupIds, residentId, "active").stream()

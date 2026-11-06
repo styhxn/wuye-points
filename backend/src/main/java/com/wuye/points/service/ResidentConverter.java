@@ -70,6 +70,8 @@ public class ResidentConverter {
                 .coinFrozen(Boolean.TRUE.equals(resident.getCoinFrozen()))
                 .status(resident.getStatus())
                 .createdAt(DateTimeUtil.toIsoUtc(resident.getCreatedAt()))
+                .deletionExpiresAt("pending_deletion".equals(resident.getStatus())
+                        ? DateTimeUtil.toIsoUtc(resident.getDeletionExpiresAt()) : null)
                 .build();
     }
 

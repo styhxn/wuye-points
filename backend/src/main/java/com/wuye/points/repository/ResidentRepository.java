@@ -31,6 +31,10 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
 
     List<Resident> findByFamilyId(String familyId);
 
+    /** 房号占用判定：同小区+楼栋+房号下的在册住户（单元号在内存里比对）。 */
+    List<Resident> findByCommunityIdAndBuildingAndRoomAndStatusIn(
+            String communityId, String building, String room, List<String> statuses);
+
     List<Resident> findByPropertyCompanyId(String propertyCompanyId);
 
     long countByPropertyCompanyId(String propertyCompanyId);
@@ -73,4 +77,7 @@ public interface ResidentRepository extends JpaRepository<Resident, String>, Jpa
     @Query("SELECT r.id FROM Resident r WHERE r.name LIKE CONCAT('%', :keyword, '%')"
             + " OR r.phone LIKE CONCAT('%', :keyword, '%')")
     List<String> findIdsByNameContainingOrPhoneContaining(@Param("keyword") String keyword);
+
+    /** 冷静期已到期、待自动注销的账号（整改清单条目9：到期自动注销调度器使用）。 */
+    List<Resident> findByStatusAndDeletionExpiresAtLessThanEqual(String status, LocalDateTime deadline);
 }

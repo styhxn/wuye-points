@@ -155,11 +155,21 @@ public class DistributionService {
 
     @Transactional
     public void reverseForCancelledOrder(String orderId) {
-        DistributionRecord original = distributionRecordRepository.findFirstByOrderId(orderId).orElse(null);
-        if (original == null) {
+        List<DistributionRecord> records = distributionRecordRepository.findByOrderId(orderId);
+        // 幂等（退款审核重试 / 支付回调重试 / 重复取消）：台账中已存在负数冲正行即视为已冲正。
+        // 判据用 distributableAmount<0（正向台账恒 >=0，负数只可能来自本方法的冲正行），
+        // 不依赖 findFirstByOrderId 的返回顺序；并发由订单行锁（getOrderForUpdate）与
+        // 订单状态机（refunding→refunded）串行化，第二笔进不来。
+        boolean reversed = records.stream().anyMatch(r -> r.getDistributableAmount() != null
+                && r.getDistributableAmount().compareTo(BigDecimal.ZERO) < 0);
+        if (reversed) {
             return;
         }
-        if (original.getDistributableAmount().compareTo(BigDecimal.ZERO) <= 0) {
+        DistributionRecord original = records.stream()
+                .filter(r -> r.getDistributableAmount() != null
+                        && r.getDistributableAmount().compareTo(BigDecimal.ZERO) > 0)
+                .findFirst().orElse(null);
+        if (original == null) {
             return;
         }
 

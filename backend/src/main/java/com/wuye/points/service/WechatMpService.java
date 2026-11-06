@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -28,6 +29,8 @@ public class WechatMpService {
             "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s";
     private static final String GET_PHONE_URL =
             "https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=%s";
+    private static final String GET_WXACODE_URL =
+            "https://api.weixin.qq.com/wxa/getwxacode?access_token=%s";
 
     @Value("${wechat.mp.app-id}")
     private String appId;
@@ -83,6 +86,45 @@ public class WechatMpService {
             throw new BizException(ErrorCode.WECHAT_AUTH_FAILED);
         }
         return phoneInfo.getStr("phoneNumber");
+    }
+
+    /**
+     * 生成小程序码（官方 {@code /wxa/getwxacode}：永久有效、有数量限制，
+     * path 可带 query 参数，因此扫码后 onLoad 能直接拿到业务参数，前端无需解析 scene）。
+     *
+     * <p>成功时微信把图片字节直接放在响应体里，失败时才返回 JSON，需按首字节区分。</p>
+     */
+    public byte[] getMiniProgramCode(String path, int width) {
+        if (skipApi) {
+            throw new BizException(ErrorCode.WECHAT_API_ERROR, "开发模式未接通微信接口，无法生成小程序码");
+        }
+
+        String url = String.format(GET_WXACODE_URL, getAccessToken());
+        JSONObject requestBody = JSONUtil.createObj().set("path", path).set("width", width);
+        byte[] response = HttpUtil.createPost(url).body(requestBody.toString()).execute().bodyBytes();
+
+        JSONObject error = parseError(response);
+        if (error != null) {
+            log.warn("微信小程序码生成失败: path={}, errcode={}, errmsg={}",
+                    path, error.getStr("errcode"), error.getStr("errmsg"));
+            throw new BizException(ErrorCode.WECHAT_API_ERROR, "小程序码生成失败：" + error.getStr("errmsg"));
+        }
+        return response;
+    }
+
+    private JSONObject parseError(byte[] response) {
+        if (response == null || response.length == 0) {
+            return JSONUtil.createObj().set("errmsg", "微信返回空响应");
+        }
+        if (response[0] != '{') {
+            return null;
+        }
+        try {
+            JSONObject json = JSONUtil.parseObj(new String(response, StandardCharsets.UTF_8));
+            return json.getInt("errcode", 0) == 0 ? null : json;
+        } catch (Exception ex) {
+            return JSONUtil.createObj().set("errmsg", "微信响应解析失败");
+        }
     }
 
     private String getAccessToken() {

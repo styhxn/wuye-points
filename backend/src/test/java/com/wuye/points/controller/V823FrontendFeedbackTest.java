@@ -404,12 +404,21 @@ class V823FrontendFeedbackTest extends ControllerTestBase {
     // ==================== 2.7 货源供给范围 ====================
 
     @Test
-    @DisplayName("2.7 供给范围：代理只读，代理端传入即 403；管理员可设置 platform")
+    @DisplayName("2.7 供给范围：company 代理可自设，platform 仍需管理员授予（条目34）")
     void supplyScope_shouldBeAdminControlled() throws Exception {
         mockMvc.perform(get("/distributors/my/products")
                         .header("Authorization", token(DIST_USER, "merchant")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.list[0].supplyScope").value("company"));
+
+        // 条目34：工作台创建货源时会带上 company，此前非空即 403，导致「创建分销商品」必失败
+        mockMvc.perform(post("/distributors/my/products")
+                        .header("Authorization", token(DIST_USER, "merchant"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"测试货源company范围\",\"wholesalePrice\":10.00,"
+                                + "\"suggestedRetailPrice\":15.00,\"supplyScope\":\"company\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.supplyScope").value("company"));
 
         mockMvc.perform(post("/distributors/my/products")
                         .header("Authorization", token(DIST_USER, "merchant"))
@@ -417,7 +426,7 @@ class V823FrontendFeedbackTest extends ControllerTestBase {
                         .content("{\"name\":\"测试货源\",\"wholesalePrice\":10.00,"
                                 + "\"suggestedRetailPrice\":15.00,\"supplyScope\":\"platform\"}"))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.message", containsString("管理员设置")));
+                .andExpect(jsonPath("$.message", containsString("管理员")));
 
         mockMvc.perform(put("/admin/distributor-products/dpr_v823_1")
                         .header("Authorization", token("res_v823_admin", "property_admin"))
@@ -429,7 +438,9 @@ class V823FrontendFeedbackTest extends ControllerTestBase {
         mockMvc.perform(get("/distributors/my/products")
                         .header("Authorization", token(DIST_USER, "merchant")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.list[0].supplyScope").value("platform"));
+                // 按 id 定位，不用 list[0]：上面新建的 company 货源会排进首位
+                .andExpect(jsonPath("$.data.list[?(@.id == 'dpr_v823_1')].supplyScope",
+                        org.hamcrest.Matchers.hasItem("platform")));
     }
 
     // ==================== 2.8 代理购买记录 ====================

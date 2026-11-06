@@ -108,7 +108,7 @@ public class ResidentShopController {
     public ApiResponse<PageResponse<PublicResidentMerchantListingFlatItemResponse>> listPublicListings(
             @Parameter(description = "页码", example = "1") @RequestParam(defaultValue = "1") int page,
             @Parameter(description = "每页条数", example = "20") @RequestParam(defaultValue = "20") int pageSize,
-            @Parameter(description = "物业公司ID（必填）") @RequestParam String propertyCompanyId,
+            @Parameter(description = "物业公司ID（未登录时必填；登录后可省略，按本人所属物业隔离）") @RequestParam(required = false) String propertyCompanyId,
             @Parameter(description = "商品名关键词（模糊匹配）") @RequestParam(required = false) String keyword,
             @Parameter(description = "货源类目（精确匹配 distributor_products.category）") @RequestParam(required = false) String category) {
         return ApiResponse.success(

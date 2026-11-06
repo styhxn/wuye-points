@@ -34,6 +34,9 @@ desktop.ini
 *合作伙伴平台信息*/
 1665249236/
 APIv3*.txt
+# 本地存放的服务器口令（整改清单测试轮使用），严禁入库
+服务器*.txt
+ssh_pass*.tmp
 # 开发配置含真实商户/数据库凭据，禁止入库
 application-dev.yml
 # application-prod.yml 仅含环境变量占位与 fail-closed 默认值（无密钥），必须入库以保证生产部署可复现

@@ -38,7 +38,6 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class CoinWithdrawalService {
 
-    private static final BigDecimal DEFAULT_WITHDRAWAL_FEE_RATE = new BigDecimal("0.0060");
     private static final Set<String> AUDIT_STATUS = Set.of("pending", "approved", "rejected", "completed");
 
     private final CoinWithdrawalRepository coinWithdrawalRepository;
@@ -47,12 +46,19 @@ public class CoinWithdrawalService {
     private final MerchantSupport merchantSupport;
     private final RoleGuard roleGuard;
     private final PermissionGuard permissionGuard;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final SnowflakeIdGenerator idGenerator;
 
     @Transactional
     public CoinWithdrawalItemResponse apply(ApplyCoinWithdrawalRequest request) {
         Merchant merchant = merchantSupport.requireCurrentMerchant();
         Resident merchantUser = merchantSupport.requireCurrentMerchantUser();
+
+        // 条目23：管理端「封禁商家物业币提现」写的是 merchants.withdrawal_blocked，
+        // 此前只有现金提现链路查它，物业币兑换照发，封禁形同虚设。
+        if (Boolean.TRUE.equals(merchant.getWithdrawalBlocked())) {
+            throw new BizException(ErrorCode.WITHDRAWAL_BLOCKED);
+        }
 
         if (coinWithdrawalRepository.existsByMerchantIdAndAuditStatus(merchant.getId(), "pending")) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "存在待审核的兑换申请");
@@ -159,11 +165,7 @@ public class CoinWithdrawalService {
     }
 
     private BigDecimal resolveFeeRate(PropertyCompany propertyCompany) {
-        BigDecimal feeRate = propertyCompany.getWithdrawalFeeRate();
-        if (feeRate == null || feeRate.compareTo(BigDecimal.ZERO) < 0) {
-            return DEFAULT_WITHDRAWAL_FEE_RATE;
-        }
-        return feeRate;
+        return roleWithdrawableService.merchantWithdrawalFeeRate(propertyCompany.getWithdrawalFeeRate());
     }
 
     private Pageable buildPageable(int page, int pageSize) {

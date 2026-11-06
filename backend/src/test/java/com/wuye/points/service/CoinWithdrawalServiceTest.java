@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -49,6 +50,10 @@ class CoinWithdrawalServiceTest {
     private PlatformSettingService platformSetting;
     @Mock
     private SnowflakeIdGenerator idGenerator;
+    // 费率规则走真实实现：只按入参取值，不依赖仓储，保证兑换手续费金额仍被本单测覆盖
+    @Spy
+    private RoleWithdrawableService roleWithdrawableService = new RoleWithdrawableService(
+            null, null, null, null, null, null, null);
 
     @InjectMocks
     private CoinWithdrawalService coinWithdrawalService;

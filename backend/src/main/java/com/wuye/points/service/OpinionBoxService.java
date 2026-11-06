@@ -39,6 +39,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -281,7 +282,7 @@ public class OpinionBoxService {
                 .distinct()
                 .toList();
         if (publisherIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(publisherIds).stream()
                 .collect(Collectors.toMap(Resident::getId, Function.identity()));
@@ -289,7 +290,7 @@ public class OpinionBoxService {
 
     private Map<String, VoteRecord> loadFamilyVotes(List<OpinionBox> boxes, String familyId) {
         if (!StringUtils.hasText(familyId) || boxes.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         List<String> boxIds = boxes.stream().map(OpinionBox::getId).toList();
         return voteRecordRepository.findByOpinionBoxIdInAndFamilyId(boxIds, familyId).stream()

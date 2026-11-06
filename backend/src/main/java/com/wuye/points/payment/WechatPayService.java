@@ -111,7 +111,7 @@ public class WechatPayService implements PayChannel {
         try {
             return paymentRecordRepository.save(record);
         } catch (DataIntegrityViolationException e) {
-            // 唯一约束 (biz_type, biz_id, status) 兜底：并发重复发起支付时，仅第一个请求能建 pending 流水，
+            // 唯一约束 (biz_type, biz_id, active_flag) 兜底：并发重复发起支付时，仅第一个请求能建 pending 流水，
             // 其余请求在此拦截，避免同订单生成多条待支付流水（跨实例同样生效，无需分布式锁）。
             log.warn("[支付流水] 重复发起支付被唯一约束拦截 bizType={} bizId={}: {}",
                     bizType, bizId, e.getMessage());
@@ -343,6 +343,34 @@ public class WechatPayService implements PayChannel {
         }
         record.setStatus("closed");
         paymentRecordRepository.save(record);
+    }
+
+    @Override
+    public void closeForRetry(PaymentRecord record, String bizLabel, String alreadyPaidMessage) {
+        try {
+            if ("SUCCESS".equals(query(record))) {
+                throw new BizException(ErrorCode.ORDER_CONFLICT, alreadyPaidMessage);
+            }
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("[{}] 旧流水查单失败，继续尝试关单 recordId={}", bizLabel, record.getId(), e);
+        }
+        try {
+            close(record);
+            log.info("[{}] 关闭遗留待支付流水 recordId={} outTradeNo={}",
+                    bizLabel, record.getId(), record.getOutTradeNo());
+        } catch (Exception e) {
+            log.warn("[{}] 旧流水微信关单失败，本地置 closed recordId={}", bizLabel, record.getId(), e);
+            record.setStatus("closed");
+            record.setErrorMsg("重新发起支付，旧流水关闭");
+            paymentRecordRepository.save(record);
+        }
+        // 必须显式下刷：Hibernate 刷写顺序是 INSERT 早于 UPDATE，同一事务里紧随其后的 createIntent
+        // 若先落库，会撞线上唯一键 uk_payment_records_biz_pending(biz_type, biz_id, active_flag)
+        // （active_flag 是生成列 if(status='pending','1',NULL)），二次支付必然 409 Duplicate entry
+        // ——2026-11-06 物业币充值已在线上复现。该键只存在于生产库，H2 用例拦不住，故留此注释。
+        paymentRecordRepository.flush();
     }
 
     @Override

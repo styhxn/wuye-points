@@ -257,6 +257,20 @@ public class CouponService {
         if (STATUS_USED.equals(coupon.getStatus())) {
             throw new BizException(ErrorCode.COUPON_ALREADY_USED);
         }
+        // 条目13：用户取消支付后对同一订单重新发起支付，券已被本单锁着属正常状态，
+        // 不能当成「券不可用」——否则第二次调起支付必失败。
+        if (STATUS_LOCKED.equals(coupon.getStatus())
+                && StringUtils.hasText(orderId) && orderId.equals(coupon.getOrderId())) {
+            if (isExpired(coupon, LocalDateTime.now())) {
+                coupon.setStatus(STATUS_EXPIRED);
+                userCouponRepository.save(coupon);
+                throw new BizException(ErrorCode.COUPON_EXPIRED);
+            }
+            if (!suitableForMerchant(coupon, merchantId)) {
+                throw new BizException(ErrorCode.COUPON_SCOPE_MISMATCH);
+            }
+            return computeDiscount(coupon, productAmount);
+        }
         if (!STATUS_UNUSED.equals(coupon.getStatus())) {
             throw new BizException(ErrorCode.COUPON_UNAVAILABLE);
         }

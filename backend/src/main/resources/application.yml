@@ -212,6 +212,16 @@ app:
   upload:
     path: ${UPLOAD_PATH:/data/uploads}
     base-url: ${UPLOAD_BASE_URL:https://test.yuanxusoftware.top/api/v1/static}
+  qr-code:
+    # 二维码图片边长（小程序码官方 size 建议 430）
+    size: ${QR_CODE_SIZE:430}
+    # 启动/每日自动给「审核通过但还没有码」的店铺补收款码（前端暂无按钮，靠它兜底）
+    auto-generate: ${QR_CODE_AUTO_GENERATE:true}
+    # 商家专属收款码扫码进入的落地页（v8.40：极简收银台，输金额后自动拉起 wx.requestPayment）
+    # 线上小程序必须已发布该页；path 可带 merchantId 参数，前端零改动
+    merchant-page: ${QR_CODE_MERCHANT_PAGE:pages/pay/merchantCashier}
+    # 业主小店商品分享码扫码进入的商品详情页
+    listing-page: ${QR_CODE_LISTING_PAGE:pages/service/productDetail}
   cors:
     # 逗号分隔，支持通配符（allowedOriginPatterns 语义），如 https://*.example.com
     # 默认 * 以兼容 App/WebView（Origin 可能为 http://localhost、capacitor://localhost 或 null）

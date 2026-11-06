@@ -301,6 +301,7 @@ public class ConsultationService {
                     resident, breakdown.pointUsed(), "consultation", referenceId, remark, null, useFamilyPool);
         }
         if (breakdown.coinUsed().compareTo(BigDecimal.ZERO) > 0) {
+            propertyCoinService.assertUseConditionSatisfied(resident);
             propertyCoinService.spendCoins(
                     resident, breakdown.coinUsed(), "consultation", referenceId, remark, null, useFamilyPool);
         }

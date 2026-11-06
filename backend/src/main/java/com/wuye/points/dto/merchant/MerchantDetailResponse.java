@@ -59,6 +59,11 @@ public class MerchantDetailResponse {
     @Schema(description = "配送费", example = "3.00")
     private java.math.BigDecimal deliveryFee;
 
+    @Schema(description = "本店在本物业公司下的平台抽佣比例（0~1，分账实际使用的 "
+            + "merchant_property_configs.commission_rate）。经营敏感：仅平台/物业管理员与在职负责人"
+            + "（统筹/板块/个体）可见", example = "0.1000")
+    private java.math.BigDecimal commissionRate;
+
     @Schema(description = "免配送费门槛金额", example = "50.00")
     private java.math.BigDecimal freeDeliveryThreshold;
 
@@ -112,6 +117,14 @@ public class MerchantDetailResponse {
 
     @Schema(description = "本店铺可提现余额（店铺口径，未扣其他角色对统一账户的占用；v8.23 新增显式字段）", example = "1280.50")
     private java.math.BigDecimal shopWithdrawableAmount;
+
+    @Schema(description = "商家现金提现手续费率（物业公司覆盖值优先，未配置取 0.0060；"
+            + "物业币兑换用同一费率）", example = "0.0060")
+    private java.math.BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
 
     @Schema(description = "账号统一可提现余额（楼长分成 + 业主卖货 + 名下商家，扣全部角色提现在途；v8.23 新增）", example = "1580.50")
     private java.math.BigDecimal accountWithdrawableAmount;

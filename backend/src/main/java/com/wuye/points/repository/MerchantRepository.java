@@ -39,6 +39,9 @@ public interface MerchantRepository extends JpaRepository<Merchant, String>, Jpa
 
     List<Merchant> findByPropertyCompanyIdAndStatus(String propertyCompanyId, String status);
 
+    /** 收款码补生成用：审核通过、在营、但还没有专属二维码的店铺。 */
+    List<Merchant> findByAuditStatusAndStatusAndQrCodeUrlIsNull(String auditStatus, String status);
+
     Optional<Merchant> findFirstByContactPhoneOrderByCreatedAtDesc(String contactPhone);
 
     List<Merchant> findByResidentId(String residentId);

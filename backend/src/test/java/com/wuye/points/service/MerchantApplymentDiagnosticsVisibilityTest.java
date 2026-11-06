@@ -5,6 +5,7 @@ import com.wuye.points.dto.merchant.ApplymentDetailResponse;
 import com.wuye.points.entity.Merchant;
 import com.wuye.points.entity.MerchantApplyment;
 import com.wuye.points.entity.Resident;
+import com.wuye.points.payment.WechatPayProperties;
 import com.wuye.points.repository.MerchantApplymentRepository;
 import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.ResidentRepository;
@@ -42,6 +43,8 @@ class MerchantApplymentDiagnosticsVisibilityTest {
     private MerchantRepository merchantRepository;
     @Mock
     private ResidentRepository residentRepository;
+    @Mock
+    private WechatPayProperties wechatPayProperties;
     @Mock
     private RoleGuard roleGuard;
 

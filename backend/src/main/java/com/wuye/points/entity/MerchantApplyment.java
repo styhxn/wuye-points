@@ -52,7 +52,7 @@ public class MerchantApplyment extends BaseEntity {
     private String wxState;
 
     /** 主体类型：ENTERPRISE(企业)/INDIVIDUAL(个体工商户) */
-    @Column(name = "organization_type", length = 20)
+    @Column(name = "organization_type", length = 32)
     private String organizationType;
 
     /** 是否金融机构主体（官方字段 finance_institution，默认 false） */
@@ -83,14 +83,14 @@ public class MerchantApplyment extends BaseEntity {
     @Column(name = "license_address", length = 512)
     private String licenseAddress;
 
-    @Column(name = "license_period_begin", length = 10)
+    @Column(name = "license_period_begin", length = 32)
     private String licensePeriodBegin;
 
-    @Column(name = "license_period_end", length = 10)
+    @Column(name = "license_period_end", length = 32)
     private String licensePeriodEnd;
 
     /** 经营场景类型：SALES_SCENES_MINI_PROGRAM / SALES_SCENES_STORE / SALES_SCENES_MP 等 */
-    @Column(name = "sales_scenes_type", length = 32)
+    @Column(name = "sales_scenes_type", length = 64)
     private String salesScenesType;
 
     /** 小程序/公众号 AppID（服务商侧） */
@@ -109,7 +109,7 @@ public class MerchantApplyment extends BaseEntity {
     private String bizStoreName;
 
     /** 门店省市编码（官方省市对照表） */
-    @Column(name = "biz_address_code", length = 16)
+    @Column(name = "biz_address_code", length = 32)
     private String bizAddressCode;
 
     @Column(name = "biz_store_address", length = 512)
@@ -146,7 +146,7 @@ public class MerchantApplyment extends BaseEntity {
     private String contactEmailEnc;
 
     /** 超管类型：当前版本仅 LEGAL(法人/经营者) */
-    @Column(name = "contact_type", length = 16)
+    @Column(name = "contact_type", length = 32)
     private String contactType;
 
     /** 法人/经营者姓名（RSA 加密） */
@@ -157,22 +157,22 @@ public class MerchantApplyment extends BaseEntity {
     @Column(name = "id_card_number_enc", columnDefinition = "text")
     private String idCardNumberEnc;
 
-    /** 身份证人像面 media_id（微信媒体上传后返回） */
-    @Column(name = "id_card_copy_media", length = 128)
+    /** 身份证人像面 media_id（微信媒体上传后返回；实测可达 110+ 字符） */
+    @Column(name = "id_card_copy_media", length = 255)
     private String idCardCopyMedia;
 
     /** 身份证国徽面 media_id */
-    @Column(name = "id_card_national_media", length = 128)
+    @Column(name = "id_card_national_media", length = 255)
     private String idCardNationalMedia;
 
     /** 身份证居住地址（企业主体必填；官方要求敏感信息加密，落库与上送均为密文） */
     @Column(name = "id_card_address_enc", columnDefinition = "text")
     private String idCardAddressEnc;
 
-    @Column(name = "id_card_period_begin", length = 10)
+    @Column(name = "id_card_period_begin", length = 32)
     private String idCardPeriodBegin;
 
-    @Column(name = "id_card_period_end", length = 10)
+    @Column(name = "id_card_period_end", length = 32)
     private String idCardPeriodEnd;
 
     /** 最终受益人列表 JSON（姓名/号码/地址已加密） */
@@ -180,11 +180,12 @@ public class MerchantApplyment extends BaseEntity {
     private String uboJson;
 
     /** 营业执照 media_id（小微可空） */
-    @Column(name = "business_license_media", length = 128)
+    @Column(name = "business_license_media", length = 255)
     private String businessLicenseMedia;
 
-    /** 结算账户类型：BANK_ACCOUNT_TYPE_CORPORATE(对公)/BANK_ACCOUNT_TYPE_PERSONAL(个人) */
-    @Column(name = "bank_account_type", length = 20)
+    /** 结算账户类型：BANK_ACCOUNT_TYPE_CORPORATE(对公)/BANK_ACCOUNT_TYPE_PERSONAL(个人)
+     *  枚举值最长 27 字符，列宽不得小于 32（线上曾因 varchar(20) 导致保存 409） */
+    @Column(name = "bank_account_type", length = 32)
     private String bankAccountType;
 
     /** 开户名（RSA 加密） */
@@ -204,11 +205,11 @@ public class MerchantApplyment extends BaseEntity {
     private String accountBank;
 
     /** 银行别名编码 bank_alias_code（仅用于查询支行列表） */
-    @Column(name = "bank_alias_code", length = 32)
+    @Column(name = "bank_alias_code", length = 64)
     private String bankAliasCode;
 
     /** 支行联行号 bank_branch_id */
-    @Column(name = "bank_branch_id", length = 128)
+    @Column(name = "bank_branch_id", length = 255)
     private String bankBranchId;
 
     /** 超级管理员签约链接（待签约阶段返回，转二维码给超管扫码） */

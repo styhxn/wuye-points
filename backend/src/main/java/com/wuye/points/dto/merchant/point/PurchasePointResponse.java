@@ -23,6 +23,9 @@ public class PurchasePointResponse {
     @Schema(description = "支付金额", example = "100.00")
     private BigDecimal payAmount;
 
+    @Schema(description = "本次计算使用的积分兑换比（1元=X积分）", example = "100.0000")
+    private BigDecimal exchangeRate;
+
     @Schema(description = "审核状态", example = "pending", allowableValues = {"pending_audit", "approved", "rejected"})
     private String status;
 

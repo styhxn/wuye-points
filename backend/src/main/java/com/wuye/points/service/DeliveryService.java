@@ -45,6 +45,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,6 +75,7 @@ public class DeliveryService {
     private final SnowflakeIdGenerator idGenerator;
     private final OrderCompletionService orderCompletionService;
     private final PlatformSettingService platformSettingService;
+    private final DeliveryFeeCalculator deliveryFeeCalculator;
 
     /**
      * 按履约方式确保配送单存在并处于正确状态（幂等）。
@@ -188,7 +190,9 @@ public class DeliveryService {
      */
     @Transactional
     public CompleteDeliveryResponse merchantConfirm(String id, CompleteDeliveryRequest request) {
-        roleGuard.requireAnyRole("merchant");
+        // 商家自配确认送达：按店铺归属判权限（下方 assertMerchantOwnsOrder），
+        // 不再卡 residents.role='merchant' —— 一级代理载体的登录态一直是 resident，
+        // 卡角色会让代销单的「商家自配」分支永远走不完（订单停在 delivering 等超时自动确认）。
         validateDeliveryId(id);
 
         Delivery delivery = deliveryRepository.findById(id)
@@ -302,16 +306,28 @@ public class DeliveryService {
     public record FulfillmentDeliveryResult(Delivery delivery, boolean created) {
     }
 
+    /**
+     * 配送单费用：与下单/试算同一套报价（商家自由档位 → 未命中回落默认配送费 → 满额减免压顶）。
+     *
+     * <p>此前这里只看 {@code merchants.delivery_fee} 单值，档位配置在配送单上同样不生效，
+     * 会出现「用户按档位付了 2 元、配送单按默认 5 元记账」的分叉。</p>
+     */
     private BigDecimal resolveDeliveryFee(Order order, Merchant merchant, DeliveryRule rule) {
-        if (merchant != null && merchant.getFreeDeliveryThreshold() != null
-                && order.getTotalAmount() != null
-                && order.getTotalAmount().compareTo(merchant.getFreeDeliveryThreshold()) >= 0) {
+        if (merchant == null) {
+            return defaultDecimal(order.getDeliveryFee());
+        }
+        String communityId = residentRepository.findById(order.getResidentId())
+                .map(Resident::getCommunityId)
+                .orElse(null);
+        BigDecimal quoted = deliveryFeeCalculator.quote(
+                merchant, defaultDecimal(order.getTotalAmount()), communityId);
+        if (Boolean.TRUE.equals(merchant.getFreeDeliveryEnabled())
+                && merchant.getFreeDeliveryThreshold() != null
+                && quoted.compareTo(BigDecimal.ZERO) > 0
+                && defaultDecimal(order.getTotalAmount()).compareTo(merchant.getFreeDeliveryThreshold()) >= 0) {
             return BigDecimal.ZERO;
         }
-        if (merchant != null && merchant.getDeliveryFee() != null) {
-            return merchant.getDeliveryFee();
-        }
-        return defaultDecimal(order.getDeliveryFee());
+        return quoted;
     }
 
     @Transactional
@@ -693,7 +709,7 @@ public class DeliveryService {
 
     private Map<String, Order> loadOrderMap(List<String> orderIds) {
         if (orderIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return orderRepository.findAllById(orderIds).stream()
                 .collect(Collectors.toMap(Order::getId, Function.identity()));
@@ -705,7 +721,7 @@ public class DeliveryService {
                 .distinct()
                 .toList();
         if (merchantIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(merchantIds).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity()));

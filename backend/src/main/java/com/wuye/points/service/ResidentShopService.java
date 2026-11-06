@@ -55,6 +55,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -103,9 +104,13 @@ public class ResidentShopService {
     private final TransactionTemplate transactionTemplate;
     private final ResidentShopMerchantService residentShopMerchantService;
     private final MerchantRepository merchantRepository;
+    private final QrCodeService qrCodeService;
 
     @Value("${app.share.base-url:https://test.yuanxusoftware.top/h5/shop}")
     private String shareBaseUrl;
+
+    @Value("${app.qr-code.listing-page:pages/service/productDetail}")
+    private String listingPage;
 
     /** 模拟支付开关：生产必须关闭，否则任何人可零成本获得业主商户资格（fail-closed 默认 false）。 */
     @Value("${app.payment.mock-enabled:false}")
@@ -474,10 +479,21 @@ public class ResidentShopService {
         listingRepository.save(listing);
 
         String shareUrl = shareBaseUrl + "?listingId=" + listing.getId() + "&resellerId=" + resident.getId();
+        // 二维码必须是可访问的图片：以前直接把 H5 链接拼上 &format=qrcode 当图片URL返回，
+        // 前端 <image src> 拿到的是网页。改走小程序码（path 带 listingId/resellerId，
+        // 商品详情页 onLoad 本就读这两个参数），微信不可用时降级为链接二维码。
+        String codePath = listingPage + "?listingId=" + listing.getId() + "&resellerId=" + resident.getId();
+        String qrcodeUrl = null;
+        try {
+            qrcodeUrl = qrCodeService.miniProgramCodeOrLink(
+                    codePath, shareUrl, QrCodeService.listingFileName(listing.getId())).url();
+        } catch (RuntimeException ex) {
+            log.warn("[小店分享] 二维码生成失败 listingId={}: {}", listing.getId(), ex.getMessage());
+        }
         return ShareListingResponse.builder()
                 .shareUrl(shareUrl)
                 .posterImageUrl(shareBaseUrl.replace("/h5/shop", "/api/v1/static/posters/" + listing.getId() + ".png"))
-                .qrcodeUrl(shareUrl + "&format=qrcode")
+                .qrcodeUrl(qrcodeUrl)
                 .visibility(defaultVisibility(application.getVisibility()))
                 .build();
     }
@@ -691,8 +707,14 @@ public class ResidentShopService {
     @Transactional(readOnly = true)
     public PageResponse<PublicResidentMerchantListingFlatItemResponse> listPublicListings(
             String keyword, String propertyCompanyId, String category, int page, int pageSize) {
-        if (!StringUtils.hasText(propertyCompanyId)) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "propertyCompanyId不能为空");
+        // 条目30：页面漏传 propertyCompanyId 时不再直接 500——登录态按本人物业兜底，
+        // 匿名且未传才报参数缺失（跨物业不能不隔离）。
+        String scopedPropertyCompanyId = StringUtils.hasText(propertyCompanyId)
+                ? propertyCompanyId
+                : UserContext.currentPropertyCompanyId();
+        if (!StringUtils.hasText(scopedPropertyCompanyId)) {
+            throw new BizException(ErrorCode.PARAM_MISSING,
+                    "propertyCompanyId不能为空（未登录浏览时请在查询参数中指定物业公司）");
         }
         if (page < 1) {
             throw new BizException(ErrorCode.PARAM_OUT_OF_RANGE);
@@ -703,7 +725,7 @@ public class ResidentShopService {
         Specification<ResidentMerchantApplication> appSpec = (root, query, cb) -> cb.and(
                 cb.equal(root.get("visibility"), VISIBILITY_PUBLIC),
                 cb.equal(root.get("status"), "active"),
-                cb.equal(root.get("propertyCompanyId"), propertyCompanyId));
+                cb.equal(root.get("propertyCompanyId"), scopedPropertyCompanyId));
         List<String> residentIds = applicationRepository.findAll(appSpec).stream()
                 .map(ResidentMerchantApplication::getResidentId)
                 .distinct()
@@ -870,7 +892,7 @@ public class ResidentShopService {
 
     private Map<String, String> loadResidentNames(List<String> residentIds) {
         if (residentIds == null || residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, this::publicResidentName, (a, b) -> a));

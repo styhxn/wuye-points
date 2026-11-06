@@ -20,10 +20,12 @@ public class NavigationController {
 
     private final AdminNavigationService adminNavigationService;
 
-    @Operation(summary = "获取手机端导航", description = "返回启用中的导航项，可按模块过滤(home/service/activity/resident_merchant)，优先物业公司配置，未配置回落平台默认")
+    @Operation(summary = "获取手机端导航", description = "返回启用中的导航项，可按模块过滤(home/service/activity/resident_merchant)，优先物业公司配置，该模块未配置时回落平台默认；"
+            + "position 为可选过滤（bottom/top），不传则不限位置返回（条目31：小程序首页只传 module，不传 position）")
     @GetMapping
     public ApiResponse<List<NavigationItem>> listForApp(
-            @io.swagger.v3.oas.annotations.Parameter(description = "模块过滤") @org.springframework.web.bind.annotation.RequestParam(required = false) String module) {
-        return ApiResponse.success(adminNavigationService.listForApp(module));
+            @io.swagger.v3.oas.annotations.Parameter(description = "模块过滤") @org.springframework.web.bind.annotation.RequestParam(required = false) String module,
+            @io.swagger.v3.oas.annotations.Parameter(description = "位置过滤：不传=不限位置，可传 bottom/top") @org.springframework.web.bind.annotation.RequestParam(required = false) String position) {
+        return ApiResponse.success(adminNavigationService.listForApp(module, position));
     }
 }

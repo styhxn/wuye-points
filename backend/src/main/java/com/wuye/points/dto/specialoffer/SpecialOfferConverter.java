@@ -125,7 +125,7 @@ public class SpecialOfferConverter {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (ids.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(Resident::getId, Function.identity(), (a, b) -> a));
@@ -137,7 +137,7 @@ public class SpecialOfferConverter {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         if (ids.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return merchantRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(Merchant::getId, Function.identity(), (a, b) -> a));

@@ -40,6 +40,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,6 +66,7 @@ public class DistributorWorkbenchService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final MerchantCoinReceivableService merchantCoinReceivableService;
+    private final RoleWithdrawableService roleWithdrawableService;
 
     /**
      * 解析当前登录用户的一级代理身份：以名下商家 is_distributor=1 判定（后台开通）。
@@ -113,6 +115,8 @@ public class DistributorWorkbenchService {
                 .withdrawableAmount(w.withdrawableAmount())
                 .withdrawalBlocked(w.withdrawalBlocked())
                 .coinAvailableAmount(merchantCoinReceivableService.calc(merchant).coinAvailableAmount())
+                .feeRate(roleWithdrawableService.merchantWithdrawalFeeRateForCompany(merchant.getPropertyCompanyId()))
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .totalRevenue(w.totalRevenue())
                 .totalOrders(w.totalOrders())
                 .build();
@@ -121,7 +125,7 @@ public class DistributorWorkbenchService {
     @Transactional
     public DistributorMyProductItemResponse createMyProduct(CreateDistributorProductRequest request) {
         Merchant distributor = resolveCurrentDistributor();
-        assertSupplyScopeNotAgentControlled(request.getSupplyScope());
+        assertSupplyScopeGrantOnly(request.getSupplyScope());
         DistributorProduct product = new DistributorProduct();
         product.setId(idGenerator.generateId("dpr"));
         product.setDistributorMerchantId(distributor.getId());
@@ -170,7 +174,7 @@ public class DistributorWorkbenchService {
     public DistributorMyProductItemResponse updateMyProduct(
             String productId, UpdateDistributorProductRequest request) {
         Merchant distributor = resolveCurrentDistributor();
-        assertSupplyScopeNotAgentControlled(request.getSupplyScope());
+        assertSupplyScopeGrantOnly(request.getSupplyScope());
         DistributorProduct product = loadOwnedProduct(distributor.getId(), productId);
         assertNotDeleted(product, "修改");
         if (StringUtils.hasText(request.getName())) {
@@ -279,7 +283,7 @@ public class DistributorWorkbenchService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds == null || residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, r -> r, (a, b) -> a));
@@ -412,15 +416,23 @@ public class DistributorWorkbenchService {
     }
 
     /**
-     * 供给范围是「平台/物业授予的资格」，代理端只能只读展示。
-     * 即使传 company 也拒绝，避免前端误以为提交生效；正确入口见管理端
-     * PUT /admin/distributor-products/{id} 的 supplyScope 字段。
+     * 供给范围里的 platform（全平台代销）是「平台/物业授予的资格」，代理端只能只读展示。
+     *
+     * <p>整改清单条目34：一级代理工作台创建商品时会带上 company，此前非空即 403，
+     * 与「新货源一律落 company」的默认口径自相矛盾，导致创建分销商品必失败。
+     * 现在 company（等同默认落库值，无跨租户、无资金口径变化）放行，platform 仍只允许
+     * 管理端 PUT /admin/distributor-products/{id} 授予。</p>
      */
-    private void assertSupplyScopeNotAgentControlled(String supplyScope) {
-        if (StringUtils.hasText(supplyScope)) {
-            throw new BizException(ErrorCode.PERMISSION_DENIED,
-                    "供给范围由平台/物业管理员设置，一级代理不可自行修改");
+    private void assertSupplyScopeGrantOnly(String supplyScope) {
+        if (!StringUtils.hasText(supplyScope) || "company".equals(supplyScope)) {
+            return;
         }
+        if ("platform".equals(supplyScope)) {
+            throw new BizException(ErrorCode.PERMISSION_DENIED,
+                    "平台代销(platform)需由平台/物业管理员在管理端授予，一级代理不可自行开启");
+        }
+        throw new BizException(ErrorCode.PARAM_INVALID,
+                "supplyScope 仅支持 company(本物业公司) / platform(平台代销，需管理员授予)");
     }
 
     /** 买家姓名脱敏：张三→张*，李华明→李*明（与消息/订单列表口径一致）。 */
@@ -447,7 +459,7 @@ public class DistributorWorkbenchService {
 
     private Map<String, Long> countPickups(List<String> productIds) {
         if (productIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return listingRepository.findByDistributorProductIdInOrderByCreatedAtDesc(productIds).stream()
                 .collect(Collectors.groupingBy(ResidentMerchantListing::getDistributorProductId,

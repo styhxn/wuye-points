@@ -9,7 +9,8 @@ import lombok.Data;
  * 四层树角色收款账号绑定请求（阶段2）。
  *
  * <p>前端「我的收款方式」页：物业/统筹/板块/个体负责人绑定本人收款渠道。
- * 零钱渠道填 {@code openid}；银行卡渠道填卡号/开户行/持卡人（明文提交，
+ * 零钱渠道<b>不再由客户端提交 openid</b>：服务端按登录态从 {@code residents.openid} 反查，
+ * 客户端传入的值一律忽略；银行卡渠道填卡号/开户行/持卡人（明文提交，
  * 后端以微信平台证书 RSA-OAEP 加密落库，仅用于商家转账出款，不对外回显）。</p>
  */
 @Schema(description = "四层树角色收款账号绑定请求（阶段2）")
@@ -20,7 +21,8 @@ public class BindTransferAccountRequest {
     @NotBlank(message = "收款渠道不能为空")
     private String channel;
 
-    @Schema(description = "微信 openid（zero 渠道必填）", example = "oUpF8uMuAJO_M2pxb1Q9zNjWeS6o")
+    @Schema(description = "微信 openid（已废弃：zero 渠道由服务端按登录态反查 residents.openid，传入值忽略）",
+            example = "oUpF8uMuAJO_M2pxb1Q9zNjWeS6o")
     @Size(max = 64, message = "openid 长度不能超过64")
     private String openid;
 

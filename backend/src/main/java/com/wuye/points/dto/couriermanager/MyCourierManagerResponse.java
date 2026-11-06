@@ -41,6 +41,17 @@ public class MyCourierManagerResponse {
     @Schema(description = "可提现金额", example = "1200.00")
     private BigDecimal withdrawableAmount;
 
+    @Schema(description = "在途提现金额（待审核 + 已通过待打款）", example = "200.00")
+    private BigDecimal pendingWithdrawalAmount;
+
+    @Schema(description = "提现手续费率（物业公司覆盖值优先，未配置取平台默认，手续费开关关闭时为 0）",
+            example = "0.0060")
+    private BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
+
     @Schema(description = "累计已提现金额", example = "500.00")
     private BigDecimal totalWithdrawn;
 

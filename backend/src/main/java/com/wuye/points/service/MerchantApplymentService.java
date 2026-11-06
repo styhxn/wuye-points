@@ -6,6 +6,9 @@ import cn.hutool.json.JSONUtil;
 import com.wuye.points.context.UserContext;
 import com.wuye.points.dto.merchant.ApplymentDetailResponse;
 import com.wuye.points.dto.merchant.ApplymentSubmitRequest;
+import com.wuye.points.dto.merchant.BankBranchListResponse;
+import com.wuye.points.dto.merchant.BankListResponse;
+import com.wuye.points.dto.merchant.BankOptionResponse;
 import com.wuye.points.dto.merchant.MediaUploadResponse;
 import com.wuye.points.dto.merchant.UboInfoRequest;
 import com.wuye.points.entity.Merchant;
@@ -25,8 +28,13 @@ import com.wuye.points.repository.MerchantRepository;
 import com.wuye.points.repository.MerchantWechatAccountRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.util.SnowflakeIdGenerator;
+import com.wuye.points.util.MerchantSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -87,16 +95,43 @@ public class MerchantApplymentService {
 
     private final Map<String, Long> lastRefreshAt = new ConcurrentHashMap<>();
 
+    /**
+     * 银行列表缓存有效期。微信官方说明该接口返回的是「后端缓存快照」，要求业务方定期淘汰更新，
+     * 故取 24 小时；每日 04:40 主动预热一次。
+     */
+    private static final long BANK_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
+    /** 单次向微信拉取银行列表的分页大小（微信全量 4400+ 条，必须分页拉全）。 */
+    private static final int BANK_FETCH_PAGE_SIZE = 200;
+    /** 拉全量的页数上限，防微信侧异常时无限循环。 */
+    private static final int BANK_FETCH_MAX_PAGES = 60;
+    /** 支行列表微信上限；请求超出会被夹取，并在响应里回显生效值（不再静默）。 */
+    private static final int BRANCH_LIMIT_MAX = 500;
+    /** 银行列表默认返回条数。 */
+    private static final int BANK_DEFAULT_LIMIT = 50;
+
+    /** bankAccountType → 全量银行列表缓存。 */
+    private final Map<String, BankCache> bankCache = new ConcurrentHashMap<>();
+
+    /** 已缓存的银行列表与抓取时间。 */
+    private record BankCache(List<BankOptionResponse> banks, long fetchedAtMillis) {
+
+        boolean fresh() {
+            return System.currentTimeMillis() - fetchedAtMillis < BANK_CACHE_TTL_MS;
+        }
+    }
+
     private final MerchantApplymentRepository applymentRepository;
     private final MerchantRepository merchantRepository;
     private final MerchantWechatAccountRepository wechatAccountRepository;
     private final ResidentRepository residentRepository;
+    private final MerchantTransferAccountService transferAccountService;
     private final PartnerApplymentApiService applymentApiService;
     private final PartnerApplymentProperties applymentProps;
     private final WechatPayProperties wechatPayProperties;
     private final WechatCertManager certManager;
     private final SnowflakeIdGenerator idGenerator;
     private final com.wuye.points.util.RoleGuard roleGuard;
+    private final QrCodeService qrCodeService;
 
     // ---------------------------------------------------------------------
     // 商家端
@@ -130,15 +165,42 @@ public class MerchantApplymentService {
         }
     }
 
-    /** 银行列表（进件表单「开户银行」下拉数据源）。 */
-    public JSONObject listBanks(String bankAccountType) {
+    /**
+     * 开户银行列表（进件表单「开户银行」下拉数据源）。
+     *
+     * <p>微信该接口全量约 4400+ 条且必须分页。旧实现写死 {@code offset=0&limit=100}，前端只能看到前
+     * 100 家银行、选不到自己的开户行；且返回的是微信原始应答（数组在 {@code data.data}），层级易踩坑。
+     * 现改为后端拉全量并缓存 24 小时，关键字检索与分页都在本地完成，响应字段规范化。</p>
+     */
+    public BankListResponse listBanks(String bankAccountType, String keyword, Integer offset, Integer limit) {
         resolveCurrentMerchantId();
         requireApplymentReady();
-        return applymentApiService.listBanks(bankAccountType);
+
+        String type = normalizeBankAccountType(bankAccountType);
+        List<BankOptionResponse> all = loadBankOptions(type);
+        List<BankOptionResponse> filtered = filterBanks(all, keyword);
+
+        int safeOffset = offset == null || offset < 0 ? 0 : offset;
+        int safeLimit = limit == null || limit <= 0 ? BANK_DEFAULT_LIMIT : Math.min(limit, BRANCH_LIMIT_MAX);
+        int from = Math.min(safeOffset, filtered.size());
+        int to = Math.min(from + safeLimit, filtered.size());
+
+        return BankListResponse.builder()
+                .bankAccountType(type)
+                .total(all.size())
+                .filteredTotal(filtered.size())
+                .count(to - from)
+                .offset(from)
+                .list(filtered.subList(from, to))
+                .build();
     }
 
-    /** 支行列表（银行要求填写支行时使用）。官方要求 city_code 必填，支持分页。 */
-    public JSONObject listBranches(String bankAliasCode, String cityCode, Integer offset, Integer limit) {
+    /**
+     * 支行列表（银行要求填写支行时使用）。官方要求 {@code city_code} 必填，支持 offset/limit 分页。
+     *
+     * <p>请求 limit 超过微信上限 500 时夹取，并把生效值回显在 {@code limitEffective}，不再静默截断。</p>
+     */
+    public BankBranchListResponse listBranches(String bankAliasCode, String cityCode, Integer offset, Integer limit) {
         resolveCurrentMerchantId();
         requireApplymentReady();
         if (!StringUtils.hasText(bankAliasCode)) {
@@ -148,8 +210,148 @@ public class MerchantApplymentService {
             throw new BizException(ErrorCode.PARAM_MISSING, "城市编码不能为空");
         }
         int safeOffset = offset == null || offset < 0 ? 0 : offset;
-        int safeLimit = limit == null ? 100 : Math.max(1, Math.min(limit, 500));
-        return applymentApiService.listBranches(bankAliasCode, cityCode, safeOffset, safeLimit);
+        int requested = limit == null || limit <= 0 ? 100 : limit;
+        int safeLimit = Math.min(requested, BRANCH_LIMIT_MAX);
+        if (requested > BRANCH_LIMIT_MAX) {
+            log.warn("[进件] 支行列表 limit={} 超微信上限 {}，已夹取（生效值见响应 limitEffective）",
+                    requested, BRANCH_LIMIT_MAX);
+        }
+
+        JSONObject resp = applymentApiService.listBranches(bankAliasCode, cityCode, safeOffset, safeLimit);
+        JSONArray data = resp.getJSONArray("data");
+        List<BankBranchListResponse.Item> items = new ArrayList<>();
+        if (data != null) {
+            for (Object element : data) {
+                JSONObject branch = (JSONObject) element;
+                items.add(BankBranchListResponse.Item.builder()
+                        .bankBranchName(branch.getStr("bank_branch_name"))
+                        .bankBranchId(branch.getStr("bank_branch_id"))
+                        .build());
+            }
+        }
+        return BankBranchListResponse.builder()
+                .total(resp.getInt("total_count", items.size()))
+                .count(items.size())
+                .offset(resp.getInt("offset", safeOffset))
+                .limitEffective(safeLimit)
+                .accountBank(resp.getStr("account_bank"))
+                .accountBankCode(resp.getInt("account_bank_code"))
+                .bankAlias(resp.getStr("bank_alias"))
+                .bankAliasCode(resp.getStr("bank_alias_code"))
+                .list(items)
+                .build();
+    }
+
+    /** 账户类型归一：仅区分对公/对私，其余一律按对公处理（与微信接口路径一致）。 */
+    private String normalizeBankAccountType(String raw) {
+        return "BANK_ACCOUNT_TYPE_PERSONAL".equals(raw == null ? "" : raw.trim().toUpperCase(Locale.ROOT))
+                ? "BANK_ACCOUNT_TYPE_PERSONAL"
+                : "BANK_ACCOUNT_TYPE_CORPORATE";
+    }
+
+    /** 取全量银行列表：缓存新鲜则直接返回，否则分页拉全后落缓存。 */
+    private List<BankOptionResponse> loadBankOptions(String type) {
+        BankCache cached = bankCache.get(type);
+        if (cached != null && cached.fresh()) {
+            return cached.banks();
+        }
+
+        List<BankOptionResponse> collected = new ArrayList<>();
+        int totalCount = -1;
+        for (int page = 0; page < BANK_FETCH_MAX_PAGES; page++) {
+            int pageOffset = page * BANK_FETCH_PAGE_SIZE;
+            JSONObject resp;
+            try {
+                resp = applymentApiService.listBanks(type, pageOffset, BANK_FETCH_PAGE_SIZE);
+            } catch (Exception e) {
+                log.error("[进件] 拉取银行列表失败 type={} offset={}", type, pageOffset, e);
+                if (collected.isEmpty()) {
+                    throw new BizException(ErrorCode.WECHAT_API_ERROR, "微信银行列表拉取失败，请稍后重试");
+                }
+                break;
+            }
+            JSONArray data = resp == null ? null : resp.getJSONArray("data");
+            if (data == null || data.isEmpty()) {
+                break;
+            }
+            for (Object element : data) {
+                collected.add(toBankOption((JSONObject) element));
+            }
+            totalCount = resp.getInt("total_count", collected.size());
+            if (collected.size() >= totalCount || data.size() < BANK_FETCH_PAGE_SIZE) {
+                break;
+            }
+        }
+
+        List<BankOptionResponse> banks = List.copyOf(collected);
+        bankCache.put(type, new BankCache(banks, System.currentTimeMillis()));
+        log.info("[进件] 银行列表已缓存 type={} 条数={} 微信总条数={}", type, banks.size(), totalCount);
+        return banks;
+    }
+
+    private static BankOptionResponse toBankOption(JSONObject item) {
+        return BankOptionResponse.builder()
+                .accountBank(item.getStr("account_bank"))
+                .accountBankCode(item.getInt("account_bank_code"))
+                .bankAlias(item.getStr("bank_alias"))
+                .bankAliasCode(item.getStr("bank_alias_code"))
+                .needBankBranch(item.getBool("need_bank_branch"))
+                .build();
+    }
+
+    /** 关键字过滤：命中开户银行名/银行别名（忽略大小写），纯数字关键字额外命中开户银行编码。 */
+    private static List<BankOptionResponse> filterBanks(List<BankOptionResponse> banks, String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return banks;
+        }
+        String kw = keyword.trim().toLowerCase(Locale.ROOT);
+        boolean numeric = kw.chars().allMatch(Character::isDigit);
+        return banks.stream()
+                .filter(bank -> containsIgnoreCase(bank.getAccountBank(), kw)
+                        || containsIgnoreCase(bank.getBankAlias(), kw)
+                        || (numeric && bank.getAccountBankCode() != null
+                            && String.valueOf(bank.getAccountBankCode()).equals(kw)))
+                .toList();
+    }
+
+    private static boolean containsIgnoreCase(String value, String lowerKeyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(lowerKeyword);
+    }
+
+    /**
+     * 启动后异步预热银行列表缓存，避免首个进件用户承担 20+ 次微信分页调用的延迟。
+     * 守护线程、失败只记日志，不影响启动与其它业务。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmBankCacheOnStartup() {
+        if (!applymentProps.isEnabled()) {
+            return;
+        }
+        Thread warmer = new Thread(this::refreshBankCacheQuietly, "bank-cache-warmup");
+        warmer.setDaemon(true);
+        warmer.start();
+    }
+
+    /** 每日 04:40 淘汰缓存并重新拉全量（微信侧为快照数据，官方要求定期更新）。 */
+    @Scheduled(cron = "0 40 4 * * ?")
+    @SchedulerLock(name = "applyment_refresh_bank_cache", lockAtMostFor = "PT15M", lockAtLeastFor = "PT1M")
+    public void refreshBankCache() {
+        refreshBankCacheQuietly();
+    }
+
+    private void refreshBankCacheQuietly() {
+        if (!isApplymentReady()) {
+            log.info("[进件] 服务商凭据未就绪，跳过银行列表预热");
+            return;
+        }
+        for (String type : List.of("BANK_ACCOUNT_TYPE_CORPORATE", "BANK_ACCOUNT_TYPE_PERSONAL")) {
+            try {
+                bankCache.remove(type);
+                loadBankOptions(type);
+            } catch (Exception e) {
+                log.warn("[进件] 银行列表预热失败 type={}：{}", type, e.getMessage());
+            }
+        }
     }
 
     /** 可选行业与结算规则（前端下拉数据源，避免与后端校验漂移）。 */
@@ -186,7 +388,7 @@ public class MerchantApplymentService {
     public ApplymentDetailResponse saveApplyment(String merchantId, ApplymentSubmitRequest request) {
         getMerchantForCurrentUser(merchantId);
         requireApplymentReady();
-        validateRequest(request);
+        validateDraft(request);
 
         MerchantApplyment applyment = applymentRepository.findByMerchantId(merchantId).orElse(null);
         if (applyment != null && ACTIVE_STATES.contains(applyment.getApplymentState())) {
@@ -225,12 +427,11 @@ public class MerchantApplymentService {
         applyment.setLicensePeriodBegin(request.getLicensePeriodBegin());
         applyment.setLicensePeriodEnd(request.getLicensePeriodEnd());
 
-        applyment.setIdCardNameEnc(encrypt(request.getIdCardName(), serialNo));
-        applyment.setIdCardNumberEnc(encrypt(request.getIdCardNumber(), serialNo));
+        applyment.setIdCardNameEnc(encryptIfPresent(request.getIdCardName(), serialNo));
+        applyment.setIdCardNumberEnc(encryptIfPresent(request.getIdCardNumber(), serialNo));
         applyment.setIdCardCopyMedia(request.getIdCardCopyMedia());
         applyment.setIdCardNationalMedia(request.getIdCardNationalMedia());
-        applyment.setIdCardAddressEnc(StringUtils.hasText(request.getIdCardAddress())
-                ? encrypt(request.getIdCardAddress(), serialNo) : null);
+        applyment.setIdCardAddressEnc(encryptIfPresent(request.getIdCardAddress(), serialNo));
         applyment.setIdCardPeriodBegin(request.getIdCardPeriodBegin());
         applyment.setIdCardPeriodEnd(request.getIdCardPeriodEnd());
         applyment.setUboJson(encryptUboJson(request.getUboList(), serialNo));
@@ -251,8 +452,8 @@ public class MerchantApplymentService {
         applyment.setQualifications(csv(request.getQualifications()));
 
         applyment.setBankAccountType(request.getBankAccountType());
-        applyment.setBankAccountNameEnc(encrypt(request.getBankAccountName(), serialNo));
-        applyment.setBankAccountNumberEnc(encrypt(request.getBankAccountNumber(), serialNo));
+        applyment.setBankAccountNameEnc(encryptIfPresent(request.getBankAccountName(), serialNo));
+        applyment.setBankAccountNumberEnc(encryptIfPresent(request.getBankAccountNumber(), serialNo));
         applyment.setAccountBank(request.getAccountBank());
         applyment.setBankAliasCode(request.getBankAliasCode());
         applyment.setBankBranchId(request.getBankBranchId());
@@ -261,7 +462,7 @@ public class MerchantApplymentService {
         applyment.setContactType(request.getContactType());
         applyment.setContactName(request.getContactName());
         applyment.setContactMobile(request.getContactMobile());
-        applyment.setContactEmailEnc(encrypt(request.getContactEmail(), serialNo));
+        applyment.setContactEmailEnc(encryptIfPresent(request.getContactEmail(), serialNo));
 
         applymentRepository.save(applyment);
         log.info("[进件] 商家 {} 保存进件资料，状态 init", merchantId);
@@ -307,7 +508,10 @@ public class MerchantApplymentService {
             throw new BizException(ErrorCode.APPLYMENT_STATE_INVALID,
                     "当前状态（" + applyment.getApplymentState() + "）不可提交进件");
         }
-        String serialNo = requireCertSerial();
+        // 条目16：草稿期存的 appid 可能为空（旧记录/分步保存），提交前再兜底一次，
+        // 否则微信侧只会回「请填写小程序APPID」这种前端无法自助修复的错误。
+        backfillSalesAppId(applyment);
+        validateForSubmit(applyment);        String serialNo = requireCertSerial();
         // 官方：重新提交必须更换业务申请编号，否则微信视为同一申请单不重新审核
         String businessCode = idGenerator.generateId("bc");
         PartnerApplymentApiService.SubmitPayload payload = buildPayload(applyment, businessCode, serialNo);
@@ -431,6 +635,10 @@ public class MerchantApplymentService {
                 backfillWechatAccount(applyment, subMchid);
             }
             applymentRepository.save(applyment);
+            if ("finished".equals(local)) {
+                // 进件成功 → 默认收款渠道置微信零钱（幂等；绑定走 REQUIRES_NEW 独立事务，失败不影响进件）
+                bindDefaultZeroForMerchantOwner(applyment);
+            }
             log.info("[进件] 商家 {} 状态推进 wxState={} local={}", applyment.getMerchantId(), wxState, local);
         } catch (Exception e) {
             log.warn("[进件] 查询微信状态失败 merchantId={} businessCode={}: {}",
@@ -465,6 +673,59 @@ public class MerchantApplymentService {
         account.setMerchantName(applyment.getMerchantShortname());
         account.setStatus("active");
         wechatAccountRepository.save(account);
+    }
+
+    /**
+     * 进件成功 → 默认收款渠道置微信零钱（幂等、不阻断进件）。
+     *
+     * <p>绑定对象优先级：申请单所属商家的 {@code resident_id} 优先；主体取不到时才回退到
+     * 发起进件的登录住户。绝不绑定"代办进件的运营账号"——代客进件时绑到运营账号等于把
+     * 商户/负责人的结算款打进运营的零钱，属资金风险。</p>
+     *
+     * <p>绑定动作在 {@code MerchantTransferAccountService#bindZeroForResident} 内以
+     * REQUIRES_NEW 独立事务执行：既满足"进件状态落库之后触发"，又保证绑定失败（openid 为空、
+     * 住户无四层树身份、写库异常）只回滚绑定本身，不影响进件主流程。不用 afterCommit 的原因是
+     * 回调里无事务、异常不可见，且进程崩溃窗口会静默丢失绑定。</p>
+     */
+    private void bindDefaultZeroForMerchantOwner(MerchantApplyment applyment) {
+        try {
+            Merchant merchant = merchantRepository.findById(applyment.getMerchantId()).orElse(null);
+            BindTarget target = resolveBindTarget(
+                    merchant == null ? null : merchant.getResidentId(),
+                    merchant == null ? null : merchant.getPropertyCompanyId(),
+                    UserContext.currentUserId(), UserContext.currentPropertyCompanyId());
+            if (target == null) {
+                log.warn("[进件] 默认零钱待绑定：申请单 {} 主体商家无 resident_id 且当前无登录住户",
+                        applyment.getId());
+                return;
+            }
+            MerchantTransferAccountService.ZeroBindOutcome outcome =
+                    transferAccountService.bindZeroForResident(target.residentId(), target.propertyCompanyId());
+            log.info("[进件] 默认零钱绑定 applymentId={} merchantId={} residentId={} outcome={}",
+                    applyment.getId(), applyment.getMerchantId(), target.residentId(), outcome);
+        } catch (Exception e) {
+            log.error("[进件] 默认零钱绑定失败（不影响进件成功） applymentId={} merchantId={}",
+                    applyment.getId(), applyment.getMerchantId(), e);
+        }
+    }
+
+    /**
+     * 绑定对象解析：商家主体住户优先，其次才是登录住户；两者都没有时返回 null（记待绑定）。
+     * 抽成静态方法便于单测覆盖"主体缺失回退"。
+     */
+    static BindTarget resolveBindTarget(String merchantResidentId, String merchantPropertyCompanyId,
+                                        String loginResidentId, String loginPropertyCompanyId) {
+        if (StringUtils.hasText(merchantResidentId)) {
+            return new BindTarget(merchantResidentId, merchantPropertyCompanyId);
+        }
+        if (StringUtils.hasText(loginResidentId)) {
+            return new BindTarget(loginResidentId, loginPropertyCompanyId);
+        }
+        return null;
+    }
+
+    /** 默认零钱绑定对象（住户 + 其所属物业公司）。 */
+    record BindTarget(String residentId, String propertyCompanyId) {
     }
 
     private PartnerApplymentApiService.SubmitPayload buildPayload(MerchantApplyment a, String businessCode,
@@ -523,56 +784,66 @@ public class MerchantApplymentService {
                 ? "SUBJECT_TYPE_INDIVIDUAL" : "SUBJECT_TYPE_ENTERPRISE";
     }
 
-    void validateRequest(ApplymentSubmitRequest request) {
+    /**
+     * 草稿保存校验：只约束「已填写内容」的取值与交叉一致性，不要求表单完整，商家可分步填写。
+     * 微信要求的必填项在 {@link #validateForSubmit} 中按库中实体统一校验。
+     */
+    void validateDraft(ApplymentSubmitRequest request) {
         if (applymentProps.isFinanceInstitution()) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "本平台暂不受理金融机构进件（缺少金融机构类型与许可证字段），请将 wechat.applyment.finance-institution 置为 false");
         }
-        if (!SUBJECT_TYPES.contains(request.getOrganizationType())) {
+        if (StringUtils.hasText(request.getOrganizationType())
+                && !SUBJECT_TYPES.contains(request.getOrganizationType())) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "主体类型仅支持 ENTERPRISE(企业)/INDIVIDUAL(个体工商户)；小微进件需单独开通权限");
         }
-        if (!CONTACT_TYPES.contains(request.getContactType())) {
+        if (StringUtils.hasText(request.getContactType())
+                && !CONTACT_TYPES.contains(request.getContactType())) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "当前版本仅支持法定代表人本人作为超级管理员（contactType=LEGAL）");
         }
-        if (!SUPPORTED_SALES_SCENES.contains(request.getSalesScenesType())) {
+        if (StringUtils.hasText(request.getSalesScenesType())
+                && !SUPPORTED_SALES_SCENES.contains(request.getSalesScenesType())) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "经营场景仅支持线下门店(SALES_SCENES_STORE)/小程序(SALES_SCENES_MINI_PROGRAM)/公众号(SALES_SCENES_MP)");
         }
-        if (!Set.of("BANK_ACCOUNT_TYPE_CORPORATE", "BANK_ACCOUNT_TYPE_PERSONAL")
+        boolean bankTypeChosen = StringUtils.hasText(request.getBankAccountType());
+        if (bankTypeChosen && !Set.of("BANK_ACCOUNT_TYPE_CORPORATE", "BANK_ACCOUNT_TYPE_PERSONAL")
                 .contains(request.getBankAccountType())) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "结算账户类型必须为 BANK_ACCOUNT_TYPE_CORPORATE/BANK_ACCOUNT_TYPE_PERSONAL");
         }
         boolean corporateAccount = "BANK_ACCOUNT_TYPE_CORPORATE".equals(request.getBankAccountType());
-        if ("ENTERPRISE".equals(request.getOrganizationType()) && !corporateAccount) {
+        if ("ENTERPRISE".equals(request.getOrganizationType()) && bankTypeChosen && !corporateAccount) {
             throw new BizException(ErrorCode.PARAM_INVALID, "企业主体只能使用对公银行账户");
         }
         // 官方《提交申请单》：对公开户名必须与执照商户名称一致；个人卡必须与经营者/法人姓名一致
-        String expectedAccountName = corporateAccount ? request.getMerchantName() : request.getLegalPerson();
-        if (!sameName(request.getBankAccountName(), expectedAccountName)) {
-            throw new BizException(ErrorCode.PARAM_INVALID, corporateAccount
-                    ? "对公账户开户名必须与营业执照上的商户名称一致"
-                    : "个人银行卡开户名必须与经营者/法定代表人姓名一致");
+        // 草稿允许只填了一半，因此两边都有值时才比对
+        if (bankTypeChosen && StringUtils.hasText(request.getBankAccountName())) {
+            String expectedAccountName = corporateAccount ? request.getMerchantName() : request.getLegalPerson();
+            if (StringUtils.hasText(expectedAccountName)
+                    && !sameName(request.getBankAccountName(), expectedAccountName)) {
+                throw new BizException(ErrorCode.PARAM_INVALID, corporateAccount
+                        ? "对公账户开户名必须与营业执照上的商户名称一致"
+                        : "个人银行卡开户名必须与经营者/法定代表人姓名一致");
+            }
         }
-        if ("LEGAL".equals(request.getContactType())
+        if ("LEGAL".equals(request.getContactType()) && StringUtils.hasText(request.getContactName())
+                && StringUtils.hasText(request.getLegalPerson())
                 && !sameName(request.getContactName(), request.getLegalPerson())) {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "超级管理员为法定代表人时，姓名必须与营业执照法人姓名一致");
         }
-        if ("ENTERPRISE".equals(request.getOrganizationType())
-                && !StringUtils.hasText(request.getIdCardAddress())) {
-            throw new BizException(ErrorCode.PARAM_MISSING, "企业主体必须填写身份证居住地址");
-        }
         // 官方：企业若仅有法人一名最终受益人可留空（微信自动回填）；填写多条时必须完整
+        // 草稿允许「加了一行还没填」：全空行按未填写处理（与前端提交前的空行过滤一致）
         if (request.getUboList() != null && !request.getUboList().isEmpty()) {
-            if (request.getUboList().size() > 4) {
+            List<UboInfoRequest> ubos = filledUboRows(request.getUboList());
+            if (ubos.size() > 4) {
                 throw new BizException(ErrorCode.PARAM_INVALID, "最终受益人最多填写4人");
             }
-            for (UboInfoRequest ubo : request.getUboList()) {
-                if (ubo == null
-                        || !StringUtils.hasText(ubo.getIdDocCopy())
+            for (UboInfoRequest ubo : ubos) {
+                if (!StringUtils.hasText(ubo.getIdDocCopy())
                         || !StringUtils.hasText(ubo.getName())
                         || !StringUtils.hasText(ubo.getNumber())
                         || !StringUtils.hasText(ubo.getAddress())
@@ -587,31 +858,6 @@ public class MerchantApplymentService {
                 }
             }
         }
-        if ("SALES_SCENES_STORE".equals(request.getSalesScenesType())) {
-            if (!StringUtils.hasText(request.getBizStoreName())
-                    || !StringUtils.hasText(request.getBizAddressCode())
-                    || !StringUtils.hasText(request.getBizStoreAddress())) {
-                throw new BizException(ErrorCode.PARAM_MISSING, "门店场景必须填写门店名称、省市编码与详细地址");
-            }
-            if (isBlank(request.getStoreEntrancePics()) || isBlank(request.getStoreIndoorPics())) {
-                throw new BizException(ErrorCode.PARAM_MISSING, "门店场景必须上传门头照片与店内照片");
-            }
-        } else if ("SALES_SCENES_MINI_PROGRAM".equals(request.getSalesScenesType())) {
-            // 商家通常没有自己的小程序；平台小程序 AppID（wechat.pay.app-id）可直接作为服务商 AppID
-            if (!StringUtils.hasText(request.getSalesAppId())
-                    && !StringUtils.hasText(request.getSalesSubAppId())
-                    && !StringUtils.hasText(wechatPayProperties.getAppId())) {
-                throw new BizException(ErrorCode.PARAM_MISSING, "小程序场景必须填写 AppID");
-            }
-        } else if ("SALES_SCENES_MP".equals(request.getSalesScenesType())) {
-            if (!StringUtils.hasText(request.getSalesAppId())
-                    && !StringUtils.hasText(request.getSalesSubAppId())) {
-                throw new BizException(ErrorCode.PARAM_MISSING, "公众号场景必须填写 AppID");
-            }
-            if (isBlank(request.getSalesPics())) {
-                throw new BizException(ErrorCode.PARAM_MISSING, "公众号场景必须上传页面截图");
-            }
-        }
         String industry = effectiveIndustry(request);
         if (PartnerApplymentRules.SPECIAL_RULE_INDUSTRIES.contains(industry)) {
             throw new BizException(ErrorCode.PARAM_INVALID,
@@ -621,10 +867,75 @@ public class MerchantApplymentService {
             throw new BizException(ErrorCode.PARAM_INVALID,
                     "暂不支持行业「" + industry + "」，可选：" + PartnerApplymentRules.SUPPORTED_INDUSTRIES);
         }
-        if (PartnerApplymentRules.NEEDS_QUALIFICATION.contains(industry)
-                && isBlank(request.getQualifications())) {
+    }
+
+    /**
+     * 提交微信前的完整性校验：把官方《提交申请单》的必填项一次列全，
+     * 避免商家逐字段试错（也避免草稿保存被必填卡住）。
+     */
+    void validateForSubmit(MerchantApplyment a) {
+        List<String> missing = new ArrayList<>();
+        addIfBlank(missing, a.getMerchantShortname(), "商户简称");
+        addIfBlank(missing, a.getServicePhone(), "客服电话");
+        addIfBlank(missing, a.getOrganizationType(), "主体类型");
+
+        addIfBlank(missing, a.getBusinessLicenseMedia(), "营业执照照片");
+        addIfBlank(missing, a.getBusinessLicenseNumber(), "统一社会信用代码");
+        addIfBlank(missing, a.getMerchantName(), "营业执照商户名称");
+        addIfBlank(missing, a.getLegalPerson(), "法定代表人/经营者姓名");
+
+        addIfBlank(missing, a.getIdCardCopyMedia(), "身份证人像面照片");
+        addIfBlank(missing, a.getIdCardNationalMedia(), "身份证国徽面照片");
+        addIfBlank(missing, a.getIdCardNameEnc(), "身份证姓名");
+        addIfBlank(missing, a.getIdCardNumberEnc(), "身份证号");
+        addIfBlank(missing, a.getIdCardPeriodBegin(), "身份证有效期开始");
+        addIfBlank(missing, a.getIdCardPeriodEnd(), "身份证有效期结束");
+        if ("ENTERPRISE".equals(a.getOrganizationType())) {
+            addIfBlank(missing, a.getIdCardAddressEnc(), "身份证居住地址");
+        }
+
+        String scene = a.getSalesScenesType();
+        if ("SALES_SCENES_STORE".equals(scene)) {
+            addIfBlank(missing, a.getBizStoreName(), "门店名称");
+            addIfBlank(missing, a.getBizAddressCode(), "门店省市编码");
+            addIfBlank(missing, a.getBizStoreAddress(), "门店详细地址");
+            addIfBlank(missing, a.getStoreEntrancePics(), "门头照片");
+            addIfBlank(missing, a.getStoreIndoorPics(), "店内照片");
+        } else if ("SALES_SCENES_MP".equals(scene)) {
+            addIfBlank(missing, a.getSalesPics(), "公众号页面截图");
+        }
+        if (scene != null) {
+            // 官方：服务商 AppID 与商家 AppID 二选一必填；小程序场景已由 resolveSalesAppId 兜底平台 AppID
+            if (!StringUtils.hasText(a.getSalesAppId()) && !StringUtils.hasText(a.getSalesSubAppId())) {
+                missing.add("小程序/公众号 AppID");
+            }
+        } else {
+            missing.add("经营场景");
+        }
+
+        addIfBlank(missing, a.getBankAccountType(), "结算账户类型");
+        addIfBlank(missing, a.getBankAccountNameEnc(), "开户名");
+        addIfBlank(missing, a.getAccountBank(), "开户银行");
+        addIfBlank(missing, a.getBankAccountNumberEnc(), "银行账号");
+
+        addIfBlank(missing, a.getContactType(), "超级管理员类型");
+        addIfBlank(missing, a.getContactName(), "超级管理员姓名");
+        addIfBlank(missing, a.getContactMobile(), "超级管理员手机号");
+        // 官方：contact_email 必填，用于接收开户邮件及日常业务通知
+        addIfBlank(missing, a.getContactEmailEnc(), "超级管理员联系邮箱");
+
+        if (PartnerApplymentRules.NEEDS_QUALIFICATION.contains(a.getQualificationType())) {
+            addIfBlank(missing, a.getQualifications(), "行业特殊资质图片");
+        }
+        if (!missing.isEmpty()) {
             throw new BizException(ErrorCode.PARAM_MISSING,
-                    "行业「" + industry + "」需上传收费授权证明等特殊资质");
+                    "资料不完整，请补齐：" + String.join("、", missing));
+        }
+    }
+
+    private static void addIfBlank(List<String> missing, String value, String label) {
+        if (!StringUtils.hasText(value)) {
+            missing.add(label);
         }
     }
 
@@ -658,6 +969,30 @@ public class MerchantApplymentService {
             return wechatPayProperties.getAppId();
         }
         return null;
+    }
+
+    /**
+     * 提交进件前对已落库的申请单再做一次 AppID 兜底。
+     *
+     * <p>{@link #resolveSalesAppId} 只在保存草稿时生效，历史 init/rejected 记录里
+     * {@code sales_app_id} 可能是空，直接提交会被微信挡回「请填写小程序APPID」。
+     * 公众号（SALES_SCENES_MP）需要的是公众号 AppID，平台小程序 AppID 顶不上，
+     * 因此不兜底，由 {@code validateForSubmit} 报「资料不完整」。</p>
+     */
+    private void backfillSalesAppId(MerchantApplyment applyment) {
+        if (!"SALES_SCENES_MINI_PROGRAM".equals(applyment.getSalesScenesType())) {
+            return;
+        }
+        if (StringUtils.hasText(applyment.getSalesAppId())
+                || StringUtils.hasText(applyment.getSalesSubAppId())) {
+            return;
+        }
+        if (StringUtils.hasText(wechatPayProperties.getAppId())) {
+            applyment.setSalesAppId(wechatPayProperties.getAppId());
+            applymentRepository.save(applyment);
+            log.info("[进件] 提交前兜底小程序 AppID applymentId={} appId={}",
+                    applyment.getId(), wechatPayProperties.getAppId());
+        }
     }
 
     private static boolean sameName(String a, String b) {
@@ -703,22 +1038,28 @@ public class MerchantApplymentService {
     private Merchant resolveOwnedMerchant() {
         Resident merchantUser = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        if (!StringUtils.hasText(merchantUser.getPhone())) {
-            throw new BizException(ErrorCode.MERCHANT_NOT_FOUND);
-        }
-        return merchantRepository
-                .findFirstByContactPhoneAndPropertyCompanyIdOrderByCreatedAtDesc(
-                        merchantUser.getPhone(), merchantUser.getPropertyCompanyId())
-                .orElseThrow(() -> new BizException(ErrorCode.MERCHANT_NOT_FOUND));
+        return MerchantSupport.requireOwnedMerchant(merchantRepository, merchantUser);
     }
 
     /** UBO 列表加密为 JSON 存储：姓名/号码/地址为密文，其余为明文。 */
+    /** 最终受益人「全空行」按未填写处理：商家加了行还没填时，不能因此卡住草稿保存。 */
+    static List<UboInfoRequest> filledUboRows(List<UboInfoRequest> rows) {
+        if (rows == null) {
+            return List.of();
+        }
+        return rows.stream()
+                .filter(u -> u != null && (StringUtils.hasText(u.getIdDocCopy())
+                        || StringUtils.hasText(u.getName()) || StringUtils.hasText(u.getNumber())))
+                .toList();
+    }
+
     private String encryptUboJson(List<UboInfoRequest> uboList, String serialNo) {
-        if (uboList == null || uboList.isEmpty()) {
+        List<UboInfoRequest> rows = filledUboRows(uboList);
+        if (rows.isEmpty()) {
             return null;
         }
         List<Map<String, Object>> items = new ArrayList<>();
-        for (UboInfoRequest ubo : uboList) {
+        for (UboInfoRequest ubo : rows) {
             LinkedHashMap<String, Object> item = new LinkedHashMap<>();
             item.put("ubo_id_doc_type", StringUtils.hasText(ubo.getIdDocType())
                     ? ubo.getIdDocType() : "IDENTIFICATION_TYPE_IDCARD");
@@ -753,6 +1094,15 @@ public class MerchantApplymentService {
         if (!StringUtils.hasText(plain)) {
             throw new BizException(ErrorCode.PARAM_MISSING, "进件必填的敏感字段不能为空");
         }
+        return encryptRequired(plain, serialNo);
+    }
+
+    /** 草稿保存用：字段留空时不加密、不落库，提交时再由 validateForSubmit 兜住。 */
+    String encryptIfPresent(String plain, String serialNo) {
+        return StringUtils.hasText(plain) ? encryptRequired(plain, serialNo) : null;
+    }
+
+    private String encryptRequired(String plain, String serialNo) {
         PublicKey cert = certManager.getCertificate(serialNo);
         if (cert == null) {
             throw new BizException(ErrorCode.WECHAT_CERT_NOT_READY);
@@ -841,10 +1191,6 @@ public class MerchantApplymentService {
         return List.of(csv.split(","));
     }
 
-    private static boolean isBlank(List<String> values) {
-        return values == null || values.isEmpty();
-    }
-
     private static int inc(Integer n) {
         return (n == null ? 0 : n) + 1;
     }
@@ -857,7 +1203,7 @@ public class MerchantApplymentService {
         return s == null || s.length() <= max ? s : s.substring(0, max);
     }
 
-    private static ApplymentDetailResponse toResponse(MerchantApplyment a, boolean withAdminDiagnostics) {
+    private ApplymentDetailResponse toResponse(MerchantApplyment a, boolean withAdminDiagnostics) {
         ApplymentDetailResponse.ApplymentDetailResponseBuilder builder = ApplymentDetailResponse.builder()
                 .merchantId(a.getMerchantId())
                 .applymentId(a.getApplymentId())
@@ -895,14 +1241,34 @@ public class MerchantApplymentService {
                 .bankName(a.getBankName())
                 .submitted(a.getApplymentId() != null)
                 .signUrl(a.getSignUrl())
+                .signQrCodeUrl(resolveSignQrCodeUrl(a))
                 .rejectReason(a.getRejectReason())
                 .subMchid(a.getSubMchid())
+                // 平台小程序 AppID：进件表单可直接用作服务商 AppID
+                .platformAppId(emptyToNull(wechatPayProperties.getAppId()))
                 .submitMode(a.getSubmitMode());
         // 微信原始报错含商户号/接口细节，只给运营后台；商家侧看 rejectReason 就够了。
         if (withAdminDiagnostics) {
             builder.lastError(a.getLastError()).retryCount(a.getRetryCount());
         }
         return builder.build();
+    }
+
+    /**
+     * 待签约阶段的签约链接二维码：两端页面早已按 {@code signQrCodeUrl} 渲染图片，
+     * 缺这个字段就只会显示「后端未下发二维码，请复制链接」。生成失败不阻断进件详情读取。
+     */
+    private String resolveSignQrCodeUrl(MerchantApplyment applyment) {
+        if (!StringUtils.hasText(applyment.getSignUrl()) || !StringUtils.hasText(applyment.getMerchantId())) {
+            return null;
+        }
+        try {
+            return qrCodeService.linkQrCode(applyment.getSignUrl(),
+                    QrCodeService.applymentFileName(applyment.getMerchantId()), true).url();
+        } catch (RuntimeException ex) {
+            log.warn("[进件] 签约二维码生成失败 merchantId={}: {}", applyment.getMerchantId(), ex.getMessage());
+            return null;
+        }
     }
 
     private static String maskMobile(String mobile) {

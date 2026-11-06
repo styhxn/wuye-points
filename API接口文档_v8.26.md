@@ -1,6 +1,10 @@
 # 物业积分服务系统 — API 接口文档
 
-> **版本**：v8.36（2026-11-03 第四次修订：🆕 分账接收方**个人 openid 手填通道下线**——§C.3.2 `POST /admin/wechat-split/receivers` 只收 8~20 位微信商户号，传 openid 返回 `10002`；列表/保存响应新增 `accountNoMasked`（恒下发），`accountNo` 仅商户号下发、openid 场景该键缺失；§110.1.2 注明个人接收方已无手填入路。上一版 v8.35 新增 §18.5.1 活动组内楼长只读列表）
+> **运维注记（2026-11-05，无接口契约变更）**：§110.1.2 `POST /admin/wechat-split/receivers/auto` 在 prod 曾因 `wechat_split_receiver_accounts` 历史列 `receiver_account` / `receiver_type` 为 `NOT NULL` 且无默认值（MySQL `SQL Error 1364`）返回 500；修复脚本 `sql/manual_upgrade_20261105_split_receiver_nullable.sql` 须**手工执行**（prod 已关闭 Flyway，`flyway_schema_history` 仅到 V9，migration 文件不能作为部署路径）。接口入参、响应、错误码均不变。
+> **运维注记（2026-11-05 第二轮，无接口契约变更）**：商家「我的店铺」归属口径收敛为 **`merchants.resident_id` 优先**，`contact_phone` 仅对 `resident_id` 为空的历史店兜底（见 §7.2 注记）。起因是管理端建食堂商家时填了已有商家账号的手机号，导致该账号登录后进入别人的商家工作台。**纯代码修复，无 DDL、无 SQL 脚本**；新 jar 部署前如需立刻生效，只能保证 `resident_id` 正确/清理撞车手机号。
+> **版本**：v8.38（2026-11-05 修订：🆕 微信进件「保存资料」与「提交微信」校验分段——§97.2.2 `POST /merchants/my/applyment` 改为**草稿口径**（允许字段缺省，仅校验已填内容的取值/交叉一致性/长度），必填项统一由 §97.2.3 `POST /submit` 校验，缺项时一次返回「资料不完整，请补齐：…」；`ApplymentDetailResponse` 新增 `platformAppId`（平台小程序 AppID，供前端预填 `salesAppId`）；`contactEmail` 按微信官方为必填，前端「选填」提示需纠正。上一版 v8.37 改版进件银行/支行列表）
+> **v8.36**（2026-11-03 第四次修订：🆕 分账接收方**个人 openid 手填通道下线**——§C.3.2 `POST /admin/wechat-split/receivers` 只收 8~20 位微信商户号，传 openid 返回 `10002`；列表/保存响应新增 `accountNoMasked`（恒下发），`accountNo` 仅商户号下发、openid 场景该键缺失；§110.1.2 注明个人接收方已无手填入路。上一版 v8.35 新增 §18.5.1 活动组内楼长只读列表）
+> **v8.39**（2026-11-05）：🆕 §21.6 `GET /distribution/earnings/mine` — 「我的分账所得」按**全部历史身份**聚合，`summary[]` 同时给出**应付分成**与**已到账**两列，`list[]` 为明细分页；历史身份（停用/跨物业）可见并带 `isHistorical`/`identityStatus` 标记；商家/技师商品收入不计入。`POST /transfer-accounts` 契约变更：`openid` 由服务端按登录态从 `residents.openid` 反查，客户端传值**忽略**，新增错误码 `99017`（§97.4.1）。
 > **v8.35**（2026-11-03）：🆕 §18.5.1 `GET /activity-groups/{id}/building-leaders` — 活动组内单元楼长**只读**列表；同时在「组长能力总览」与「权限边界」两处写死「楼长是物业侧身份，组长无设置/撤销权」。
 > **v8.34**（2026-11-03 二次修订：🆕 `GET /admin/transactions/detail`（单条流水详情，返回 `sourceTable`/`relatedKeyword`/`links`，见 §106.3.4）与错误码 `97075 TRANSACTION_NOT_FOUND`。文件名由维护者重命名为 `API接口文档_v8.26.md`，**以本行版本号为准**）
 > **v8.33**（2026-11-03）：`POST /auth/wechat-login` 新增 `phoneCode`，首次登录强制手机号授权（`30010`/`30011`）；V36 分账链「用户侧先扣档」上线，`calculationVersion` 升为 `distribution_b_v2`，分成预览/明细新增 4 个字段；`/admin/platform-share-rates` 与物业公司配置新增 `userPointShareRate`/`userRewardShareRate`；补齐微信分账接收方主体预检/批量登记、住户微信身份认领 4 个接口；新增 `30010`/`30011`/`94007`/`97072`/`97073`/`97074`/`99016` 等错误码；**错误码以本文件「附录二·错误码权威总表」为准**，历史小节内标注的旧码见「附录三·失效错误码对照」。
@@ -3257,6 +3261,11 @@ curl -X GET https://test.yuanxusoftware.top/api/v1/merchants/my \
 
 > ⚠️ **角色限制**：本接口仅对 `merchant` / `activity_leader` / `technician`（即**已通过审核**）角色开放。`resident`（提交入驻申请但**尚未通过**）调用会返回 `403`。住户查询自己"商家入驻申请"进度：**§7.2.2 `GET /merchants/my-application` 当前未实现**，请勿调用；需由后端补实现后再联调。
 
+> 🧭 **店铺归属口径（v8.41 收敛，2026-11-05）**：本接口以及全部「我的店铺」入口（商品、订单、关键词、广告位、帖子、问询、进件、提现、收款码、经营范围）统一按 **`merchants.resident_id = 当前登录住户`** 解析店铺；`contact_phone` 只是对外展示的联系电话，**不再作为归属依据**，仅对 `resident_id` 为空的历史店做兜底。
+> - 起因：管理端创建食堂商家时把某商家账号的手机号填成了联系人电话，新店 `resident_id` 为空且创建时间更晚，旧逻辑「按手机号取最新一家」把这个账号的商家工作台顶替成了别人的店。
+> - 影响：同一手机号对应多家店时，**账号只会进入 `resident_id` 指向自己的那一家**；`resident_id` 为空且手机号撞车的店，任何账号都无法自助管理（归属需由管理端「创建商家账号」或「商家入驻」建立）。
+> - 契约不变：请求/响应字段、错误码均无变化，前端无需改动。
+
 **错误响应**：
 
 | 错误码 | HTTP | 说明 |
@@ -3357,6 +3366,34 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/merchants/my/delivery-fees \
 > **兼容回退**：前端也可在 `PUT /merchants/{id}`（§7.5）携带同一 body 字段 `deliveryFeeTiers`，效果一致。
 
 ---
+
+### 7.2.3 商家专属收款二维码 `/merchants/my/qrcode`（v8.38）
+
+**Roles**: `merchant`、`activity_leader`、`technician`（本人店）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `POST` | `/merchants/my/qrcode?force=false` | 生成本店收款二维码（微信小程序码，永久有效），URL 写回 `qrCodeUrl` |
+| `GET` | `/merchants/my/qrcode` | 查询当前码，不触发微信调用 |
+
+**响应**（`MerchantQrCodeResponse`）：
+
+```json
+{
+  "merchantId": "mch_35217712f21000",
+  "merchantName": "社区超市",
+  "qrCodeUrl": "https://test.yuanxusoftware.top/api/v1/static/qrcode/merchant_mch_35217712f21000.png",
+  "codeType": "MINIPROGRAM_CODE",
+  "codeContent": "pages/service/merchantProducts?merchantId=mch_35217712f21000",
+  "regenerated": true
+}
+```
+
+- 🆕 **v8.40 切换**：顾客扫这张码现在直达**极简收银台** `pages/pay/merchantCashier?merchantId=…`：页面只输金额（或商家预置金额），一次调 `POST /scan-pay/orders` 拿到 `payParams` 并立即 `wx.requestPayment` 弹出微信付款界面。详见 §113。二维码 path 由 `app.qr-code.merchant-page` 控制，**必须与前端发布收银台页同步切换**，切换后需 `force=true` 重生成全部商家码。
+- v8.38 历史口径：曾指向 `pages/service/merchantProducts?merchantId=…`（该页 `onLoad` 读 `merchantId`/`id`），顾客需先选商品再下单，体验与「扫码直接付款」不符，已废弃。
+- 未审核通过 → `60002`（「商家审核通过后才能生成收款二维码」）；已停用 → `60001`。
+- `force=false` 且已有码时直接复用（`regenerated=false`）；管理端同能力见 §112.2 `POST /admin/merchants/{id}/qrcode`。
+- 选型与官方口径依据见 §112.1。
 
 ### 7.3 GET `/merchants/{id}` — 商家详情
 
@@ -6280,7 +6317,7 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/files/upload \
 | 参数         | 类型              | 必填  | 说明                                                      |
 | ---------- | --------------- | --- | ------------------------------------------------------- |
 | `file`     | `MultipartFile` | ✅   | 文件二进制                                                   |
-| `category` | `String`        | ✅   | `avatar`/`announcement`/`merchant`/`service`/`activity`/`product`/`delivery_proof`/`withdrawal_proof` |
+| `category` | `String`        | ✅   | `avatar`/`announcement`/`merchant`/`service`/`activity`/`product`/`community`/`delivery_proof`/`withdrawal_proof` |
 
 > **配送员上传配送凭证**：使用 `category=delivery_proof`，上传成功后把返回的 `url` 填入 `POST /deliveries/{id}/complete` 的 `proofImageUrls`。2026-10-25 起 `courier` 已加入上传角色白名单。
 >
@@ -10224,12 +10261,378 @@ distribution:reverse:{orderId}:{entryType}:{ownerType}:{ownerId} 冲正（§10.5
 - 配送完成 → 配送员收入 `courier_delivery_income`（§9.3）；
 - 取消/退款 → 对原流水逐条生成负数 `distribution_reversal`，不删除原流水（§10.5）。
 
+### 21.6 GET `/distribution/earnings/mine` — 我的分账所得（按角色聚合）
+
+**用途**：钱包页「我的分账所得」入口。**v8.46 起分账所得并入各角色可提现余额、走同一条提现通道**（老板 2026-11-06 定稿口径），响应顶层 `walletIncluded=true`，`summary[]` 同时给出该角色当前的可提现余额、在途提现与手续费率；本接口仍为只读，金额一律以服务端返回为准。
+
+**Auth**: Required（住户 token）
+**权限**：只认 token 内人员 ID，**不接受**任何 `residentId` 入参；不改变 `/distribution/records/mine` 的既有行为。
+
+**Query 参数**：
+
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- | --- |
+| `role` | string | ❌ | 全部 | 角色筛选，可逗号分隔：`COORDINATOR`/`SECTOR_LEADER`/`INDIVIDUAL_LEADER`/`BUILDING_LEADER`/`PROPERTY_MANAGER` |
+| `startDate` | string | ❌ | — | 开始时间（ISO8601 UTC，**含**），按**分成落账时间**过滤 |
+| `endDate` | string | ❌ | — | 结束时间（ISO8601 UTC，**不含**） |
+| `page` | int | ❌ | 1 | 页码 |
+| `pageSize` | int | ❌ | 20 | 每页条数（上限 100） |
+
+**口径**：
+
+- **先枚举该人全部历史身份**（统筹/板块/个体/楼长/物业经理，含 `status != active` 与跨物业的记录），再按 `owner_type + owner_id` 聚合；**物业公司只作出参展示，不参与过滤**。
+- `payableAmount`（应付分成）= `distribution_records` 台账对应角色列的合计（订单完成即落账，含负数冲减行）。
+- `receivedAmount`（已到账）= `wechat_split_record` 中该 `(owner_type, owner_id)` 且状态 ∈ `frozen`/`finished`/`reverted` 的 `freeze_amount` 合计（与可提现口径一致）。
+- 商家/技师（商品收入出资方）不参与聚合；快递员配送收入**当前未纳入**（见交付文档「未确认项」）。
+- **v8.46 新增（余额侧，与时间窗无关，始终是「当前值」）**：`withdrawableAmount` = 该角色提现接口校验用的同一个数（`RoleWithdrawableService` 唯一算法）；`walletCreditedAmount` = 该角色当前有效身份的分账台账累计入账（含负向冲正，不扣提现）；`pendingWithdrawalAmount` = 在途提现（`pending`+`approved`）；`feeRate` = 该物业公司提现手续费率；`withdrawEnabled` = 是否存在「在职 + 当前物业」的身份（`false` 时账面分成仍在但小程序无提现入口，四个金额键缺失）。
+- ⚠️ `BUILDING_LEADER` 的 `withdrawableAmount` 是**账号统一收益账户**余额（楼长分成 + 业主卖货 + 名下商家，扣全部角色提现），不等于该角色 `payableAmount`；`walletCreditedAmount` 仍只统计楼长身份自身的分账入账。**前端不要把两者相减当欠款**。
+
+**成功响应**：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "walletIncluded": true,
+    "summary": [
+      {
+        "role": "COORDINATOR",
+        "roleName": "统筹负责人",
+        "payableAmount": 120.00,
+        "receivedAmount": 100.00,
+        "walletCreditedAmount": 120.00,
+        "withdrawableAmount": 100.00,
+        "pendingWithdrawalAmount": 20.00,
+        "feeRate": 0.0060,
+        "withdrawEnabled": true,
+        "isHistorical": false,
+        "identityStatus": "active",
+        "identityCount": 1,
+        "propertyCompanyIds": ["pc_demo001"],
+        "propertyNames": ["万科物业"]
+      }
+    ],
+    "list": [
+      {
+        "orderId": "ord_demo001",
+        "orderNo": "202611050001",
+        "role": "COORDINATOR",
+        "roleName": "统筹负责人",
+        "identityId": "coo_demo001",
+        "identityName": "张三",
+        "payableAmount": 12.50,
+        "receivedAmount": 12.50,
+        "payoutStatus": "RECEIVED",
+        "isHistorical": false,
+        "identityStatus": "active",
+        "propertyCompanyId": "pc_demo001",
+        "propertyCompanyName": "万科物业",
+        "createdAt": "2026-11-05T02:10:00Z"
+      }
+    ],
+    "page": 1,
+    "pageSize": 20,
+    "total": 57,
+    "currentPropertyCompanyId": "pc_demo001"
+  }
+}
+```
+
+**字段与枚举**：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `summary[].payableAmount` / `receivedAmount` | decimal | 应付 / 已到账，两列独立，不做相减 |
+| `summary[].isHistorical` | boolean | 该角色在统计范围内的身份**全部**为历史时为 `true` |
+| `summary[].identityStatus` | enum | `active` / `historical` |
+| `summary[].identityCount` | int | 参与统计的身份记录数（同一角色可多条，如跨板块） |
+| `list[].identityName` | string | 该身份显示名；查不到姓名时为 `历史身份` |
+| `list[].payoutStatus` | enum | `RECEIVED`(已到账) / `PROCESSING`(分账处理中) / `NOT_SPLIT`(未发起分账) / `FAILED`(分账失败) / `SKIPPED`(缺收款账户待补分) / `REVERSED`(负数冲减行) |
+| `list[].isHistorical` / `identityStatus` | boolean / enum | 同 summary，按**该行**所属身份判定 |
+
+**错误码**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `30001` | 404 | 住户不存在（token 对应用户已被删/迁移） |
+| `10002` | 400 | `role` 取值不合法，或日期不是合法 ISO8601 |
+
+**注意**：
+
+- `receivedAmount` 只统计真实结算；生产库 `wechat_split_record` 当前无数据时该列为 0，属数据现状而非接口异常。
+- 历史身份跨物业的明细**照常返回**，物业字段仅用于前端打标展示。
+
+---
+
+## 21.9 v8.40 整改清单后端修复：接口契约变更清单（2026-11-05）
+
+> 对应《功能整改清单》二、后端问题 条目9–37。**前端只需按本表核对，标注「无变化」的接口不用改。**
+
+| 条目 | 接口 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 9 | `POST /residents/me/delete-request` | 冷静期不再写 `deleted_at`，账号可正常登录使用；响应 `expiresAt` 语义不变（冷静期到期时间） | 无 |
+| 9 | `POST /residents/me/delete-request/cancel` | **新增**：冷静期内自助撤回，返回 `{residentId,status:"active",message}` | 是（加「撤回注销」按钮） |
+| 9 | `GET /admin/residents/deletion-requests` | 列表项 `deletionExpiresAt` 改由独立列 `deletion_expires_at` 取值，格式 `yyyy-MM-dd HH:mm:ss`；排序按该列倒序 | 无 |
+| 10 | `POST /admin/residents/{id}/deletion/review` | 原来必 404（`deleted_at` 被冷静期占用）已修；`approve` → `status=deleted` + `deleted_at=now` + **令牌版本 +1（旧 token 立即失效）**；`reject` → `active` 且清空冷静期；两条动作均幂等（重复审核返回 200） | 无（但需知：通过后该号所有端登录立即失效） |
+| 9/10 | 到期自动注销 | 新增调度器每 10 分钟扫 `status=pending_deletion AND deletion_expires_at<=now`，自动完成注销 | 无 |
+| 11 | `POST /property-coins/recharge` | 二次充值不再回 `409 充值支付处理中`：先关闭遗留待支付流水（微信侧关单）再新建。若上一笔在微信侧实际已支付成功 → `409 ORDER_CONFLICT` + 文案「上一笔充值已支付成功，正在到账，请稍后再发起新的充值」 | 无（按新文案提示即可） |
+| 13 | `POST /orders/preview` | 库存校验豁免「本人待支付订单已预占的件数」，取消支付后重进支付页不再报库存不足 | 建议：透出后端 `message`，不要一律兜底成「暂无法计算优惠」 |
+| 13 | `POST /orders/{id}/pay` | 同一订单重复发起支付、沿用同一张已锁定券时放行（此前 `COUPON_UNAVAILABLE`） | 无 |
+| 14 | `POST /orders` | 团购单（整单商品 `category=团购`）免配送费口径与试算一致；此前试算免、下单收 | 无 |
+| 15 | `POST /admin/merchants/{id}/kick` | 踢出商家同时：商品全部置 `inactive`、`withdrawal_blocked=true`、店主账号 `token_version+1`（需重新登录）；**本人住户身份与登录不受影响** | 无 |
+| 17 | `POST /merchant/points/purchase` | `payAmount` 不再必填（传值忽略），后端按商家积分兑换比折算并回显；响应新增 `exchangeRate` | 无 |
+| 18 | `POST /merchant/points/grant` | `residentId`/`purchaseId` 不再必填；`phone` 与 `residentId` 二选一（都传以 `phone` 为准）；不传 `purchaseId` 时按时间顺序（FIFO）跨批次扣减；`purchaseRemainingPoints` 改为**扣减后商家积分总余额** | 无（APK 现在就是传 `phone`，此前是后端 DTO 强要 purchaseId/residentId 才报参数校验失败） |
+| 21 | `POST /admin/building-leaders` | `residentId` 改为可选，新增 `phone`（二选一，手机号按当前物业公司定位住户） | 是（工作台可用手机号选人） |
+| 22 | `GET /admin/point-pools/records` | `operator_id` 为空不再 500，`operatorName` 返回空 | 无 |
+| 23 | `POST /coin-withdrawals` | 商家 `withdrawal_blocked=true` 时返回 `94005 提现已被冻结`；管理端审批通过前复检同一开关 | 无 |
+| 24 | `POST /auth/admin-login` | 纯住户/租户（无任何管理端身份）**任何时候**都返回 `403 该账号无管理端登录权限`，不再受测试模式影响 | 无 |
+| 24/25 | `/admin/**` | 未登记权限码的管理端路由新增兜底：非管理端工作台身份（纯住户、商家、技工、配送员）一律 `403` | 无 |
+| 26 | `POST /admin/community/users/{id}/forum-ban` | `expiresAt` 支持 `yyyy-MM-ddTHH:mm[:ss][.SSS][Z|±HH:mm]`、`yyyy-MM-dd HH:mm[:ss]`、纯日期（按当天 23:59:59）；带 `Z`/偏移按 `Asia/Shanghai` 换算 | 无需改（`toISOString()` 可直接用） |
+| 27 | `POST /messages` | 住户↔住户的 `chatType=private` 私聊纳入每日限额（当天总量，与 `/messages/neighbor-chat` 共用一个计数器），超限同样 `90013`；默认限额与库默认值统一为 3（原代码兜底 2） | 是（去掉「90013 后自动改走 /messages」的兜底分支） |
+| 27 | `GET /messages/contact-quota` | **新增**：与 `GET /messages/neighbor-limit` 同一份数据（`dailyLimit/usedToday/remaining/resetAt`） | 是（聊天页可直接调本路径） |
+| 28 | `POST /messages/neighbor-chat`、`POST /messages` | 收件人已屏蔽发件人时返回 `90016 对方已屏蔽你，无法发送消息`（单向语义：屏蔽方仍可发） | 是（按 90016 提示） |
+| 28 | `GET /messages/neighbors/blocked` | **新增**：我的屏蔽名单 `[{residentId,name,avatarUrl,building,unit,room,blockedAt}]` | 是（重登后恢复屏蔽状态、提供取消屏蔽入口） |
+| 28 | `GET /messages/neighbors` | 邻居列表项新增 `isBlocked`，被屏蔽者 `chatStatus="blocked"`（此前恒为 `not_chatted`） | 是（用后端字段代替本地状态） |
+| 29 | `POST /services/{id}/book`、`POST /services/{id}/subscribe` | `serviceTime` 支持不带偏移的本地 ISO（`2026-11-05T14:00:00`）等格式，不再只吃 `Instant.parse` | 无 |
+| 30 | `GET /resident-merchants/public-listings` | `propertyCompanyId` 改为可选：登录态按本人物业兜底；未登录且未传 → `400 10001`（此前 500） | 无 |
+| 31 | `GET /navigation-items` | 不传 `position` 时返回该模块**全部**启用项（`top`+`bottom`），回落判定按模块粒度（详见 A.6） | 无需改（首页只传 `module=home` 即可看到配置项） |
+| 32 | `GET /communities/{id}/available-rooms` | 只传 `building` 时也统计各单元住户；`community_rooms.status=occupied/locked` 的房号不再出现在可用列表 | 无 |
+| 33 | `DELETE /transfer-accounts/my` | 缺 `channel` → `400 10001 缺少必填参数: channel`（此前 500）；`channel` 非 `zero/bank` → `400 10002`（此前静默成功） | 是（必须带 channel，并按 400 文案提示） |
+| 34 | `POST /distributors/my/products`、`PUT /distributors/my/products/{id}` | `supplyScope` 允许省略或传 `company`（与默认落库口径一致）；传 `platform` 仍 `403`，传其他值 `400 10002` | 无 |
+| 35 | `GET /admin/canteen/export` | 不传 `type` → `400 10001`（此前 500）；合法 `type` 不再因 `pageSize>100` 报 `10003`，改为分页聚合**导出全部**（原 1000 条上限作废） | 无 |
+| 36 | 微信支付状态 | 真实地址为 `GET /admin/wechat-pay/status`（`/admin/wechat-pay-status` 从未存在，属清单笔误）；需 `platform_admin` + 权限码 `property_company:manage` | 是（清单/菜单按正确地址接） |
+| 37 | `GET/POST /admin/price-approvals*` | 「物业领导」判定改为读库：`role=property_admin` 且 `property_sub_role` 为空或 `property_leader` 视为领导，可正常使用与审批；`property_operator` 仍 403 | 无 |
+| 12/44 | `POST /admin/building-changes/{id}/approve` | 户主楼栋变更审批通过时同步更新 `families` 的小区/楼栋/单元/房号，避免「不是同一个房号」误判 | 无 |
+| 清单外 | `GET /property-companies`、`GET /property-companies/{id}/communities` | 注册页「暂无可选物业公司」的真因：两个接口在 service 层要求 `platform_admin/property_admin`，未登录/新住户被 403。现按身份分档——管理员看全量（含统计/联系方式/地址），未登录与其他身份只回 `id`+`name`(+`logoUrl`) 且强制 `status=active`；小区列表同理，停用物业公司回 404，物业管理员仍限本公司 | 无（前端一行不用改） |
+| 清单外 | `PUT /residents/me` 的 `building/floor/unit/room` | 住户本人提交地址字段仍被**静默丢弃**（`canUpdateAddress()` 仅管理员为真），写地址只有管理端代填或 `POST /residents/me/building-change` + 审批两条路。**口径已定（2026-11-06 老板）：住址必须物业审批，不做首次自填** | 是：注册页把「保存成功」改成「已提交，等物业确认」，并展示审批状态 |
+
+**新增错误码**：`90016 对方已屏蔽你，无法发送消息`（400）。
+**错误码语义扩展**：`10001 参数缺失`（400）现由全局异常处理器统一用于「缺必填查询参数/请求头」，此前这类请求会落到 `99001 内部服务异常`（500）。
+
+---
+
+## 21.10 v8.41 二次支付 / 支付到账 / 多身份权限（2026-11-06）
+
+> 对应前端 11-06 上午反馈。交付说明见 `docs/前端交付_二次支付与多身份权限_20261106.html`。
+
+| # | 接口 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 1 | `POST /property-coins/recharge` | 二次充值的「关旧流水→建新流水」补上强制 flush（生产唯一键 `uk_payment_records_biz_pending(biz_type,biz_id,active_flag)`，Hibernate 的 INSERT 先于 UPDATE，此前必撞键回 409「数据冲突」） | 无 |
+| 2 | `POST /orders/{id}/pay` | 同一订单存在待支付流水时不再一律 409「订单支付处理中」：先查单，已支付则提示「上一笔支付已成功，正在确认到账」；未支付则关旧流水再新建。**库存只在首次预下单扣**，重付不会重复扣 | 无（按新文案提示即可） |
+| 3 | `GET /orders/{id}`、`GET /orders/my`、`GET /orders` | 响应新增 `listingId`（业主小店代销单才有值）；`GET /orders/{id}` 详情同时补回此前漏发的 `sourceType` | 是：`listingId` 非空时支付页试算改调 `POST /orders/from-listing/preview`（`{listingId, quantity}`），下单走 `POST /orders/from-listing`；`POST /orders/preview` 只服务 `prd_` 商城商品 |
+| 4 | `POST /orders/preview` 等 | `dpr_` 货源商品的报错文案改为可自助修复的引导（点名 `from-listing` / `from-listing/preview` 与 `listingId`） | 建议透出后端 `message` |
+| 5 | 支付到账时长 | `PaymentSettleScheduler` 主动查单窗口/轮询由 30s/30s 收紧为 10s/10s（线上实测原为 36~56s）。根因是直连商户 1665249236 回调验签/解密失败（APIv3 密钥与商户平台不一致），属配置问题，需运维处理 | 可选：支付完成后展示「支付确认中，最长约 30 秒」并轮询状态接口 |
+| 6 | `PUT /activity-groups/{id}`、`DELETE /activity-groups/{id}` | 统筹（coordinator 标签身份）不再被当成「组长本人」而恒 403：限本物业 + 持有权限码 `activity_group.manage`（预设或用户授权）即可更新/解散本物业活动组；组长仍只能动本人担任组长的组 | 无（需在管理端权限管理里勾选「活动组管理」） |
+| 7 | `POST /admin/directed-messages` | 行为未变，明确口径：走权限码 `directed_message.send`，统筹预设 `rp_001` 默认不含该码 → 403 属**权限配置**，授予后即可用（已补「未授予 403 / 授予后 200」回归用例） | 无（配置项） |
+| 8 | `POST /services` | `providerType` 改按「可提供方」判定（商家 > 技工 > 个体负责人 > 居民），不再因 `currentEffectiveRole()` 的统筹优先级别把个体负责人身份遮蔽成 `resident`；管理端「提供者」列因此不再错显「居民」 | 无 |
+| 9 | `GET /property-companies/{id}/communities` | 免登录白名单补齐该子路径（此前只有两段式 `/{id}` 在白名单内，注册页第二步匿名调用被 401，与本文档「Auth: Optional」声明不符）；公开档只回小区 `id/name/address`，停用物业公司回 404 | 无 |
+
+**同类问题排查（未改，待老板定口径）**：① `GET /special-offers` 对统筹走的是住户视角列表（`isResident()` 先短路，`requireAnyRole(..., "coordinator")` 对标签化账号已失效）；② `GET /services` 对非 `property_admin` 强制 `status=active`，统筹在管理端看不到已下架服务；③ `special_offers.publisher_role` 留痕同样按固定优先级取身份，多身份账号记成 `coordinator`（不参与鉴权）。
+
+---
+
+## 21.11 v8.42 家庭与房号冲突整改（2026-11-06 下午）
+
+> 老板口径：**同住一处的人由户主添加为家庭成员，而不是自己申请入住**。交付说明见 `docs/前端交付_家庭房号与分账提现_20261106.html`。
+
+| # | 接口 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 1 | `POST /families/{id}/members` | 添加成员时把家庭的 `communityId/building/unit/room` 写入成员（此前只搬余额与 `familyId`，成员永远是「无房号住户」，定向通告按楼栋筛选、邻居列表都查不到他）。家庭自身没有楼栋/房号时不写空值，避免抹掉成员原有住址 | 无 |
+| 2 | `PUT /families/me` | 家庭住址变更时同步全部成员（含户主）的 `residents` 行；只改 `families` 会让成员留旧房号，前端表现为「不是同一个房号」 | 无 |
+| 3 | `POST /families` | **新增房号占用校验**：该房号已有在册家庭时返回 `400/10002`，文案「该房号已有家庭（户主：X）。如同一住址，请由户主在「家庭成员」中添加你，不要再单独申请入住」。此前只有前端选择器在挡，接口能直接造出两个家庭同房号 | 是：透出后端 `message` |
+| 4 | `POST /residents/me/building-changes` | 提交时即判占用（同家庭成员与本人不算占用），不再等审批才发现冲突 | 是：透出后端 `message` |
+| 5 | `POST /admin/building-changes/{id}/approve` | 审批时**复检**占用（申请挂起期间房号可能已被他人占住），复检不过返回 `400` 且不改动原住址；通过后同步全部成员住址（含 `floor`） | 无 |
+| 6 | `GET /communities/{id}/available-rooms` | 行为不变，但定位改了：**只是候选列表，占用以后端为准**，前端不要把它当唯一防线 | 无 |
+| 7 | `DELETE /families/{id}/members/{memberId}`、`POST /families/me/leave` | 脱离家庭即**释放房号**：清空该成员的 `building/unit/room`（保留 `communityId`，与刚注册未填地址的人同状态）。此前只解绑 `familyId`、地址原样留着，等于永久占住房号 | 无 |
+| 8 | `POST /residents/me/building-changes` | **非户主家庭成员禁止自助申请改楼栋** → `403/20004`，文案「家庭成员的地址随家庭，请由户主提交变更申请，或先由户主将其移出家庭后再申请」；户主不受影响 | 是：入口按「是否户主」置灰，或原样透出该文案 |
+
+**占用判定规则**（`RoomOccupancyGuard`）：
+
+1. 申请人本人与自己所在家庭**不算占用**——配偶被添加进家庭后，再申请同一房号是放行的；
+2. 该房号已有 `active` 家庭 → 拒绝，并引导走「户主添加家庭成员」；
+3. 该房号由**租住人员**（`userType=tenant`）居住 → 拒绝（租户既不能建家庭也不能被添加为成员，`families` 表表达不了这种占用）；
+4. 该房号有普通住户但尚未建家庭 → **不算占用**：先建家庭的人成为户主，另一人由户主添加。若把这种人也算占用，同一房号的两个人会互相挡死，谁都无法建家庭。
+
+**口径已定（2026-11-06 老板）**：① 成员脱离家庭后不占房号（见 §7）；② 禁止成员自助改楼栋（见 §8）；③ 分账走 A（平台代收 + 提现出款）。
+
+---
+
+## 21.12 v8.43 配送费满额减免开关修复（2026-11-06）
+
+> 前端反馈「配送费满减未开启仍直接减了」。根因：`merchants.free_delivery_enabled` 全仓**只有写入与回显、没有任何业务逻辑读取**，减免与否只由 `free_delivery_threshold` 决定；门槛填 `0.00` 时「满 0 元免运费」恒成立，关开关无效。
+> 线上实证：商家「元序」`mch_386992df981000`（`enabled=0, threshold=0.00, delivery_fee=0.01`）2026-11-06 的四笔单全部被免 0.01 元。
+
+| # | 接口/位置 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 1 | `POST /orders/preview`、`POST /orders`、`POST /orders/from-listing(/preview)` | 运费减免先判 `free_delivery_enabled==true`；未开启一律按 `deliveryFee` 收取，`deliveryWaiverAmount=0`、`freeDeliveryEligible=false` | 无 |
+| 2 | `POST /cart/delivery-fee` | `freeDeliveryEligible` 与 `freeDeliveryShortfall`（还差多少免运费）同样只在开关打开时计算 | 无 |
+| 3 | 配送单费用（`DeliveryService.resolveDeliveryFee`） | 与下单同口径，避免「下单收、派单又免」 | 无 |
+| 4 | 减免承担方 | `deliverySubsidySponsor` 不再硬编码 `merchant`，改按商家配置 `free_delivery_sponsor`（`null` 仍按 `merchant`，与现口径一致）。结算侧只认 `merchant` 才扣商家，配成平台出资却被写成 merchant 会错扣商家的钱 | 无 |
+
+**`free_delivery_enabled` 为 `null`（历史数据从未设置）按「未开启」处理**。影响面已核：现网仅 `mch_demo001`「口福餐厅」是 `null + 有门槛`，而其 `delivery_fee=0.00`，免不免都是 0，近 30 天亦无减免单，**行为不变**。
+
+**同批扫出的「配置不生效」（未改，待老板定口径）**：① `delivery_fee_tiers`（按距离分档的配送费 JSON）只有校验/序列化/回显，**没有任何运费计算读它**，实际一律按 `delivery_fee` 单值收；② `DeliveryService.resolveDeliveryFee(order, merchant, rule)` 的 `rule`（物业公司级配送规则）形参完全未被使用；③ `level_weight` 三处创建商家时写 0，此后全仓无人读取（排序实际走 `rank_order` / `is_recommended`），属闲置字段。
+
+---
+
+## 21.13 v8.44 订单状态字典补齐（2026-11-06）
+
+> 三方（一级代理商 / 业主商户 / 买家）订单状态机全量核对说明见 `docs/订单状态机说明_一级代理_业主商户_买家_20261106.html`。本节只记录唯一的代码修正。
+
+| # | 接口 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 1 | `GET /orders`、`GET /orders/my`、`GET /distributors/my/orders` 的 `orderStatus` 筛选 | 白名单补入 `pending_verification`、`verified` 两个**状态机真实存在**的值。此前本文档 §8.1 参数表早已列出这两个值，但 `RoleGuard.ORDER_STATUS` 没有，管理端筛选器（`ORDER_STATUS_OPTIONS`）一选就 `400 orderStatus值无效` | 无（前端本来就按文档传值） |
+| 2 | `POST /merchants/my/orders/{orderId}/fulfillment`、`POST /orders/{id}/send-delivery`、`PATCH /orders/{id}/status`、`POST /deliveries/{id}/merchant-confirm` | 商家侧操作门由「认 `residents.role='merchant'`」改为「认店铺归属（`merchants.resident_id`，唯一口径 `MerchantSupport.isOwnedBy`）」。一级代理载体是审核时代建的、申请人角色一直是 `resident`，只卡角色会让本文档 §107.4.1「一级代理商可直接使用既有商家履约接口」永远 403——现网 6 笔在途代销单全靠 30 分钟超时兜底改派、`merchant_self` 为 0 笔即此因。快递员分支角色门不动；无店铺住户、别家商家仍 403 | 无（一级代理工作台现在可以直接调这四个接口） |
+
+**放开的是「可按它筛选」，不是「可把它写成目标状态」**：`PATCH /orders/{id}/status` 的目标状态仍由 `applyStatusTransition` 只接受 `delivering` / `completed`，商家/快递员直接把订单写成 `verified` 依旧 `400`；核实只能通过 `POST /merchants/my/orders/{orderId}/verify`。
+
+**核对结论（未改，供各方对齐口径）**：完成即结算（同一事务、四条完成入口全覆盖）、结算幂等（`settlement:listing:{orderId}:reseller|distributor`）、买家不确认收货有超期自动确认兜底、商家不选履约有 30 分钟默认改派兜底、配送员不能置完成（防提前分钱）、取消/退款冲正齐全（含 listing 件数与 `sold_quantity` 回退、结算单 `reversed`）、未支付订单不占库存。
+
+**待老板定**：① 货源商品（`distributor_products` 也有 `category`）若为「团购」类，不享受团购免运费、也不进商家核实流——团购规则目前只对商城 `products` 生效；② 业主商户（店主）没有订单列表接口，只能在完成后看 `GET /resident-merchants/settlements`；③ 纯 `pending`（从未发起支付）的订单没有自动清理机制，现网代销单已有 20 笔。
+
+**提现自动出款尚未接线**（今天上线包不含）：仓库已有转账引擎 `MerchantTransferService`（`pending → processing → success/failed/closed`、重试上限 5、15 分钟查单、通知回调）与新版商家转账 API 封装 `EcommerceTransferApiService`，但接通前有三处要改、两处要老板先定：
+
+- 三处要改：① 封装绑的是服务商 1752 的 `WechatPayProperties`，而钱实际进直连 1665249236（`payment_records.pay_mode=direct`），出资主体要换成拿钱的那家；② 整条链路被 `wechat-ecommerce.enabled`（电商收付通）锁死，提现出款需要独立开关；③ 触发源现在是 `DistributionRecord` 四层树金额，改为以提现单为源、金额取 `actual_amount`、`out_bill_no` 复用提现单号保证幂等。
+- 两处要定：**用户确认模式**（返回 `package_info`，前端须调 `requestMerchantTransfer` 拉起确认收款）还是**免确认收款授权**（先 `user-confirm-authorization`）；**出资商户号**是 1665 还是 1752（决定开通哪家的产品与场景报备）。
+- 商户平台前置五项：产品中心→商家转账开通；运营工具→商家转账→转账场景报备（佣金报酬 1005）；产品中心→AppID 账号管理绑定小程序 AppID；运营工具→商家转账→安全能力→接口 IP 白名单；账户余额充足。
+- 官方硬约束（原文）：「转账金额 >= 2,000元时，该笔明细必须填写〔收款用户姓名〕」「接口返回的HTTP状态码不为200时，请商户务必不要立即更换商户订单单号重试……否则会有重复转账的资金风险」「单个商户的接口频率限制为100次/s」。
+
+---
+
+## 21.14 v8.45 配送费区间自由配置（2026-11-06）
+
+> 需求：「开发配送费区间配置功能，能够自由配置；本来想按距离计算配送费，老板说让他们自己去设定就行」。
+> 口径 = **不做系统自动测距**，商家自由配多档区间，一档都没命中就回落到默认配送费。交付说明见 `docs/前端交付_配送费区间自由配置_20261106.html`。
+
+| # | 接口 | 变更 | 前端是否要改 |
+| --- | --- | --- | --- |
+| 1 | `PUT /merchants/my/delivery-fees`、`PUT /admin/merchants/{id}` | `deliveryFeeTiers[]` 从「只存不生效」变为**真实参与计价**。档位项新增 `metric`（`amount`/`km`）、`min`、`max`；历史 `minKm/maxKm` 继续可读（等价于 `metric=km`），**无需迁移数据** | 是：新增档位配置页（自由增删、选维度、显示默认值） |
+| 2 | `POST /orders`、`POST /orders/preview`、`POST /orders/from-listing(/preview)`、`POST /cart/delivery-fee`、配送单生成 | 统一走 `DeliveryFeeCalculator`：命中档位 → 档位费；未命中/未配置 → `merchants.delivery_fee`（默认值）；满额减免**压在档位之上**（档位本身为 0 时不算减免，避免把档位差错记成商家补贴） | 是：运费展示取 `deliveryFee`，原价/减免取 `originalDeliveryFee`、`deliveryWaiverAmount`，不要自己按 `delivery_fee` 算 |
+| 3 | `PUT /merchants/my/delivery-fees` 校验 | 新增：`metric` 只允许 `amount`/`km`；**同维度内区间不得重叠**（`0-20` 与 `20-不限` 相邻允许；`amount` 与 `km` 互不干涉）；`max` 为空表示不限；至少一个 `enabled=true`。旧规则「整表按 minKm 升序」取消 | 是：400 的 `message` 原样透出 |
+| 4 | `GET /merchants/{id}`、`GET /merchants` | 回显 `deliveryFeeTiers[]` 的新字段；解析失败改为打 WARN（此前静默返回空列表，正是「商家配了但不生效」长期无人发现的机制） | 无 |
+
+**km 维度的前提**：距离只取「商家×小区」配置表 `merchant_community_distances`（`GET/PUT /admin/merchants/{id}/community-distances`）。**没配距离的小区，km 档一律不命中**，自然回落默认配送费（不报错、不收 0 元）。
+
+**现网影响**：只有 `mch_demo002` 便民超市会变价（其覆盖 2 个小区距离配为 2.00km → 配送费 `0.10 → 0.20`；满 30 仍免）。`mch_386992df981000`、`mch_act01` 因无距离配置，档位不命中，金额不变。
+
+**优先级与匹配规则**：数组顺序即优先级（从上往下第一个命中的档位生效）；区间口径为「含下界、不含上界」。
+
+## 21.15 v8.46 可提现口径唯一 + 分账所得并入提现链路（2026-11-06 晚）
+
+> 起因：前端《分账所得并入提现链路·后端对接需求》（2026-11-06）。核对结论：**分账所得本来就并入各角色可提现余额并走提现通道**（前端 P0-1 的「链路断了」不成立），但「可提现」这个词在 **8 个展示接口各减各的**，其中 **3 处（物业经理钱包、统筹工作台、业主卖货钱包）与提现校验算出的数不一致**，用户按页面数字提交就会撞 94003/94006。本轮把算法收敛成一个函数并按前端别名补字段。交付说明见 `docs/前端交付_可提现口径唯一_20261106.html`。
+
+### 21.15.1 唯一算法
+
+新增 `RoleWithdrawableService`，提现校验与所有余额/收益展示都调它：
+
+```
+可提现 = 已入账收益 − 已占用提现 − 微信分账已实时到账（下限 0）
+```
+
+| 角色 | 已入账收益来源 | 已占用提现 | 对应方法 |
+| --- | --- | --- | --- |
+| 统筹 / 板块负责人 / 个体负责人 | `distribution_records` 该身份份额列（含负向冲正） | 该身份 `pending+approved+completed`（这些通道不写负向钱包流水） | `forShareLedgerRole` |
+| 单元楼长 / 业主卖货 | 账号统一收益账户（`UnifiedEarningsService`） | 账号下**全部角色**已提现 + 在途 | `forBuildingLeader` / `forResidentSeller` |
+| 物业经理 | `wallet_flows(owner_type=property_manager, balance_type=withdrawable)` | 该经理身份 `pending+approved+completed` | `forPropertyManager` |
+| 住户钱包 | `wallet_flows(owner_type=resident, balance_type=withdrawable)` | 只扣在途（`completed` 已写负向流水，不重复扣） | `forResidentWallet` |
+| 配送员 / 快递负责人 | 已完成配送报酬（`WithdrawableService`，本轮未动） | 同上 | `calcCourier*` |
+
+### 21.15.2 本轮修掉的展示与校验不一致
+
+| # | 接口 | 原表现 | 现在 |
+| --- | --- | --- | --- |
+| 1 | `GET /property-managers/my/wallet` | 漏扣「微信分账已实时到账」，页面显示 10.00、提现只允许 6.00（用户提 8.00 必被拒） | 与校验同源，页面即 6.00 |
+| 2 | `GET /coordinators/my` | 同上漏扣分账已到账 | 与校验同源 |
+| 3 | `GET /resident-merchants/seller-wallet` | 只算卖货一条通道，账号别处（商家/楼长）提过后仍显示旧余额 → 提交撞 94006 | `withdrawableAmount` 改为账号统一收益账户值；`totalProfit/withdrawnAmount/pendingAmount` 仍是卖货分项 |
+| 4 | `GET /individual-leaders/{id}/my`、`GET /sector-leaders/my` | 只有 `totalEarnings`，**没有任何可提现字段**，前端只能自己减 | 新增 `withdrawableAmount`/`pendingWithdrawalAmount`/`feeRate`/`withdrawFeeBearer` |
+
+> **入账幂等（前端 Q2）**：本轮**没有**新增钱包账本表，余额是从台账实时派生的，所以「重复加钱」只能发生在「重复落台账」上，而重复落台账已被挡住：订单只能一次性进入 `completed`（状态机 + `OrderCompletionService.completeAndSettle` 要求当前是 `delivering`），支付回调重试/补偿任务重跑都不会二次生成分成记录；退款冲正侧的幂等判据是「同一订单台账里已存在 `distributableAmount < 0` 的冲正行即不再冲正」（`DistributionService.reverseForCancelledOrder`）。因此重复回调后 `withdrawableAmount` **不变**，前端可用 §21.15.5 的判据自测。
+
+### 21.15.3 手续费率前置下发（前端 P0-3）
+
+以下响应新增两字段（`feeMinAmount` 不提供——后端**没有**最低手续费/最低提现额配置，提现请求只有 `@DecimalMin("0.01")`）：
+
+`GET /wallet/my`、`GET /building-leaders/my`、`GET /property-managers/my/wallet`、`GET /coordinators/my`、`GET /sector-leaders/my`、`GET /individual-leaders/my`、`GET /courier-managers/my`、`GET /merchants/my`、`GET /resident-merchants/seller-wallet`、`GET /distributors/my/identity`、`GET /distribution/earnings/mine`（`summary[].feeRate`）
+
+```json
+{ "feeRate": 0.0060, "withdrawFeeBearer": "payee" }
+```
+
+费率取值规则（**按物业公司，不按人**）：
+
+- 角色类（住户/楼长/经理/统筹/板块/个体/配送）：`settlement.platformWithdrawalFeeEnabled` 总开关关 或 `settlement.feeForRole` 关 → `0`；否则 `property_companies.withdrawal_fee_rate` 覆盖值优先，未配置取 `settlement.platformWithdrawalFeeRate`（默认 0.0060，管理端「参数配置」可按物业公司改）。
+- 商家现金提现与物业币兑换：`property_companies.withdrawal_fee_rate` 优先，未配置取固定 0.0060，**不受上面两个开关约束**（口径差异已报，待老板定是否统一）。
+- 计算式：`feeAmount = round2(amount × feeRate)`，`actualAmount = amount − feeAmount`，全额冲减、按 `actualAmount` 打款；分账所得走同一通道同样收费。`platformFeeShare = round2(feeAmount × platform_withdrawal_fee_share_rate)`（默认比例 1.0000，即手续费全额留平台），落 `withdrawal_records.platform_fee_share`。
+- 前端只用 `feeRate` 做**展示预估**，最终金额以提现单返回的 `feeAmount/actualAmount` 为准。
+
+### 21.15.4 验收自测判据
+
+1. 造 100 元订单，分账给统筹 10 元，订单完成后：`GET /distribution/earnings/mine` 的 `summary[COORDINATOR]` → `payableAmount=10.00`、`walletCreditedAmount=10.00`、`withdrawableAmount=10.00`、`withdrawEnabled=true`、`feeRate=0.0060`，顶层 `walletIncluded=true`；`GET /coordinators/my` 的 `withdrawableAmount` 与之相等。
+2. `POST /coordinators/{id}/withdrawals` 传 `10.00` → 200，`feeAmount=0.06`、`actualAmount=9.94`；传 `10.01` → `400 / 94003`。
+3. 提现成功后再查 earnings：`withdrawableAmount=0.00`、`pendingWithdrawalAmount=10.00`。
+4. 支付回调重复投递 / 补偿任务重跑：`withdrawableAmount` **不变**。
+5. 该订单退款冲正：`walletCreditedAmount` 与 `withdrawableAmount` 同步下降（余额未被提走时降到 0；已提走时见 §21.15.5 第 1 条待办）。
+6. 楼长 / 住户 / 物业经理 / 个体负责人同跑一遍：`/wallet/my`、`/building-leaders/my`、`/property-managers/my/wallet`、`/individual-leaders/my`、`/distribution/earnings/mine` 的 `withdrawableAmount` 与各自提现接口校验值一致（本轮回归测试 `WithdrawableSingleSourceConsistencyTest` 已覆盖 1/2/3 与经理漏扣分账的场景）。
+
+### 21.15.5 未做（需老板拍板，不是遗漏）
+
+1. **冲正后已提现的欠款**（前端 P0-4/Q3）：现网台账负向冲正会正常扣减余额，但余额已提走时 `max(0)` 会把欠款吞掉，用户看不到、也不冻结提现。建议「不允许负余额 + 记欠款 + `withdrawalBlocked=true`」。
+2. **历史身份（停用/跨物业）的余额**（前端 Q4 的一部分）：`withdrawEnabled=false` 的角色，账面 `payableAmount` 仍在但小程序无提现入口。需要明确是「管理端代发」还是「允许本人提现」。
+3. `platformFeeShare` 在**配置层**存在（`platform_withdrawal_fee_share_rate`，管理端 SettlementConfig），前端看到的 `withdrawalFeeShare` 是同一个东西的展示名。
+
+## 21.16 v8.47 价格审批「通过后真的生效」（2026-11-06 晚）
+
+> 前端 19:10 反馈两件事：①审批列表「对象」列显示的是 ID；②发起抽佣审批、物业领导同意后数据库没动。
+> 现网实测（`8.147.60.8`）：`pa_388bd774b01000`（商家分成 0.1）19:09:36 由 `res_pleader01` 通过，
+> 结果只写了 `merchants.individual_leader_rate=0.1000`——**该列全仓库没有任何读取方**（分账用的个体负责人比例在
+> `property_companies.individual_leader_rate`，现网 0.5000 未变）；分账真正读的
+> `merchant_property_configs.commission_rate` 仍是 **0.0001**。加上商家列表响应里根本没有 `commissionRate`，
+> 「抽佣比例」列恒显示「—」，于是看起来就是「点了同意，什么都没发生」。
+
+### 21.16.1 落库目标修正
+
+| itemType | 审批通过后写哪里 | 之前 | 现网证据 |
+| --- | --- | --- | --- |
+| `merchant_distribution` | `merchant_property_configs.commission_rate`（商家×物业公司，找不到配置行则新建 `status=active`）；申请人是在职个体负责人时仍绑定 `merchants.individual_leader_id` | 只写 `merchants.individual_leader_rate`（无人读取的死列） | `pa_388bd774b01000` 通过后 `commission_rate` 仍 0.0001 |
+| `delivery_fee` | `merchants.delivery_fee` | **完全不落库**，只把状态改成 approved | `pa_38895fce261000`/`pa_388bd559fc1000` 通过后 `delivery_fee` 仍 0.01 |
+| `product_price` | `products.price/memberPrice/pointPrice` | 一致（对照组，本来就正常） | `prd_388be09cf61000` price 已随审批变化 |
+| `resident_share_rate` | `property_companies` 四项积分分成比例 | 一致 | — |
+| `merchant_ad` / `property_fee_price` | **仍无落库实现**（本轮不臆造目标字段），改为打 WARN 留痕，审批状态照常 approved | 静默无动作 | 现网无这两类记录 |
+
+**`newValue` 两种格式都必须吃下**（这是「管理端发起的抽佣审批报 400」的根因）：
+
+- 纯数字：`0.1`（`PUT /individual-leaders/{id}/merchant-distribution` 服务端自己落的格式）
+- JSON：`{"rate":0.1}`（管理端「发起申请」`JSON.stringify({rate})`）、`{"commissionRate":0.1}` 同义
+- 配送费用 `{"amount":1.5}` 或纯数字；范围校验：抽佣 0~1、金额 0~9999.99，越界 → `10002 PARAM_INVALID`，
+  整单回滚，审批保持 `pending`（不会「状态通过、参数没改」）。
+
+### 21.16.2 出参新增
+
+| 接口 | 新增字段 | 说明 |
+| --- | --- | --- |
+| `GET /admin/price-approvals`、`POST/PUT /admin/price-approvals(/{id})` | `itemName` | 「对象」列的名字：按 `itemId` 前缀批量回查（`mch_`→商家名、`prd_`/`p_`→商品名、`pc_`→物业公司名）。**`itemId` 保留**，查不到名字时 `itemName` 不下发，前端回退显示 ID |
+| `GET /merchants`、`GET /merchants/{id}` | `commissionRate` | 该商家在**当前查询物业公司**下的 `merchant_property_configs.commission_rate`（分账实际用的抽佣）。经营敏感：仅平台/物业管理员与在职负责人（统筹/板块/个体）可见，其余调用方该值为 null（线上 `non_null` 序列化时键缺失） |
+
+前端要做的：①「对象」列改绑 `itemName || itemId`；②「抽佣比例」列现在拿得到值，审批通过后刷新列表即可看到变化；
+③不要再把 `merchants.individual_leader_rate` 当抽佣展示（该列已废弃，后端不再写）。
+
+### 21.16.3 历史数据补偿（需手工执行）
+
+已 approved 的历史审批单**不会自动重放**，补偿脚本：`sql/manual_fix_20261106_price_approval_apply.sql`
+（第 1 段是预览，确认后才跑第 2/3 段；按「同一商家×物业最近一次 approved」取值，可重复执行）。
+prod 关闭 Flyway，本脚本只能手工跑；执行前请先与老板确认「元序 0.1 / 外套的技工 0」这类历史值是否真要生效。
+
+### 21.16.4 本轮验证
+
+`mvn clean verify` → **721 用例全绿**（新增 `MerchantCommissionApprovalApplyTest` 7 例：纯数字抽佣、
+JSON 抽佣、越界回滚、配送费落库、无实现类型不乱写、`itemName`、抽佣可见性），覆盖率门禁通过；
+无 DDL。jar 需重新构建后发版。
+
 ---
 
 
-
 ## 22. 商家积分模块 (Merchant Points)
-
 
 
 ### 22.1 POST `/merchant/points/purchase` — 商家购买积分
@@ -17569,10 +17972,16 @@ curl -X PUT https://test.yuanxusoftware.top/api/v1/admin/merchant-ad-settings \
 {
   "shareUrl": "https://test.yuanxusoftware.top/h5/shop?listingId=rml_001&resellerId=res_xxx",
   "posterImageUrl": "https://test.yuanxusoftware.top/api/v1/static/posters/rml_001.png",
-  "qrcodeUrl": "...",
+  "qrcodeUrl": "https://test.yuanxusoftware.top/api/v1/static/qrcode/listing_rml_001.png",
   "visibility": "private"
 }
 ```
+
+> **v8.38 变更**：`qrcodeUrl` 以前返回的是 `shareUrl + "&format=qrcode"`（一个**网页**地址，前端当 `<image src>` 用必然挂图）。
+> 现在返回真正的二维码图片：优先微信 `/wxa/getwxacode` 生成的小程序码
+> （path=`pages/service/productDetail?listingId=…&resellerId=…`，该页 onLoad 本就读这两个参数，前端零改动）；
+> 微信不可用时降级为指向 `shareUrl` 的本地链接二维码；两者都失败返回 `null`（分享本身不受影响）。
+> 文件名按 `listingId` 固定，重复分享复用同一张，不产生垃圾文件。`posterImageUrl` 仍指向需自行投放的静态海报，未部署时会 404。
 
 ## 60.9.1 PUT `/resident-merchants/visibility` — 设置对外/不对外展示
 
@@ -19079,9 +19488,20 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/from-listing \
 
 ## 66.1 POST `/announcements/product` — 产品推荐发布
 
-> ⚠️ **【当前未实现 · 2026-10-27 核对代码】** 后端不存在 `POST /announcements/product`。产品/活动推荐请使用 `POST /announcements/activity`（活动公告）或特惠推送 §25；本接口请勿调用。以下为原设计文档，保留备查。
+> ✅ **已实现（2026-11-04 核对代码）**。此前该端点无控制器映射，`POST` 落入 `/announcements/{id}`（仅 GET/PUT/DELETE）→ 405 `10005 请求方法不支持: POST`；管理端「通告发布 → 产品推荐」与商家端产品推荐面板（`MerchantProductAnnouncePanel`）均因此报错。
 
 **Roles**: `property_admin`, `platform_admin`, `merchant`
+**权限码**: 管理端工作台身份需 `announcement:publish`（`PermissionInterceptor` 已登记 `POST:/announcements/product`）；商家本人不受该权限码约束，`platform_admin` 直接放行。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `title` | String | ✅ | 公告标题（`@NotBlank`，≤200） |
+| `content` | String | ✅ | 公告内容（`@NotBlank`） |
+| `communityId` | String | ❌ | 小区ID（`com_` 前缀），格式不符 → `10002` |
+| `merchantId` | String | ❌ | 商家ID（`mch_` 前缀）；不传则取商品归属商家；**与商品归属商家不一致 → `10002`**，避免公告挂错商家 |
+| `productId` | String | ✅ | 商品ID；空 → `10001`；不存在或已下架/已删除 → `60004 商品不存在` |
+| `coverUrl` | String | ❌ | 封面图；不传则回落到商品主图 `products.cover_url` |
+| `publishedAt` | String | ❌ | `yyyy-MM-dd HH:mm:ss` 或 ISO 本地时间，不传则立即发布 |
 
 ```json
 // Request Body
@@ -19096,7 +19516,9 @@ curl -X POST https://test.yuanxusoftware.top/api/v1/orders/from-listing \
 }
 ```
 
-创建 Announcement，`announcement_type=merchant`，`content_type=product`。
+创建 Announcement，`announcement_type=merchant`，`content_type=product`，`status=published`；`product_id`/`merchant_id` 落库，`cover_urls` 写单元素 JSON 数组。响应结构同 §11 公告详情（含 `contentType`、`productId`）。
+
+**限频**：调用方为商家角色时沿用 §22「商家公告每周限发 1 次」（超限 `70002`）；管理端代发布不受该限。
 
 ## 66.2 POST `/announcements/activity` — 活动内容发布
 
@@ -22806,6 +23228,16 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 - `property_fee_paid`：业主有已缴清物业费
 - `manual_issue`：仅物业配发的物业币可用
 
+> **v8.37 落地范围**：此前该条件只在 `GET /property-coins/use-condition` 里计算，下单照样能抵扣。
+> 现在服务端在所有物业币**消费**链路强制校验，不满足直接拒绝，错误码 `96035 未满足物业币使用条件`：
+> `POST /orders/{id}/pay`（`paymentMethod=property_coin` / `mixed` 且 `coinUsed>0`）、
+> `POST /orders/preview` 与 `POST /orders/from-listing/preview`（试算不报错，`coinUsed` 归零并回
+> `reasonIfCapped=未满足物业币使用条件`）、服务需求支付、问诊支付、社区服务订阅支付、活动组订阅支付。
+>
+> 两处**不校验**，属有意为之：
+> ① 物业币抵扣物业费——条件 `property_fee_paid` 要求“无欠费”，若在此校验会变成死锁；
+> ② 提现/自动提现/转赠物业——属资金动作，不是消费。
+
 ### 79.3 PUT `/admin/property-companies/{id}/coin-display` — 物业币显示开关（2026-10-29 新增）
 
 **Auth**: Required  
@@ -22975,11 +23407,14 @@ mysql -h<host> -u<user> -p wuye_points < sql/rollback_all_gaps.sql
 {
   "shareUrl": "https://test.yuanxusoftware.top/h5/stats?propertyCompanyId=pc_xxx",
   "posterImageUrl": "https://test.yuanxusoftware.top/api/v1/static/posters/stats.png",
-  "qrcodeUrl": "https://test.yuanxusoftware.top/h5/stats?propertyCompanyId=pc_xxx&format=qrcode"
+  "qrcodeUrl": "https://test.yuanxusoftware.top/api/v1/static/qrcode/stats_pc_xxx.png"
 }
 ```
 
 **说明**：分享 H5 地址由配置 `app.share.stats-url` 控制（默认 `https://test.yuanxusoftware.top/h5/stats`）。分享动作（微信转发/朋友圈）由前端 `onShareAppMessage`/`onShareTimeline` 承接，后端仅提供可分享链接/海报/二维码。
+
+> **v8.38 变更**：`qrcodeUrl` 改为真实二维码图片（本地生成，内容=`shareUrl`；采集统计没有对应小程序页，故不走小程序码）。
+> 现网 `/h5/stats` 尚未部署（实测 404），扫码会落到 404 页——需要运维补 H5 站点，二维码才有业务意义。
 
 ---
 
@@ -24116,6 +24551,7 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 | `merchantShortname` / `servicePhone` | string | 商户简称 / 客服电话 |
 | `qualificationType` | string | 所属行业 |
 | `salesScenesType` / `salesAppId` / `salesSubAppId` / `salesPics` | — | 经营场景与截图 |
+| `platformAppId` | string | 🆕 v8.38 平台小程序 AppID（服务商侧，非敏感）。小程序场景可直接作为 `salesAppId` 预填；未配置服务商支付时该键为 `null` |
 | `bizStoreName` / `bizAddressCode` / `bizStoreAddress` / `storeEntrancePics` / `storeIndoorPics` | — | 门店场景资料 |
 | `businessLicenseNumber` / `merchantName` / `legalPerson` / `licenseAddress` / `licensePeriodBegin` / `licensePeriodEnd` | — | 营业执照非敏感字段 |
 | `idCardPeriodBegin` / `idCardPeriodEnd` | string | 法人证件有效期 |
@@ -24128,9 +24564,19 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 
 > 敏感项（`idCardName`、`idCardNumber`、`idCardAddress`、`bankAccountName`、`bankAccountNumber`、`contactEmail`）不回显，驳回后重填需重新输入；图片 media_id 3 天过期，重提需重新上传。
 
-### 97.2.2 POST `/merchants/my/applyment` — 保存/更新进件资料
+### 97.2.2 POST `/merchants/my/applyment` — 保存/更新进件资料（草稿）
 
 **说明**：审核中（非终态）不可修改；驳回后可改资料重提。提交后如配置 `wechat.applyment.auto-submit=true` 会自动进件，否则停留在 `init` 等待调用 `/submit`。
+
+> 🆕 **v8.38 校验口径变更（重要）**：本接口按**草稿**处理，允许字段缺省，商家可分步填写保存。
+> - 仍会拒绝的：已填字段的取值非法（主体类型/超管类型/经营场景/账户类型不在支持枚举内）、交叉不一致（对公开户名 ≠ 执照商户名称、个人卡开户名 ≠ 法人姓名、法人超管姓名 ≠ 法人）、`uboList` 填了一条却不完整、行业不支持或适用 0.3% 专项规则、字段超长（`@Size`）。
+> - 不再在这里拒绝的：任何「某字段为空」。必填校验整体移到 `POST /submit`（见 97.2.3）。
+> - 每次保存都是**整单覆盖**：请求体没带的字段会被写成空值，前端须回显完整表单（含已上传的 media_id）后再提交保存，不能只发增量。
+
+> 🆕 **v8.39 字段长度修复（2026-11-05 线上故障）**：`bank_account_type` 生产列原为 `varchar(20)`，存不下 27 字符的 `BANK_ACCOUNT_TYPE_CORPORATE`，导致保存草稿整条 INSERT 被 MySQL 拒绝、被兜底成 `409 / 70003「数据冲突，请刷新后重试」`。
+> - 生产已执行 `sql/manual_upgrade_20261105_applyment_column_width.sql`，该列扩为 `varchar(32)`，同表其余枚举/编码/日期/media_id 短列一并扩宽（**Flyway 关闭，必须手工执行该脚本**）。
+> - 请求体所有 varchar 字段已补 `@Size(max)`（见附录 D.2 长度表），超长内容在入库前返回 `400 / 10002 参数校验失败`，不再落到 409。
+> - 兜底文案区分：重复键/唯一约束仍是 `409 / 70003 数据冲突，请刷新后重试`；字段长度截断（Data truncation）改为 `409 / 70003 提交内容超出字段长度限制，请检查填写内容后重试`（根因仍只写服务端日志，不回显表名/列名）。
 
 **请求体** `ApplymentSubmitRequest`（字段详见附录 D.2）：主体/执照/法人证件/经营场景/行业/结算账户/超管；`settlementId` 已移除，结算规则由后端按主体类型自动匹配（企业 716 / 个体户 719），商家不可指定费率。
 
@@ -24138,9 +24584,18 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 
 ### 97.2.3 POST `/merchants/my/applyment/submit` — 提交进件到微信
 
-**说明**：资料就绪后提交，进入微信审核流程（`submitted`）。重复提交返回 `APPLYMENT_STATE_INVALID`。
+**说明**：先按官方《提交申请单》的必填清单校验库中资料，全部齐备才上送微信，进入审核流程（`submitted`）。重复提交返回 `APPLYMENT_STATE_INVALID`。
 
-**响应**：`ApplymentDetailResponse`。
+**完整性校验缺项**（`code=10002`，HTTP 400）一次性列出全部缺项，文案形如：
+
+```
+资料不完整，请补齐：客服电话、营业执照照片、超级管理员联系邮箱
+```
+
+必填清单：商户简称、客服电话、主体类型、营业执照照片/信用代码/商户名称/法人姓名、身份证人像面与国徽面照片、身份证姓名与号码、身份证有效期起止（企业主体还需身份证居住地址）、经营场景及其场景资料（门店五要素／公众号截图／AppID）、结算账户类型、开户名、开户银行、银行账号、超管类型、超管姓名、超管手机号、**超管联系邮箱**。
+
+> 联系邮箱按微信官方为**必填**：`contact_email 必填 string(2048)`「1、用于接收微信支付的开户邮件及日常业务通知；2、需要带@，遵循邮箱格式校验」。前端表单里「选填」的提示是错的，需改为必填。
+> 小程序场景的 AppID：官方为「服务商小程序AppID与商家小程序AppID，二选一必填」；商家没有自己的小程序时，`salesAppId` 留空即可，后端自动用平台小程序 AppID（`platformAppId`）兜底。
 
 ### 97.2.4 POST `/merchants/my/applyment/media` — 上传进件资料图片
 
@@ -24183,17 +24638,30 @@ finished（进件成功，回填 sub_mchid）  /  rejected（驳回，可改资�
 
 ### 97.4.1 POST `/transfer-accounts` — 绑定我的收款账号
 
-**说明**：`channel=zero` 填 `openid`；`channel=bank` 填卡号/开户行/持卡人。同渠道重复绑定 = 覆盖更新。
+**说明**：`channel=zero` **不再由客户端提交 openid**：服务端按登录态从 `residents.openid` 反查，`openid` 字段保留仅为兼容旧包，**传入值一律忽略**；本人 `residents.openid` 为空时返回 `99017`。`channel=bank` 填卡号/开户行/持卡人。同渠道重复绑定 = 覆盖更新。
 
 **请求体** `BindTransferAccountRequest`：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `channel` | string | ✅ | `zero`(微信零钱) / `bank`(银行卡) |
-| `openid` | string | zero 时 | 微信 openid |
+| `openid` | string | ❌ | **已废弃**：zero 渠道服务端按 token 反查 `residents.openid`，传值忽略 |
 | `bankAccountNo` | string | bank 时 | 银行卡号（明文提交，加密落库） |
 | `bankName` | string | bank 时 | 开户银行全称 |
 | `accountName` | string | bank 时 | 持卡人姓名 |
+
+**错误码**：
+
+| 错误码 | HTTP | 说明 |
+| --- | --- | --- |
+| `99017` | 400 | 当前账号未绑定微信身份（`residents.openid` 为空），需在小程序重新登录后再试 |
+| `20004` | 403 | 权限不足（当前角色不在四层树内、或物业账号未绑定物业公司） |
+| `10001` | 400 | 参数缺失（bank 渠道缺卡号/开户行/持卡人） |
+| `10002` | 400 | 参数格式错误（`channel` 非 zero/bank） |
+| `99005` | 502 | 微信平台证书未就绪（bank 渠道加密失败） |
+
+> 前端改动：删除「微信 openid」只读输入框与本地兜底拉取，`channel=zero` 直接提交 `{ "channel": "zero" }`。
+
 
 **响应** `data`（`TransferAccountResponse`）：`id` / `ownerType` / `channel` / `openid`（zero 渠道）/ `bankName`（bank 渠道）/ `verified`（是否已核验可用）。
 
@@ -25734,6 +26202,7 @@ WECHAT_ECOMMERCE_TRANSFER_NOTIFY_URL=https://<正式域名>/api/v1/payment/ecomm
 - 前端可按 `code` 映射提示；`scene` 当前为枚举名，便于日志/客服定位。
 - 异常返回收紧：
   - 数据库唯一约束冲突统一 `409 / 70003 数据冲突，请刷新后重试`，不再回显表名/列名/重复值。
+    - 🆕 v8.39：仅「字段长度截断（Data truncation / Data too long）」单独返回 `409 / 70003 提交内容超出字段长度限制，请检查填写内容后重试`，仍不回显具体列名；其余完整性冲突文案不变。
   - 微信支付异常只返回“支付服务暂时不可用，请稍后重试或联系客服”，微信原文只写服务端日志。
   - `IllegalArgumentException` 只返回“参数不合法”。
 
@@ -26279,6 +26748,11 @@ CSV 列：交易时间、交易分类、分类码、所属分组、收支方向�
 | `distributorId` | string | 一级代理商商家ID（代销订单） |
 | `residentMerchantId` | string | 业主小店店铺主体ID（代销场景） |
 | `settlementOwner` | string | `merchant` 或 `distributor` |
+| `listingId` | string | **v8.41 新增**：业主上架商品ID（`rml_`），仅代销单返回。待支付单重新试算必须带它调 `POST /orders/from-listing/preview`；`POST /orders/preview` 查不到 `dpr_` 货源商品 |
+
+> **v8.41 补充**：`GET /orders/{id}` 详情此前漏发 `sourceType`（只在列表里有），现已与 `listingId` 一并在详情下发。
+> 支付页判断规则：`listingId` 非空 → 试算走 `/orders/from-listing/preview`、新下单走 `/orders/from-listing`、
+> 支付仍是 `POST /orders/{id}/pay`；`listingId` 为空 → 维持 `/orders/preview`（`items[].productId` 必须是 `prd_`）。
 
 ### 107.4.3 新增：一级代理商用户购买记录
 
@@ -27313,6 +27787,15 @@ Content-Type: application/json
 ### A.6 导航栏配置（`/admin/navigation-items`）
 
 > 手机端导航栏配置维护（后台）。角色：`property_admin`、`platform_admin`。`propertyCompanyId` 为空表示平台级默认导航。
+>
+> **手机端读取口径（v8.40 起，整改清单条目31）**：`GET /navigation-items` 不传 `position` 时返回该模块
+> **全部启用中的导航项（`bottom` 与 `top` 合并，按 `sortOrder` 升序）**。
+> App 首页把这份返回当成整组入口——只要非空就覆盖自带九宫格。v8.37 曾把缺省口径改成「只回 bottom」，
+> 导致管理端把入口配成 `top` 后首页一个都不显示（必须显式 `?position=top` 才出现），现已回退。
+> 只需某一位置时前端显式传 `?position=bottom` / `?position=top` 过滤。
+> 回落规则按模块粒度判定：本物业在该模块一条都没配，才回落平台默认（`propertyCompanyId` 为空）的该项。
+> 响应含只读别名 `linkTarget`（等于 `linkUrl`）：App 侧按 `linkTarget/target/url/path` 解析跳转目标，
+> 只回 `linkUrl` 会被解析成空路径。
 
 #### A.6.1 GET `/admin/navigation-items` — 导航项列表
 
@@ -27322,6 +27805,7 @@ Content-Type: application/json
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | propertyCompanyId | String | 否 | 物业公司ID（platform_admin 可传） |
+| module | String | 否 | 模块过滤：home/service/activity/resident_merchant（v8.37 起生效，此前该参数被忽略） |
 
 **响应**：`ApiResponse<List<NavigationItem>>`
 | 字段 | 类型 | 说明 |
@@ -27616,6 +28100,10 @@ Content-Type: application/json
 
 **响应**：`ApiResponse<PageResponse<ResidentListItemResponse>>`（列表项字段见居民模块既有定义：id, name, phone(脱敏), avatarUrl, gender, age, maritalStatus, hasChildren, role, userType, propertyCompanyId, communityId, communityName, building, floor, unit, room, familyId, pointBalance 等）
 
+> **v8.37 补充**：本接口每项新增 `deletionExpiresAt`（`yyyy-MM-dd HH:mm:ss`，仅 `status=pending_deletion` 出现，全局 `non_null` 序列化，其他状态该键不出现）。值取自 `residents.deleted_at` —— 注销申请把冷静期到期时间承载在该列上（申请时间 = 到期时间 − 15 天）。
+>
+> **修复说明**：此列表此前恒为空。原因是查询沿用了普通住户列表的 `deleted_at is null` 条件，与冷静期写入的 `deleted_at` 互斥；现已改用注销终审专用条件（只按 `status='pending_deletion'`）。普通住户列表（`GET /admin/residents`）仍排除冷静期账号，口径未变。
+
 #### A.12.2 POST `/admin/residents/{id}/deletion/review` — 审核注销账号
 
 **请求**：`POST /admin/residents/{id}/deletion/review`
@@ -27647,7 +28135,6 @@ Content-Type: application/json
 | 商家积分 | `GET /merchant/points/quote` | 未实现；可由前端按 `point_exchange_rate` 本地计算 |
 | 商家物业币 | `POST /admin/merchants/{id}/coin/earn` | 未实现；管理端暂无给商家发放物业币入口 |
 | 公告 | `GET /admin/announcements/{id}/read-stats` | 未实现；请使用公告详情/定向推送统计字段 |
-| 公告 | `POST /announcements/product` | 未实现；请使用 `POST /announcements/activity` 或特惠推送 |
 | 消息 | `GET /messages/contact-quota` | 未实现；暂无每日新聊配额查询接口 |
 | 配送规则 | `GET /delivery-rules/scope-options` | 未实现；距离类型/配送范围为固定枚举，前端本地维护 |
 | 活动组 | `POST /activity-groups/{id}/unsubscribe` | 未实现；退出活动组请用 `POST /activity-groups/{id}/leave` |
@@ -27823,16 +28310,89 @@ Content-Type: application/json
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/merchants/my/applyment/media` | 上传资料图片（multipart `file`），返回 `mediaId`（有效期约 3 天） |
-| POST | `/merchants/my/applyment` | 保存/更新资料（`init`/`rejected` 可改） |
-| POST | `/merchants/my/applyment/submit` | 提交微信审核，**每次提交生成新的业务申请编号** |
-| GET | `/merchants/my/applyment` | 查询状态、驳回原因、`signUrl`（签约链接） |
-| GET | `/merchants/my/applyment/banks?bankAccountType=BANK_ACCOUNT_TYPE_CORPORATE` | 开户银行列表（对公/对私） |
-| GET | `/merchants/my/applyment/banks/{bankAliasCode}/branches?cityCode=211100&offset=0&limit=100` | 支行列表（联行号；`cityCode` 必填，支持 `offset`/`limit` 分页） |
+| POST | `/merchants/my/applyment` | 保存/更新资料（**草稿**，允许字段缺省；`init`/`rejected` 可改） |
+| POST | `/merchants/my/applyment/submit` | 提交微信审核（先做必填完整性校验，缺项一次返回），**每次提交生成新的业务申请编号** |
+| GET | `/merchants/my/applyment` | 查询状态、驳回原因、`signUrl`（签约链接）、`platformAppId`（平台小程序 AppID） |
+| GET | `/merchants/my/applyment/banks?bankAccountType=BANK_ACCOUNT_TYPE_CORPORATE&keyword=招商&offset=0&limit=50` | 开户银行列表（🆕 v8.37 后端拉微信全量并缓存，支持关键字检索与分页） |
+| GET | `/merchants/my/applyment/banks/{bankAliasCode}/branches?cityCode=211100&offset=0&limit=100` | 支行列表（联行号；`cityCode` 必填；`limit` 超 500 夹取并在 `limitEffective` 回显生效值） |
 | GET | `/merchants/my/applyment/industries` | 可选行业与结算规则（前端下拉数据源） |
 
 > 运营后台沿用 `GET/POST /admin/merchants/{id}/applyment*`（查看/提交/刷新），行为同上。
 
+## D.1.1 银行 / 支行列表响应（🆕 v8.37 改版）
+
+**旧行为（已废弃）**：后端把微信原始应答原样透传，数组在 `data.data` 双层里，且写死 `offset=0&limit=100` —— 前端只能看到前 100 家银行（微信全量约 4451 条），选不到自己的开户行。
+
+**新行为**：后端分页拉全量、缓存 24 小时（启动后异步预热 + 每日 04:40 刷新），检索与分页都在本地做，响应字段规范化为**单层 `list`**。
+
+`GET /merchants/my/applyment/banks`
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "bankAccountType": "BANK_ACCOUNT_TYPE_CORPORATE",
+    "total": 4451,
+    "filteredTotal": 12,
+    "count": 12,
+    "offset": 0,
+    "list": [
+      {
+        "accountBank": "招商银行",
+        "accountBankCode": 1001,
+        "bankAlias": "招商银行",
+        "bankAliasCode": "1000009561",
+        "needBankBranch": false
+      }
+    ]
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `total` | 该类型下微信全量条数（缓存到的总条数） |
+| `filteredTotal` | 命中 `keyword` 的条数；未传 keyword 时等于 `total` |
+| `count` / `offset` | 本页条数与起始偏移 |
+| `accountBank` + `accountBankCode` | **提交进件必须用这两个**（微信：入驻/改结算卡/付款到银行卡都要求开户银行编码） |
+| `bankAlias` / `bankAliasCode` | **仅用于展示与检索支行**，不能当结算银行编码提交 |
+| `needBankBranch` | `true` 时必须再选支行（用 `bankAliasCode` 查 D.1.2） |
+
+`GET /merchants/my/applyment/banks/{bankAliasCode}/branches`
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 37,
+    "count": 2,
+    "offset": 0,
+    "limitEffective": 100,
+    "accountBank": "招商银行",
+    "accountBankCode": 1001,
+    "bankAlias": "招商银行",
+    "bankAliasCode": "1000009561",
+    "list": [
+      { "bankBranchName": "招商银行股份有限公司北京分行", "bankBranchId": "308100005019" }
+    ]
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `bankBranchId` | 支行**联行号**，提交进件用这个 |
+| `limitEffective` | 后端实际生效的 limit（请求值 >500 时夹到 500，**不再静默**，会同时打 WARN） |
+
+**错误码**：`99016`（服务商凭据未就绪）/ `10001`（`bankAliasCode` 或 `cityCode` 缺失）/ `99002`（微信银行列表拉取失败且无缓存可回退）。
+
+> 缓存策略：命中缓存时**不打微信**；冷缓存首次请求会分页拉全量（约 23 次微信调用），已由「启动后异步预热 + 每日 04:40 定时刷新」兜住，正常情况用户不会感知延迟。
+
 ## D.2 保存资料请求字段
+
+> 「必填=是」指**提交微信（`POST /submit`）时**必须齐备；`POST /merchants/my/applyment` 按草稿处理，允许这些字段暂缺（v8.38 起）。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
@@ -27863,6 +28423,19 @@ Content-Type: application/json
 | bankBranchId / bankName | String | 条件 | 银行要求支行时二选一 |
 | contactType | String | 是 | 本版仅 `LEGAL`（法定代表人本人作超管） |
 | contactName / contactMobile / contactEmail | String | 是 | 超管姓名/手机号/邮箱（后端加密上送） |
+
+**字段长度上限（v8.39，超过即 `400 / 10002`）**：
+
+| 字段 | 上限（字符） | 字段 | 上限（字符） |
+| --- | --- | --- | --- |
+| organizationType | 32 | salesScenesType | 64 |
+| licensePeriodBegin / licensePeriodEnd | 32 | idCardPeriodBegin / idCardPeriodEnd | 32 |
+| businessLicenseMedia / idCardCopyMedia / idCardNationalMedia | 255 | salesAppId / salesSubAppId | 256 |
+| bizAddressCode | 32 | qualificationType | 200 |
+| bankAccountType | 32 | bankAliasCode | 64 |
+| bankBranchId | 255 | contactType | 32 |
+
+> `uboList` 口径（v8.38 起）：**企业若仅有法定代表人一名最终受益人，可整组留空**，微信自动回填；存在多名受益人（直接/间接持股 ≥25% 的自然人）时才需逐条填写，最多 4 人。后端 `validateDraft` / `validateForSubmit` 均不强制要求 UBO 非空，前端不应把「至少 1 名」作为提交前置条件。
 
 ## D.3 状态机与响应
 
@@ -28317,8 +28890,9 @@ V35 会把历史已支付 `payment_records(biz_type='coin_recharge', status='pai
 > 前端务必检查每条的 `status`，把 `skipped` 的 `reason` 显示给运营——不要只看 HTTP 200 就提示「登记成功」。
 > 同一主体（`ownerType` + `ownerId`）唯一，重复提交即覆盖，可安全重试。
 
-**错误响应**：`10001`（`ownerType` 或 `ownerIds` 为空）、`10002`（`ownerType` 不支持）、`20004`（非平台管理员）。
+**错误响应**：`10001`（`ownerType` 或 `ownerIds` 为空）、`10002`（`ownerType` 不支持）、`20004`（非平台管理员）；**部署未就绪时可能返回 500**，见下方运维注记。
 
+> **部署前置（2026-11-05）**：本接口会 `INSERT wechat_split_receiver_accounts`。prod 该表遗留的两个实体未映射旧列 `receiver_account` / `receiver_type` 若为 `NOT NULL` 且无默认值，`STRICT_TRANS_TABLES` 会抛 `SQL Error: 1364 Field 'receiver_account' doesn't have a default value` → `JpaSystemException` → 500（实体只写 `account_no` / `account_name` / `merchant_no` 等新列）。须先手工执行 `sql/manual_upgrade_20261105_split_receiver_nullable.sql` 把两列改为可空并补齐基线索引。此 500 属**部署/表结构漂移问题，不是接口契约错误**，修复后无需重启后端、无需重新部署管理端。
 > 登记完成后，缺户的历史分账由补偿调度自动补分，无需人工逐单重放。
 >
 > **实现细节**：自动登记与 §C.3.2 共用同一落库路径，但**不提交 `accountName`**——微信会校验实名一致性，住户表里的姓名未必等于微信实名，填了反而被微信拒。自 v8.36 起个人 openid **没有任何手填入口**（§C.3.2 只收商户号），因此也不存在「带姓名手工登记」这条路；如需修正某人的收款账户，请删除该记录后用本接口重新按主体登记。
@@ -28447,6 +29021,192 @@ V35 会把历史已支付 `payment_records(biz_type='coin_recharge', status='pai
 6. **管理端「住户微信身份认领」入口**：在账号详情或列表增加操作，走 §110.2.1 列候选 → §110.2.2 认领；`claimable=false` 置灰并展示 `reason`。
 7. **现金支付订单**：`pointEarned`/`coinEarned` 现在会非零（V36 修复回调发放），积分明细会出现 `source=order` 记录，属正常。
 
+
+---
+
+# 111. v8.37 修复（2026-11-05 · 验收第二轮三处）
+
+## 111.1 物业币使用条件在消费链路强制校验（§79.2）
+
+- 现象：物业设了「使用条件」，住户下单照样能抵扣——条件只在 `GET /property-coins/use-condition` 里算，支付链路没查。
+- 修复：`PropertyCoinService.assertUseConditionSatisfied` 接入全部**消费**链路（下单支付、服务需求支付、问诊支付、社区服务订阅、活动组订阅），不满足返回 `96035 未满足物业币使用条件`（HTTP 400）。
+- 试算同步：`POST /orders/preview`、`POST /orders/from-listing/preview` 条件不满足时 `coinUsed=0`、`reasonIfCapped=未满足物业币使用条件`，不报错。
+- 有意不校验：物业币抵扣物业费（`property_fee_paid` 条件会形成死锁）、提现/自动提现/转赠物业（资金动作，非消费）。
+- 现网 `property_companies.coin_use_condition` 四个演示租户均为 `none`，本次上线不改变任何既有行为。
+
+## 111.2 物业币扣的是家庭池还是个人池（口径确认，无代码变更）
+
+| 动作 | 资金落点 |
+| --- | --- |
+| 发放（下单返币、线下配发、活动奖励、充值到账等全部 `earn`） | **只进 `residents.coin_balance`（个人）** |
+| 消费抵扣（`useFamilyPool=true`，即下单人属某家庭） | **先扣 `families.coin_balance`（家庭池），不足再扣个人** |
+| 消费抵扣（无家庭） | 只扣个人 |
+| 退款 | 按原流水的家庭/个人扣减比例**原路退回** |
+| 家庭物业币转赠物业 | 只扣家庭池 |
+
+- `useFamilyPool` 判定：`OrderService.resolveUseFamilyPool` — 请求显式传 `familyId`（必须是本人所在家庭，否则 403）→ 用；订单已带 `familyId` → 用；**否则只要是家庭成员就默认用**。
+- 可用余额口径 = 个人 + 家庭池（`resolveAvailableCoin`），与扣减顺序一致。
+- 结论：家庭池自 2026-10-25 起「只出不进」（发放不再进家庭池），它是历史存量，不是共享钱包。
+
+## 111.3 权限配置里显式授予的领导专属码，必须出现在 `effectivePermissions`
+
+- 现象：给物业操作员授予 `config.set` 后，参数配置接口已经能调通（实测 200），但 `/auth/profile` 的 `effectivePermissions` 里没有 `config:set`，管理端菜单/权限详情页看不到，表现为「赋予了也不生效」。
+- 根因：`PermissionGuard.hasPermission` 先读 `user_permissions` 覆盖行（认显式授予），而 `listEffectivePermissionCodes` 在末尾无条件把 `PROPERTY_LEADER_ONLY_CODES` 从下发列表里剥掉，两个口径相反。
+- 修复：下发口径改为——**物业操作员被显式授予过的领导专属码保留下发**；撤销后回到不下发；标签身份（组长/负责人/社区管理员）一律不下发（`requirePermission` 对它们直接拒绝，保持「菜单有=接口能通」）；平台专属码仍永不下发给物业侧。
+- 领导专属码集合：`config.set`、`permission.manage`、`permission.read`、`property_operator.manage`、`coin.display_control`。
+- **前端仍有硬挡**（见交付文档）：`canAccessLeaderOnlyRoute` 只认 `propertySubRole=property_leader`，`propertySubRole` 为空的物业主账号和被授予权限的操作员都进不了「参数配置」等 12 个页面，且该判定不看权限码。
+
+## 111.4 手机端导航不再被一条 `top` 记录整体顶掉
+
+- 现象：`navigation_items` 里给租户配了 1 条 `position=top` 的「公告」，住户 App 首页自带的 10 个入口全部消失（App 侧「返回非空即整组替换」）。
+- 修复：`GET /navigation-items` 不传 `position` 时只返回 `position=bottom`（主导航位）；`top` 需显式 `?position=top` 另取。响应新增只读别名 `linkTarget`（= `linkUrl`），否则 App 解析出的跳转目标为空、点了跳 `/`。
+- `GET /admin/navigation-items` 新增 `module` 过滤（管理端页面一直在传、后端此前忽略）。
+- **前端待改**：管理端「导航配置」新增表单提交 `{name, route, status}`，后端要求 `{title, linkType, linkUrl, position, enabled}`，现提交必 400（详见交付文档）。
+
+---
+
+# 112. v8.38 商家专属收款二维码（PRD P0-05 补齐，2026-11-05）
+
+## 112.1 选型口径（逐字引用官方文档）
+
+- 微信 Native 支付只给链接、不给图片：「服务商在后端调用 Native支付下单 接口获取二维码链接(code_url)后，然后由服务商/子商户前端将二维码链接转换为二维码图片展示给用户」「code_url ： 二维码链接。 此URL用于生成支付二维码」「code_url 有效期为2小时，超过2小时， 商户需要使用原下单参数重新请求下单接口 ，获取新的 codeurl」
+  → **一单一码、2 小时过期**，属「线下收银台输金额→顾客扫码」，不是可张贴的商家专属码；且图片仍要商户自己生成。
+- 静态收款码的官方产品形态是「微信收款商业版」：「无需开发，通过手机轻松完成微信支付收款、对账等操作」「可下载收款二维码，并查看微信收款商业版功能介绍」「将收款二维码张贴在门店内，顾客扫描二维码向你进行付款」
+  → 商户自助开通、在商户平台下载，文档站检索不到对应开放 API；且货款直接进商户自己账户，**绕过本平台的分账/抽佣/积分链路**，需老板拍板才能用。
+- 因此商家专属码取微信小程序码 `/wxa/getwxacode`：「该接口用于获取小程序码，适用于需要的码数量较少的业务场景。通过该接口生成的小程序码，**永久有效，有数量限制**」，且 `path`「扫码进入的小程序页面路径，最大长度 1024 个字符」可带 query 参数
+  → 顾客扫码直达本店页，再走既有 JSAPI 支付与分账，**资金模型不变、前端零改动**。
+  （未选 `/wxa/getwxacodeunlimit`：它只能把参数塞进 `scene`（≤32 字符），需要前端在 onLoad 里额外解析 `options.scene`。）
+
+## 112.2 新增接口
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/admin/merchants/{id}/qrcode?force=false` | `merchant:audit`（物业本租户 / 平台） | 生成/重生成商家收款码，图片 URL 写回 `merchants.qr_code_url` |
+| `GET` | `/admin/merchants/{id}/qrcode` | `merchant:audit` | 查询当前码（不触发微信调用） |
+| `POST` | `/merchants/my/qrcode?force=false` | `merchant`（本人店） | 商家自助生成 |
+| `GET` | `/merchants/my/qrcode` | `merchant` | 商家查看自己的码 |
+
+**响应 `MerchantQrCodeResponse`**：
+
+```json
+{
+  "merchantId": "mch_35217712f21000",
+  "merchantName": "社区超市",
+  "qrCodeUrl": "https://test.yuanxusoftware.top/api/v1/static/qrcode/merchant_mch_35217712f21000.png",
+  "codeType": "MINIPROGRAM_CODE",
+  "codeContent": "pages/service/merchantProducts?merchantId=mch_35217712f21000",
+  "regenerated": true
+}
+```
+
+**规则**：
+
+- 仅 `auditStatus=approved` 且未停用的商家可生成；否则 `60002 商家审核中`（文案「商家审核通过后才能生成收款二维码」）/ `60001 商家不存在`。
+- `force=false` 且已有码（URL 与磁盘文件一致）时直接复用，`regenerated=false`，不打微信接口；`force=true` 重新生成并覆盖同名文件。
+- 文件名固定 `qrcode/merchant_{id}.png` → 幂等、不留垃圾文件，也**不需要新增任何库表字段**（`qr_code_url` 列 V1 基线就有）。
+- 商家ID前缀两种历史形态都接受：`mch_`（业务建店）、`m_`（平台商家库挂接补建）。
+- 落盘沿用 `app.upload.path` / `app.upload.base-url`，与 `/files/upload` 同一套静态目录与 URL 规则。
+
+## 112.3 变更接口
+
+- `GET /merchants`、`GET /merchants/{id}`、`GET /merchants/my`、`GET /admin/merchants`：`qrCodeUrl` 从「永远为 null」变为生成后有值 —— **App 商家中心「收款二维码」区块与管理端商家详情「二维码」行由此自动生效**。
+- `GET /merchants/my/applyment`、`GET /admin/merchants/{id}/applyment`、`POST .../applyment/refresh`：新增 `signQrCodeUrl`（把 `signUrl` 转成二维码图片，文件名 `qrcode/applyment_{merchantId}.png`）。两端页面早已按 `signQrCodeUrl` 渲染，缺它时只显示「后端未下发二维码，请复制链接」。生成失败返回 `null`，不影响进件详情读取。
+- `POST /files/upload`、`/files/upload-batch`：`category` 白名单补 `community`（5MB、jpg/jpeg/png/webp、**无累计数量上限**）。此前 App 论坛发帖图与楼长公告封面固定传 `community`，被 `10002 category值无效` 100% 拒绝——文档 §12 一直写着用 `community`，是代码漏配。
+
+## 112.4 新增配置
+
+```yaml
+app:
+  qr-code:
+    size: ${QR_CODE_SIZE:430}                                   # 图片边长
+    merchant-page: ${QR_CODE_MERCHANT_PAGE:pages/pay/merchantCashier}   # 🆕 v8.40 极简收银台落地页（v8.38 为 pages/service/merchantProducts）
+    listing-page: ${QR_CODE_LISTING_PAGE:pages/service/productDetail}        # 小店分享码落地页
+```
+
+`app.wechat.skip-api=true`（dev 默认）时小程序码**必然失败**：商家收款码接口直接报 `99002 开发模式未接通微信接口，无法生成小程序码`（fail-closed，不发废码）；分享码则降级为本地链接二维码。
+
+## 112.5 本轮未做
+
+- Native 动态收款码（输金额→扫码付）：需新增 `/v3/pay/partner/transactions/native` 下单链路 + 2 小时轮转，与「商家专属码」口径不同，等老板确认再做。
+- 「微信收款商业版」收款码：无 API 且资金绕过平台分账，属业务决策。
+- `posterImageUrl` 海报图：仍指向需自行投放的 `/static/posters/*.png`，本轮只动二维码。
+
+---
+
+# 113. v8.40 商家扫码即支付（2026-11-05）
+
+## 113.1 为什么这样改
+
+顾客扫商家专属小程序码后应**直接看到微信付款界面**。微信生态里「扫码 → 微信原生输金额页」只有「微信收款商业版」静态收款码（免开发、商户平台下载、无开放 API），且货款直接进商家账户，绕过平台分账、抽佣与 PRD P0-01「线上扫码支付自动累积积分」。因此本平台采用业界平台型方案：**一店一码的小程序码 + 极简收银台 + 落地自动拉起 wx.requestPayment**。
+
+- 静态码不带金额，微信支付任何 API 下单都必须先有订单，所以「保留平台资金/积分链路」与「零中间页」不可兼得；
+- 把中间页压缩到只剩一个金额输入（商家预置金额时连输入都省），顾客感知为「扫码 → 微信付款弹窗」；
+- 小程序码 `/wxa/getwxacode` 的 `path` 可带 query，`merchantId` 直接落地页读取，前端无需解析 `scene`。
+
+## 113.2 新增接口
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/scan-pay/orders` | `resident` | 输金额创建扫码付款单 + 微信预下单，一次返回 `payParams` |
+| `GET` | `/scan-pay/orders/{id}` | `resident`（本人） | 支付后轮询状态，只有 `status=paid` 且 `paidAt` 有值算到账 |
+
+**请求** `ScanPayCreateRequest`：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| merchantId | String | 是 | 小程序码 query 里的商家ID |
+| amount | Decimal(10,2) | 是 | 0.01 ~ 50000，最多两位小数 |
+
+**响应** `ScanPayCreateResponse`：
+
+```json
+{
+  "scanPayId": "ord_xxxxxxxx",
+  "merchantName": "便民超市",
+  "amount": 28.50,
+  "paymentRecordId": "pr_xxxxxxxx",
+  "outTradeNo": "wxo_xxxxxxxx",
+  "status": "pending",
+  "payParams": {
+    "appId": "wx...", "timeStamp": "...", "nonceStr": "...",
+    "package": "prepay_id=...", "signType": "RSA", "paySign": "...",
+    "outTradeNo": "wxo_xxxxxxxx"
+  }
+}
+```
+
+`payParams` 原样传给 `wx.requestPayment`；`paymentRecordId` 是内部流水ID，不是微信订单号，客服对账用 `outTradeNo`。
+
+**轮询响应** `ScanPayStatusResponse`：`scanPayId / merchantName / amount / status / pointEarned / paidAt / paymentRecordId / outTradeNo`。`status` 取值 `pending`（待支付）/ `paid`（已完成，订单已 completed）；`pointEarned` 为本次实发积分。
+
+**失败**：无 openid → `10001`；商家未审核/停用 → `60002 / 60001`；商家未完成微信进件（分账启用时）→ `99004`；同住户已有待支付扫码单 → `409 / 70003`；金额越界 → `400 / 10002 参数校验失败`。
+
+## 113.3 资金与积分口径（重要）
+
+- **落成一条真实订单**：`orders.source_type='scan_pay'`、`requires_delivery=false`、`fulfillment_mode=none`、无 `order_items`。原因：商家可提现余额由 `orders(completed)` + `distribution_records` 计算，且 `distribution_records.order_id` 对 `orders.id` 有外键；不落订单会让商家收不到这笔钱。
+- 支付通道与商城订单同判断：物业启用分账 → 服务商 JSAPI + `sub_mchid`（钱进商家特约商户号、`profit_sharing=true`）；否则平台直连代收。
+- 回调经 `PaymentCompletionService → PaymentSettleService → PaymentBizDispatcher` 分发到 `ScanPayService.completeChannelPayment`：幂等发放积分、把订单推进 `completed`，再复用 `OrderCompletionService.settleOnCompleted` 生成分成记录并触发 `WechatSplitService` 分账/解冻。**服务商订单不分账会导致商家资金冻结**，务必保持该链路。
+- 新增 `PaymentBizType.SCAN_PAY = "scan_pay"`；`payment_records.biz_id` = 订单ID。
+- 积分公式与商品订单一致：`(totalAmount − coupon) × commissionRate × userPointShareRate × pointExchangeRate` 向下取整，`source=scan_pay`、`sourceId=orderId`。
+- **零表结构变更**：本轮未新增表/列，`sql/` 无新脚本。
+
+## 113.4 二维码 path 切换（必须与前端发布同步）
+
+`app.qr-code.merchant-page` 默认已改为 `pages/pay/merchantCashier`，但**线上小程序尚未发布该页前不要切换**：否则所有商家码指向不存在的页面，会 100% 白屏。
+
+发布顺序：
+
+1. 前端新增并发布收银台页 `pages/pay/merchantCashier`（见前端交付文档）；
+2. 部署 v8.40 后端，或在 systemd 显式设 `QR_CODE_MERCHANT_PAGE=pages/pay/merchantCashier`（前端未发布期间继续设为 `pages/service/merchantProducts`）；
+3. 逐商家重生成码：`POST /admin/merchants/{id}/qrcode?force=true`（§112.2），校验响应的 `codeContent` 为 `pages/pay/merchantCashier?merchantId=...`；
+4. 用微信扫一张码做端到端验收：出现收银台 → 输金额 → 微信付款界面 → 支付成功 → 轮询 `paid` + `pointEarned`。
+
+## 113.5 前端要做的事（前端源码只读，本轮未改）
+
+- 新增 `pages/pay/merchantCashier` 并写进 `pages.json`，线上包必须发布该页（当前白屏的根因就是线上包与后端下发的 path 不一致）；
+- `onLoad(options)` 读 `options.merchantId`，先完成静默登录拿到 openid 对应的 resident token，再调 `POST /scan-pay/orders`；
+- 拿到 `payParams` 立即 `wx.requestPayment`，`success` 后轮询 `GET /scan-pay/orders/{id}` 直到 `status=paid`；`wx.requestPayment:success` 不等于到账；
+- 轮询间隔建议 1~2 秒、上限 30 次，超时提示「支付结果确认中，请稍后在订单列表查看」。
 
 ---
 
@@ -28699,6 +29459,7 @@ V35 会把历史已支付 `payment_records(biz_type='coin_recharge', status='pai
 | `96032` | 400 | `COIN_EXCEED_MAX_RATIO` | 超过物业币商城最大占比 |
 | `96033` | 400 | `PREVIEW_EXPIRED` | 预览快照已过期 |
 | `96034` | 400 | `CONSULTATION_APPOINTMENT_UNAVAILABLE` | 咨询预约不可用 |
+| `96035` | 400 | `COIN_USE_CONDITION_NOT_SATISFIED` | 未满足物业币使用条件 |
 
 ### 97xxx（22 个）
 
@@ -28753,6 +29514,7 @@ V35 会把历史已支付 `payment_records(biz_type='coin_recharge', status='pai
 | `99014` | 409 | `SPLIT_REVERSE_INCOMPLETE` | 订单分账尚未全部回退完成，暂不能发起退款 |
 | `99015` | 400 | `REFUND_NOT_ENABLED` | 当前未开放用户主动申请退款，如有问题请联系物业 |
 | `99016` | 502 | `WECHAT_APPLYMENT_NOT_CONFIGURED` | 微信进件未配置（服务商凭据或结算规则缺失） |
+| `99017` | 400 | `TRANSFER_OPENID_MISSING` | 当前账号未绑定微信身份（`residents.openid` 为空），无法绑定零钱收款方式 |
 
 ---
 

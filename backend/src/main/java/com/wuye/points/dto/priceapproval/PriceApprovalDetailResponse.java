@@ -27,6 +27,10 @@ public class PriceApprovalDetailResponse {
     @Schema(description = "目标对象ID", example = "p_xxxx")
     private String itemId;
 
+    @Schema(description = "目标对象名称（商家名/商品名/物业公司名，按 itemId 前缀回查）；"
+            + "查不到时该键缺失，前端回退显示 itemId", example = "元序")
+    private String itemName;
+
     @Schema(description = "原值", example = "10.00")
     private String oldValue;
 

@@ -16,18 +16,15 @@ import com.wuye.points.entity.SectorLeader;
 import com.wuye.points.entity.WithdrawalRecord;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.exception.ErrorCode;
-import com.wuye.points.payment.WechatSplitOwnerTypes;
 import com.wuye.points.repository.BuildingLeaderRepository;
 import com.wuye.points.repository.CoordinatorRepository;
 import com.wuye.points.repository.CourierManagerRepository;
-import com.wuye.points.repository.DistributionRecordRepository;
 import com.wuye.points.repository.IndividualLeaderRepository;
 import com.wuye.points.repository.PropertyCompanyRepository;
 import com.wuye.points.repository.PropertyManagerRepository;
 import com.wuye.points.repository.ResidentMerchantSettlementRepository;
 import com.wuye.points.repository.ResidentRepository;
 import com.wuye.points.repository.SectorLeaderRepository;
-import com.wuye.points.repository.WalletFlowRepository;
 import com.wuye.points.repository.WithdrawalRecordRepository;
 import com.wuye.points.repository.spec.WithdrawalRecordSpecifications;
 import com.wuye.points.util.DateTimeUtil;
@@ -74,14 +71,12 @@ public class RoleWithdrawalService {
     private final CoordinatorRepository coordinatorRepository;
     private final SectorLeaderRepository sectorLeaderRepository;
     private final BuildingLeaderRepository buildingLeaderRepository;
-    private final DistributionRecordRepository distributionRecordRepository;
     private final ResidentMerchantSettlementRepository settlementRepository;
     private final PropertyManagerRepository propertyManagerRepository;
-    private final WalletFlowRepository walletFlowRepository;
     private final PropertyCompanyRepository propertyCompanyRepository;
     private final ResidentRepository residentRepository;
     private final WithdrawableService withdrawableService;
-    private final UnifiedEarningsService unifiedEarningsService;
+    private final RoleWithdrawableService roleWithdrawableService;
     private final RoleGuard roleGuard;
     private final SnowflakeIdGenerator idGenerator;
     private final PlatformSettingService platformSetting;
@@ -96,15 +91,11 @@ public class RoleWithdrawalService {
         IndividualLeaderWorkbenchService.assertSelf(current, individualLeaderId);
         assertNotBlocked(current.getResidentId());
 
-        // 可提现余额校验：已产生分成 - 已申请（含在途）提现
-        BigDecimal earned = defaultDecimal(distributionRecordRepository
-                .sumIndividualLeaderShareByIndividualLeaderId(current.getId()));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_INDIVIDUAL_LEADER, null));
-        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
-        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
-                WechatSplitOwnerTypes.INDIVIDUAL_LEADER.name(), current.getId());
-        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        // 可提现余额校验：统一口径见 RoleWithdrawableService，与分账所得页/收益页展示同源
+        BigDecimal withdrawable = roleWithdrawableService.forShareLedgerRole(
+                        RoleWithdrawableService.ShareLedgerRole.INDIVIDUAL_LEADER,
+                        current.getId(), current.getPropertyCompanyId())
+                .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -175,14 +166,10 @@ public class RoleWithdrawalService {
         }
         assertNotBlocked(current.getResidentId());
 
-        BigDecimal earned = defaultDecimal(distributionRecordRepository
-                .sumCoordinatorShareByCoordinatorId(current.getId()));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_COORDINATOR, null));
-        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
-        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
-                WechatSplitOwnerTypes.COORDINATOR.name(), current.getId());
-        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        BigDecimal withdrawable = roleWithdrawableService.forShareLedgerRole(
+                        RoleWithdrawableService.ShareLedgerRole.COORDINATOR,
+                        current.getId(), current.getPropertyCompanyId())
+                .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -220,14 +207,10 @@ public class RoleWithdrawalService {
         }
         assertNotBlocked(current.getResidentId());
 
-        BigDecimal earned = defaultDecimal(distributionRecordRepository
-                .sumSectorLeaderShareBySectorLeaderId(current.getId()));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_SECTOR_LEADER, null));
-        // 微信分账已实时到账的分成不再走内部提现（防一笔钱分两次付）
-        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
-                WechatSplitOwnerTypes.SECTOR_LEADER.name(), current.getId());
-        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        BigDecimal withdrawable = roleWithdrawableService.forShareLedgerRole(
+                        RoleWithdrawableService.ShareLedgerRole.SECTOR_LEADER,
+                        current.getId(), current.getPropertyCompanyId())
+                .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -266,7 +249,8 @@ public class RoleWithdrawalService {
         assertNotBlocked(current.getResidentId());
 
         // v8.21：从账号统一收益账户校验并扣减（楼长/业主卖货/名下商家合并口径）
-        BigDecimal withdrawable = unifiedEarningsService.calc(current.getResidentId())
+        BigDecimal withdrawable = roleWithdrawableService.forBuildingLeader(
+                        current.getId(), current.getResidentId(), current.getPropertyCompanyId())
                 .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
@@ -312,7 +296,8 @@ public class RoleWithdrawalService {
         }
 
         // v8.21：卖货收益同样从账号统一收益账户校验，避免与楼长/商家收益重复提现
-        BigDecimal withdrawable = unifiedEarningsService.calc(residentId).withdrawableAmount();
+        BigDecimal withdrawable = roleWithdrawableService
+                .forResidentSeller(residentId, resident.getPropertyCompanyId()).withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }
@@ -348,17 +333,16 @@ public class RoleWithdrawalService {
         roleGuard.requireAnyRole("resident");
         Resident resident = residentRepository.findById(UserContext.currentUserId())
                 .orElseThrow(() -> new BizException(ErrorCode.RESIDENT_NOT_FOUND));
-        BigDecimal walletBalance = defaultDecimal(walletFlowRepository
-                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType("resident", resident.getId(), "withdrawable"));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumOccupiedAmountByApplicantAndType(resident.getId(), WITHDRAWAL_TYPE_RESIDENT_WALLET));
-        BigDecimal withdrawable = walletBalance.subtract(occupied).max(BigDecimal.ZERO);
+        RoleWithdrawableService.RoleBalance balance = roleWithdrawableService
+                .forResidentWallet(resident.getId(), resident.getPropertyCompanyId());
         return ResidentWalletResponse.builder()
                 .coinBalance(defaultDecimal(resident.getCoinBalance()))
-                .walletBalance(walletBalance)
-                .occupiedWithdrawalAmount(occupied)
-                .withdrawableAmount(withdrawable)
+                .walletBalance(balance.creditedAmount())
+                .occupiedWithdrawalAmount(balance.pendingWithdrawalAmount())
+                .withdrawableAmount(balance.withdrawableAmount())
                 .withdrawalBlocked(Boolean.TRUE.equals(resident.getWithdrawalBlocked()))
+                .feeRate(balance.feeRate())
+                .withdrawFeeBearer(RoleWithdrawableService.FEE_BEARER_PAYEE)
                 .build();
     }
 
@@ -372,11 +356,8 @@ public class RoleWithdrawalService {
         }
         assertNotBlocked(resident.getId());
 
-        BigDecimal walletBalance = defaultDecimal(walletFlowRepository
-                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType("resident", resident.getId(), "withdrawable"));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumOccupiedAmountByApplicantAndType(resident.getId(), WITHDRAWAL_TYPE_RESIDENT_WALLET));
-        BigDecimal withdrawable = walletBalance.subtract(occupied).max(BigDecimal.ZERO);
+        BigDecimal withdrawable = roleWithdrawableService
+                .forResidentWallet(resident.getId(), resident.getPropertyCompanyId()).withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INSUFFICIENT,
                     "钱包可提现余额不足（最多 ¥" + withdrawable.toPlainString() + "）");
@@ -411,16 +392,9 @@ public class RoleWithdrawalService {
         PropertyManager current = getCurrentPropertyManager();
         assertNotBlocked(current.getResidentId());
 
-        BigDecimal earned = defaultDecimal(walletFlowRepository
-                .sumAmountByOwnerTypeAndOwnerIdAndBalanceType(
-                        "property_manager", current.getResidentId(), "withdrawable"));
-        BigDecimal occupied = defaultDecimal(withdrawalRecordRepository
-                .sumAmountByApplicant(current.getId(), WITHDRAWAL_TYPE_PROPERTY_MANAGER, null));
-        // 微信分账已实时到账的经理抽成不再走内部提现（防一笔钱分两次付）；
-        // 主体键与分账记录一致：ownerType=PROPERTY_MANAGER、ownerId=经理 residentId
-        BigDecimal splitSettled = withdrawableService.calcSplitSettledAmount(
-                WechatSplitOwnerTypes.PROPERTY_MANAGER.name(), current.getResidentId());
-        BigDecimal withdrawable = earned.subtract(occupied).subtract(splitSettled).max(BigDecimal.ZERO);
+        BigDecimal withdrawable = roleWithdrawableService.forPropertyManager(
+                        current.getId(), current.getResidentId(), current.getPropertyCompanyId())
+                .withdrawableAmount();
         if (request.getAmount().compareTo(withdrawable) > 0) {
             throw new BizException(ErrorCode.MERCHANT_WITHDRAWAL_INVALID, "可提现余额不足");
         }

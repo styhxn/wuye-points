@@ -12,6 +12,10 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestCookieException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -51,6 +55,25 @@ public class GlobalExceptionHandler {
         log.warn("参数类型错误: {}", e.getMessage());
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ErrorCode.PARAM_INVALID.getCode(), "参数类型错误: " + e.getName()));
+    }
+
+    /**
+     * 必填查询参数/请求头缺失：以前落到 {@link #handleException} 变成 500「内部服务异常」，
+     * 用户完全不知道该改什么（整改清单条目30/33/35 的共同表现）。
+     */
+    @ExceptionHandler(ServletRequestBindingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleServletRequestBinding(ServletRequestBindingException e) {
+        String detail = "请求参数绑定失败";
+        if (e instanceof MissingServletRequestParameterException missing) {
+            detail = "缺少必填参数: " + missing.getParameterName();
+        } else if (e instanceof MissingRequestHeaderException missing) {
+            detail = "缺少必填请求头: " + missing.getHeaderName();
+        } else if (e instanceof MissingRequestCookieException missing) {
+            detail = "缺少必填 Cookie: " + missing.getCookieName();
+        }
+        log.warn("请求绑定失败: {} - {}", e.getMessage(), detail);
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(ErrorCode.PARAM_MISSING.getCode(), detail));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
@@ -109,13 +132,36 @@ public class GlobalExceptionHandler {
      * 数据库完整性冲突：统一映射 409，根因只写日志，不把表名/列名/重复值回显给前端。
      * 业务层能识别的重复手机号/状态冲突仍应优先抛 BizException。
      * <p>日志必须带请求路径：响应端刻意不含根因，没有路径就没人能从 409 反查到是哪个接口哪个字段。
+     * <p>v8.39：MySQL 字段长度截断（Data truncation / Data too long）属于「资料填写问题」，
+     * 不是并发冲突，单独给可读文案；仍不回显具体列名，避免结构泄露。
+     * 2026-11-05 线上进件 409 即因 bank_account_type varchar(20) 存不下 27 字符枚举值。
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(
             DataIntegrityViolationException e, HttpServletRequest request) {
         log.error("数据完整性冲突 {} {}", request.getMethod(), request.getRequestURI(), e);
+        String message = isLengthOverflow(e)
+                ? "提交内容超出字段长度限制，请检查填写内容后重试"
+                : "数据冲突，请刷新后重试";
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ApiResponse.error(ErrorCode.ORDER_CONFLICT.getCode(), "数据冲突，请刷新后重试"));
+                .body(ApiResponse.error(ErrorCode.ORDER_CONFLICT.getCode(), message));
+    }
+
+    /** 沿异常链找 MySQL 字段长度截断标记；只判类型、不把原文回显给前端。 */
+    private static boolean isLengthOverflow(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && (msg.contains("Data too long") || msg.contains("Data truncation"))) {
+                return true;
+            }
+            Throwable cause = current.getCause();
+            if (cause == current || cause == null) {
+                break;
+            }
+            current = cause;
+        }
+        return false;
     }
 
     /**

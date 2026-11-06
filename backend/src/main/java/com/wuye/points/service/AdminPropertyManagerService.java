@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -198,7 +199,7 @@ public class AdminPropertyManagerService {
 
     private Map<String, Resident> loadResidents(List<String> residentIds) {
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, r -> r, (a, b) -> a));
@@ -206,7 +207,7 @@ public class AdminPropertyManagerService {
 
     private Map<String, PropertyCompany> loadCompanies(Set<String> ids) {
         if (ids.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return propertyCompanyRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(PropertyCompany::getId, c -> c, (a, b) -> a));

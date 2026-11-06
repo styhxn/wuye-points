@@ -7,7 +7,9 @@ import com.wuye.points.dto.admin.merchant.KickMerchantResponse;
 import com.wuye.points.dto.admin.merchant.SetOfficialRecommendationRequest;
 import com.wuye.points.dto.common.ApiResponse;
 import com.wuye.points.dto.merchant.ApplymentDetailResponse;
+import com.wuye.points.dto.merchant.MerchantQrCodeResponse;
 import com.wuye.points.service.AdminMerchantService;
+import com.wuye.points.service.MerchantQrCodeService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 public class AdminMerchantController {
 
     private final AdminMerchantService adminMerchantService;
+    private final MerchantQrCodeService merchantQrCodeService;
 
     @Operation(summary = "审核商家入驻", description = "审核商家入驻申请。角色: property_admin, platform_admin")
     @PostMapping("/{id}/audit")
@@ -69,5 +72,22 @@ public class AdminMerchantController {
             @Valid @RequestBody SetOfficialRecommendationRequest request) {
         adminMerchantService.setRecommendation(id, request);
         return ApiResponse.success(null);
+    }
+
+    @Operation(summary = "生成商家专属收款二维码",
+            description = "用微信 /wxa/getwxacode 生成小程序码（永久有效），图片URL写回商家 qrCodeUrl。"
+                    + "默认复用已有码，force=true 才重新生成。角色: property_admin, platform_admin")
+    @PostMapping("/{id}/qrcode")
+    public ApiResponse<MerchantQrCodeResponse> generateQrCode(
+            @Parameter(description = "商家ID") @PathVariable String id,
+            @Parameter(description = "是否强制重新生成") @RequestParam(defaultValue = "false") boolean force) {
+        return ApiResponse.success(merchantQrCodeService.generateForAdmin(id, force));
+    }
+
+    @Operation(summary = "查看商家专属收款二维码", description = "不触发微信调用。角色: property_admin, platform_admin")
+    @GetMapping("/{id}/qrcode")
+    public ApiResponse<MerchantQrCodeResponse> getQrCode(
+            @Parameter(description = "商家ID") @PathVariable String id) {
+        return ApiResponse.success(merchantQrCodeService.getForAdmin(id));
     }
 }

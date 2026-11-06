@@ -2,6 +2,7 @@ package com.wuye.points.service;
 
 import com.wuye.points.dto.merchant.ApplymentSubmitRequest;
 import com.wuye.points.dto.merchant.UboInfoRequest;
+import com.wuye.points.entity.MerchantApplyment;
 import com.wuye.points.exception.BizException;
 import com.wuye.points.payment.PartnerApplymentApiService;
 import com.wuye.points.payment.PartnerApplymentProperties;
@@ -27,7 +28,7 @@ import static org.mockito.Mockito.mock;
 
 /**
  * 进件表单校验回归：对齐官方《提交申请单》的账户名/场景/UBO 规则，
- * 并确认小程序 AppID 可由平台默认值补齐。
+ * 确认小程序 AppID 可由平台默认值补齐，并锁定「草稿只校验已填内容 / 提交才校验完整性」的分段口径。
  */
 class MerchantApplymentValidationTest {
 
@@ -49,18 +50,20 @@ class MerchantApplymentValidationTest {
                 mock(MerchantRepository.class),
                 mock(MerchantWechatAccountRepository.class),
                 mock(ResidentRepository.class),
+                mock(MerchantTransferAccountService.class),
                 mock(PartnerApplymentApiService.class),
                 props,
                 pay,
                 mock(WechatCertManager.class),
                 mock(SnowflakeIdGenerator.class),
-                mock(RoleGuard.class));
+                mock(RoleGuard.class),
+                mock(QrCodeService.class));
     }
 
     @Test
     @DisplayName("完整企业资料（无 UBO、无自定义 AppID）可通过校验")
     void enterpriseRequestPasses() {
-        assertDoesNotThrow(() -> service.validateRequest(validEnterprise()));
+        assertDoesNotThrow(() -> service.validateDraft(validEnterprise()));
     }
 
     @Test
@@ -68,7 +71,7 @@ class MerchantApplymentValidationTest {
     void corporateAccountNameMustMatchMerchantName() {
         ApplymentSubmitRequest r = validEnterprise();
         r.setBankAccountName("别的公司");
-        BizException e = assertThrows(BizException.class, () -> service.validateRequest(r));
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
         assertTrue(e.getMessage().contains("对公账户开户名"));
     }
 
@@ -78,7 +81,7 @@ class MerchantApplymentValidationTest {
         ApplymentSubmitRequest r = validIndividual();
         r.setBankAccountType("BANK_ACCOUNT_TYPE_PERSONAL");
         r.setBankAccountName("王五");
-        BizException e = assertThrows(BizException.class, () -> service.validateRequest(r));
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
         assertTrue(e.getMessage().contains("个人银行卡开户名"));
     }
 
@@ -87,7 +90,7 @@ class MerchantApplymentValidationTest {
     void unsupportedSceneRejected() {
         ApplymentSubmitRequest r = validEnterprise();
         r.setSalesScenesType("SALES_SCENES_APP");
-        BizException e = assertThrows(BizException.class, () -> service.validateRequest(r));
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
         assertTrue(e.getMessage().contains("经营场景"));
     }
 
@@ -97,7 +100,7 @@ class MerchantApplymentValidationTest {
         ApplymentSubmitRequest r = validEnterprise();
         r.setSalesAppId(null);
         r.setSalesSubAppId(null);
-        assertDoesNotThrow(() -> service.validateRequest(r));
+        assertDoesNotThrow(() -> service.validateDraft(r));
         assertEquals("wx_platform_appid", service.resolveSalesAppId(r));
     }
 
@@ -106,7 +109,7 @@ class MerchantApplymentValidationTest {
     void enterpriseMayOmitUboWhenOnlyLegalPerson() {
         ApplymentSubmitRequest r = validEnterprise();
         r.setUboList(null);
-        assertDoesNotThrow(() -> service.validateRequest(r));
+        assertDoesNotThrow(() -> service.validateDraft(r));
     }
 
     @Test
@@ -116,7 +119,7 @@ class MerchantApplymentValidationTest {
         UboInfoRequest ubo = new UboInfoRequest();
         ubo.setName("王五");
         r.setUboList(List.of(ubo));
-        BizException e = assertThrows(BizException.class, () -> service.validateRequest(r));
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
         assertTrue(e.getMessage().contains("最终受益人"));
     }
 
@@ -125,7 +128,7 @@ class MerchantApplymentValidationTest {
     void contactNameMustMatchLegalPerson() {
         ApplymentSubmitRequest r = validEnterprise();
         r.setContactName("另一个人");
-        BizException e = assertThrows(BizException.class, () -> service.validateRequest(r));
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
         assertTrue(e.getMessage().contains("超级管理员"));
     }
 
@@ -134,6 +137,102 @@ class MerchantApplymentValidationTest {
     void settlementIdIsServerControlled() {
         assertEquals("716", service.effectiveSettlementId("ENTERPRISE"));
         assertEquals("719", service.effectiveSettlementId("INDIVIDUAL"));
+    }
+
+    @Test
+    @DisplayName("草稿保存：只填主体类型与商户简称即可（前端「保存资料」分步填写）")
+    void draftAcceptsPartialForm() {
+        ApplymentSubmitRequest r = new ApplymentSubmitRequest();
+        r.setOrganizationType("ENTERPRISE");
+        r.setMerchantShortname("XX物业");
+        assertDoesNotThrow(() -> service.validateDraft(r));
+    }
+
+    @Test
+    @DisplayName("草稿保存：缺邮箱/银行账号/执照图等提交必填项不再拦截")
+    void draftIgnoresMissingSubmitFields() {
+        ApplymentSubmitRequest r = validEnterprise();
+        r.setContactEmail(null);
+        r.setBankAccountNumber(null);
+        r.setBusinessLicenseMedia(null);
+        r.setIdCardAddress(null);
+        assertDoesNotThrow(() -> service.validateDraft(r));
+    }
+
+    @Test
+    @DisplayName("草稿保存：已填字段的取值非法仍然拒绝")
+    void draftStillRejectsIllegalEnums() {
+        ApplymentSubmitRequest r = new ApplymentSubmitRequest();
+        r.setOrganizationType("MICRO");
+        BizException e = assertThrows(BizException.class, () -> service.validateDraft(r));
+        assertTrue(e.getMessage().contains("主体类型"));
+    }
+
+    @Test
+    @DisplayName("草稿保存：UBO 一条都没填（前端会过滤空行）不拦截")
+    void draftIgnoresEmptyUboRows() {
+        ApplymentSubmitRequest r = validEnterprise();
+        UboInfoRequest emptyRow = new UboInfoRequest();
+        emptyRow.setName("");
+        r.setUboList(List.of(emptyRow));
+        assertDoesNotThrow(() -> service.validateDraft(r));
+    }
+
+    @Test
+    @DisplayName("提交校验：资料齐备（含平台兜底 AppID）可通过")
+    void submitAcceptsCompleteApplyment() {
+        assertDoesNotThrow(() -> service.validateForSubmit(completeApplyment()));
+    }
+
+    @Test
+    @DisplayName("提交校验：缺超级管理员邮箱时一次性列出缺项")
+    void submitRejectsWhenContactEmailMissing() {
+        MerchantApplyment a = completeApplyment();
+        a.setContactEmailEnc(null);
+        BizException e = assertThrows(BizException.class, () -> service.validateForSubmit(a));
+        assertTrue(e.getMessage().contains("资料不完整"));
+        assertTrue(e.getMessage().contains("联系邮箱"));
+    }
+
+    @Test
+    @DisplayName("提交校验：企业主体缺身份证居住地址、小程序缺 AppID 一并列出")
+    void submitListsEveryMissingField() {
+        MerchantApplyment a = completeApplyment();
+        a.setIdCardAddressEnc(null);
+        a.setSalesAppId(null);
+        BizException e = assertThrows(BizException.class, () -> service.validateForSubmit(a));
+        assertTrue(e.getMessage().contains("身份证居住地址"));
+        assertTrue(e.getMessage().contains("小程序/公众号 AppID"));
+    }
+
+    private MerchantApplyment completeApplyment() {
+        MerchantApplyment a = new MerchantApplyment();
+        a.setOrganizationType("ENTERPRISE");
+        a.setMerchantShortname("XX物业");
+        a.setServicePhone("0427-8888888");
+        a.setBusinessLicenseMedia("LIC");
+        a.setBusinessLicenseNumber("91211100MA0TEST");
+        a.setMerchantName("盘锦XX物业管理有限公司");
+        a.setLegalPerson("张三");
+        a.setIdCardCopyMedia("ID_FRONT");
+        a.setIdCardNationalMedia("ID_BACK");
+        a.setIdCardNameEnc("ENC_NAME");
+        a.setIdCardNumberEnc("ENC_NUMBER");
+        a.setIdCardAddressEnc("ENC_ADDRESS");
+        a.setIdCardPeriodBegin("2015-12-28");
+        a.setIdCardPeriodEnd("2035-12-28");
+        a.setSalesScenesType("SALES_SCENES_MINI_PROGRAM");
+        a.setSalesAppId("wx_platform_appid");
+        a.setBankAccountType("BANK_ACCOUNT_TYPE_CORPORATE");
+        a.setBankAccountNameEnc("ENC_ACCOUNT_NAME");
+        a.setAccountBank("招商银行");
+        a.setBankAccountNumberEnc("ENC_ACCOUNT_NUMBER");
+        a.setContactType("LEGAL");
+        a.setContactName("张三");
+        a.setContactMobile("13800138000");
+        a.setContactEmailEnc("ENC_EMAIL");
+        a.setQualificationType("居民生活服务");
+        return a;
     }
 
     private ApplymentSubmitRequest validEnterprise() {

@@ -25,4 +25,12 @@ public class ResidentWalletResponse {
 
     @Schema(description = "提现是否被冻结", example = "false")
     private Boolean withdrawalBlocked;
+
+    @Schema(description = "提现手续费率（提交前即可算手续费；物业公司覆盖值优先，未配置取平台默认，"
+            + "平台/角色手续费开关关闭时为 0）", example = "0.0060")
+    private BigDecimal feeRate;
+
+    @Schema(description = "手续费承担方：payee=从提现金额内扣（实到 = amount − amount × feeRate）",
+            example = "payee")
+    private String withdrawFeeBearer;
 }

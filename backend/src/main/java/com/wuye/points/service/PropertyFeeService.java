@@ -54,6 +54,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -712,7 +713,7 @@ public class PropertyFeeService {
                 .distinct()
                 .toList();
         if (residentIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return residentRepository.findAllById(residentIds).stream()
                 .collect(Collectors.toMap(Resident::getId, Function.identity()));
@@ -725,7 +726,7 @@ public class PropertyFeeService {
                 .distinct()
                 .toList();
         if (communityIds.isEmpty()) {
-            return Map.of();
+            return Collections.emptyMap();
         }
         return communityRepository.findAllById(communityIds).stream()
                 .collect(Collectors.toMap(Community::getId, Function.identity()));

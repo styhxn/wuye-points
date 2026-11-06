@@ -51,6 +51,20 @@ public interface PayChannel {
     void close(PaymentRecord record);
 
     /**
+     * 二次发起支付前作废遗留的待支付流水（用户取消微信支付后重付的场景）。
+     *
+     * <p>先查单：微信侧已支付成功的流水不能关，否则用户会撞上「已关单但已支付 → 原路退款」，
+     * 此时抛 {@code ORDER_CONFLICT} 提示稍后再试；未支付则调微信关单，查单/关单失败（未配置、
+     * 无 out_trade_no 等）退化为本地置 closed，保证二次支付不被永久挡住。</p>
+     *
+     * <p>调用方随后新建 pending 流水前无需再 flush：本方法内部已强制下刷 UPDATE。</p>
+     *
+     * @param bizLabel            日志用的业务名，如「物业币充值」
+     * @param alreadyPaidMessage  上一笔实际已支付时返回给用户的文案
+     */
+    void closeForRetry(PaymentRecord record, String bizLabel, String alreadyPaidMessage);
+
+    /**
      * 查单确认已支付后落账（仅置 paid + paidAt）。
      *
      * <p>注意：微信支付回调不走本接口的方法——回调统一由

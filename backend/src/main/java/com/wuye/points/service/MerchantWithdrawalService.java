@@ -35,7 +35,6 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class MerchantWithdrawalService {
 
-    private static final BigDecimal DEFAULT_WITHDRAWAL_FEE_RATE = new BigDecimal("0.0060");
     private static final Set<String> WITHDRAWAL_AUDIT_STATUS = Set.of(
             "pending", "approved", "rejected", "completed");
 
@@ -48,6 +47,7 @@ public class MerchantWithdrawalService {
     private final WithdrawableService withdrawableService;
     private final UnifiedEarningsService unifiedEarningsService;
     private final MerchantCoinReceivableService merchantCoinReceivableService;
+    private final RoleWithdrawableService roleWithdrawableService;
 
     /** 商家物业币应收独立结算入口：强制 source=coin_receivable，避免与内部现金口径混用。 */
     @Transactional
@@ -186,11 +186,7 @@ public class MerchantWithdrawalService {
     }
 
     private BigDecimal resolveFeeRate(PropertyCompany propertyCompany) {
-        BigDecimal feeRate = propertyCompany.getWithdrawalFeeRate();
-        if (feeRate == null || feeRate.compareTo(BigDecimal.ZERO) < 0) {
-            return DEFAULT_WITHDRAWAL_FEE_RATE;
-        }
-        return feeRate;
+        return roleWithdrawableService.merchantWithdrawalFeeRate(propertyCompany.getWithdrawalFeeRate());
     }
 
     private Pageable buildPageable(int page, int pageSize) {

@@ -52,4 +52,12 @@ public final class ResidentSpecifications {
             String status, String role, String merchantId, String courierId) {
         return withFilters(propertyCompanyId, keyword, communityId, building, status, role);
     }
+
+    /**
+     * 注销终审列表专用：不能套用 {@link #withFilters} 的 {@code deletedAt is null} 条件。
+     * 申请注销时 deletedAt 被用来承载 15 天冷静期的到期时间（非空），两者互斥会让列表恒为空。
+     */
+    public static Specification<Resident> deletionRequests() {
+        return (root, query, cb) -> cb.equal(root.get("status"), "pending_deletion");
+    }
 }

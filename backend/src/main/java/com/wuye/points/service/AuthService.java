@@ -126,15 +126,13 @@ public class AuthService {
 
         String role = RoleGuard.normalizeRole(resident.getRole());
         // 2026-10-20 负责人标签化：统筹/板块/个体负责人 role 归一化为 resident，
-        // 但其管理端登录权限不变——持有任意一种启用中负责人身份的住户仍可登录管理端。
-        // 2026-10-21 组长标签化：活动组组长同为住户子身份，持组长身份的住户同样可登录管理端
-        // （组长小店/提现等能力经 admin-login 使用）。
-        // 测试模式下跳过管理端角色校验，方便普通住户测试账号联调；上线前必须关闭。
-        if (!testMode
-                && ("resident".equals(role) || "tenant".equals(role))
-                && !leaderIdentityGuard.hasAnyLeaderIdentity(
-                        resident.getId(), resident.getPropertyCompanyId())
-                && !residentIdentityTags.isActivityLeader(resident)) {
+        // 但其管理端登录权限不变——持有启用中负责人身份的住户仍可登录管理端。
+        // 2026-10-21 组长标签化：活动组组长同为住户子身份，同样可登录管理端。
+        // 整改清单条目24：这道门不再受 testMode 影响——纯住户/租户账号任何时候都不给管理端令牌。
+        // 商家/技工/配送员仍可从这里登录（小程序端复用本接口做手机号密码登录），
+        // 但他们在 /admin/** 上会由 PermissionInterceptor 按管理端工作台身份统一挡为 403（条目25）。
+        if (("resident".equals(role) || "tenant".equals(role))
+                && !roleGuard.isAdminWorkspaceUser(resident)) {
             throw new BizException(ErrorCode.PERMISSION_DENIED, "该账号无管理端登录权限");
         }
 
